@@ -1,8 +1,93 @@
-/*
+/* Related Notes View */
+.related-notes-container {
+  padding: 10px;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.related-notes-content {
+  margin-top: 10px;
+}
 
-If your plugin does not need CSS, delete this file.
+.related-notes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
 
-*/
+.related-note-item {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  margin: 4px 0;
+  border-radius: 4px;
+  background-color: var(--background-secondary);
+  transition: background-color 0.2s ease;
+}
+
+.related-note-item:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.related-note-link {
+  flex-grow: 1;
+  color: var(--text-normal);
+  text-decoration: none;
+  font-size: 14px;
+  margin-right: 8px;
+}
+
+.related-note-link:hover {
+  color: var(--text-accent);
+  text-decoration: underline;
+}
+
+.related-note-score {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-right: 8px;
+  white-space: nowrap;
+}
+
+.related-note-add-link {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  opacity: 0;
+}
+
+.related-note-item:hover .related-note-add-link {
+  opacity: 1;
+}
+
+.related-note-add-link:hover {
+  background-color: var(--interactive-accent-hover);
+}
+
+/* Settings */
+.related-notes-settings .setting-item {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: 1em 0;
+}
+
+.related-notes-settings .setting-item:first-child {
+  border-top: none;
+}
+
+.related-notes-settings .setting-item-control {
+  flex-grow: 0;
+  flex-shrink: 0;
+}
+
+.related-notes-settings .slider {
+  width: 150px;
+}
+
+.related-notes-settings .setting-item-description {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 4px;
+}

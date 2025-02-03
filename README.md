@@ -1,94 +1,122 @@
-# Obsidian Sample Plugin
+# Related Notes Plugin for Obsidian
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+A powerful plugin for Obsidian that automatically discovers and suggests related notes using Natural Language Processing (NLP) and TF-IDF similarity analysis. It helps you uncover connections between your notes that you might have missed.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- 🔍 Automatically analyzes note content using NLP techniques
+- 📊 Uses TF-IDF (Term Frequency-Inverse Document Frequency) for accurate similarity matching
+- 🎯 Configurable similarity threshold for fine-tuned suggestions
+- 📝 Shows similarity scores for each related note
+- 🔗 Quick "Add Link" button to reference related notes
+- 💾 Persistent caching for improved performance
+- ⚡ Real-time updates as you edit notes
+- 🎨 Clean, native-looking UI that matches Obsidian's theme
 
-## First time developing plugins?
+## Installation
 
-Quick starting guide for new plugin devs:
+1. Open Obsidian Settings
+2. Navigate to Community Plugins and disable Safe Mode
+3. Click Browse and search for "Related Notes"
+4. Click Install
+5. Enable the plugin in the Community Plugins tab
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+## Usage
 
-## Releasing new releases
+### Viewing Related Notes
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+1. Click the dice icon in the ribbon to open the Related Notes pane
+2. The plugin will automatically show related notes for your currently active note
+3. You can also use the command palette and search for "Find Related Notes"
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### Adding Links
 
-## Adding your plugin to the community plugin list
+1. When viewing related notes, click the "Add Link" button next to any suggestion
+2. A link to that note will be inserted at your current cursor position
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+## Configuration
 
-## How to use
+The plugin can be configured through the settings tab:
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+- **Similarity Threshold** (0-1): Minimum similarity score required to consider notes as related
+- **Existing Link Weight** (0-1): Weight given to existing links when calculating relationships
+- **Content Similarity Weight** (0-1): Weight given to content similarity when calculating relationships
+- **Maximum Suggestions** (1-10): Maximum number of related notes to display
+- **Cache Timeout** (1-30 minutes): How long to cache similarity calculations
 
-## Manually installing the plugin
+## Development
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+### Prerequisites
 
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
+- Node.js 16+
+- npm or yarn
+- Basic knowledge of TypeScript and Obsidian Plugin Development
 
-## Funding URL
+### Setup
 
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+1. Clone this repository
+```bash
+git clone https://github.com/yourusername/obsidian-related-notes.git
+cd obsidian-related-notes
 ```
 
-If you have multiple URLs, you can also do:
-
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+2. Install dependencies
+```bash
+npm install
 ```
 
-## API Documentation
+3. Build the plugin
+```bash
+npm run build
+```
 
-See https://github.com/obsidianmd/obsidian-api
+### Development Workflow
+
+- `npm run dev` - Starts development build with hot-reload
+- `npm run build` - Creates a production build
+- `npm run version` - Updates version numbers in manifest.json and versions.json
+
+### Project Structure
+
+- `main.ts` - Main plugin file with core functionality
+- `settings.ts` - Settings tab implementation
+- `ui.ts` - Related notes view implementation
+- `styles.css` - Custom CSS styles
+- `manifest.json` - Plugin manifest
+- `package.json` - Project configuration and dependencies
+
+### Key Dependencies
+
+- `natural` - Natural language processing library
+- `levelup/leveldown` - Persistent storage for caching
+- `obsidian` - Obsidian API types and utilities
+
+## Building From Source
+
+1. Clone the repository as described in the Development section
+2. Install dependencies: `npm install`
+3. Build the plugin: `npm run build`
+4. Copy the following files to your Obsidian plugins folder:
+   - main.js
+   - manifest.json
+   - styles.css
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Support
+
+If you encounter any issues or have questions:
+
+1. Check the [GitHub Issues](https://github.com/yourusername/obsidian-related-notes/issues)
+2. Create a new issue if your problem hasn't been reported
+3. Provide as much information as possible, including:
+   - Steps to reproduce the issue
+   - Your Obsidian version
+   - Your plugin version
+   - Any relevant error messages

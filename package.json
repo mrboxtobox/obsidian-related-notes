@@ -1,24 +1,38 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "obsidian-related-notes",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "An Obsidian plugin that suggests related notes using NLP and TF-IDF similarity",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},
-	"keywords": [],
-	"author": "",
+	"keywords": [
+		"obsidian",
+		"plugin",
+		"nlp",
+		"related-notes",
+		"similarity"
+	],
+	"author": "Oluwasanya Awe",
 	"license": "MIT",
 	"devDependencies": {
+		"@types/leveldown": "^4.0.3",
+		"@types/levelup": "^5.1.2",
+		"@types/natural": "^5.1.5",
 		"@types/node": "^16.11.6",
-		"@typescript-eslint/eslint-plugin": "5.29.0",
-		"@typescript-eslint/parser": "5.29.0",
-		"builtin-modules": "3.3.0",
-		"esbuild": "0.17.3",
+		"@typescript-eslint/eslint-plugin": "^5.2.0",
+		"@typescript-eslint/parser": "^5.2.0",
+		"builtin-modules": "^3.2.0",
+		"esbuild": "^0.19.12",
 		"obsidian": "latest",
-		"tslib": "2.4.0",
-		"typescript": "4.7.4"
+		"tslib": "2.3.1",
+		"typescript": "4.4.4"
+	},
+	"dependencies": {
+		"leveldown": "^6.1.1",
+		"levelup": "^5.1.1",
+		"natural": "^8.0.1"
 	}
 }
