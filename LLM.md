@@ -19,9 +19,7 @@ This is a production-ready Obsidian plugin that suggests related notes using NLP
 
 ## Dependencies
 ### Production
-- natural@8.0.1 - NLP functionality
-- levelup@5.1.1 - Database management
-- leveldown@6.1.1 - Storage engine
+No production dependencies - using built-in Obsidian APIs
 
 ### Development
 - TypeScript 4.4.4
@@ -59,7 +57,9 @@ The project uses esbuild for bundling and includes:
    - [x] Manifest configured
 
 ## Outstanding Tasks
-None currently - the plugin is production-ready with all core functionality implemented.
+1. Monitor the effectiveness of the recent fix for side panel visibility:
+   - Added `revealLeaf` calls in `showRelatedNotes` method to ensure side panel becomes visible when dice button is clicked
+   - Verify this continues to work across different Obsidian versions and contexts
 
 ## Notes for LLMs
 1. Always check version numbers in both manifest.json and package.json when making updates
@@ -67,3 +67,8 @@ None currently - the plugin is production-ready with all core functionality impl
 3. UI components should follow Obsidian's design patterns
 4. Cache implementation is critical for performance
 5. Consider mobile compatibility (plugin is not desktop-only)
+6. Custom NLP Implementation:
+   - WordTokenizer in nlp.ts handles text tokenization with preprocessing
+   - TfIdf in nlp.ts implements TF-IDF algorithm for document similarity
+   - No external NLP dependencies - all algorithms implemented in-house
+   - Document vectors stored using Obsidian's data API for persistence
