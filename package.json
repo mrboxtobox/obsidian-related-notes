@@ -18,21 +18,16 @@
 	"author": "Oluwasanya Awe",
 	"license": "MIT",
 	"devDependencies": {
-		"@types/leveldown": "^4.0.3",
-		"@types/levelup": "^5.1.2",
-		"@types/natural": "^5.1.5",
-		"@types/node": "^16.11.6",
-		"@typescript-eslint/eslint-plugin": "^5.2.0",
-		"@typescript-eslint/parser": "^5.2.0",
-		"builtin-modules": "^3.2.0",
+		"@types/node": "^20.11.17",
+		"@typescript-eslint/eslint-plugin": "^7.0.1",
+		"@typescript-eslint/parser": "^7.0.1",
+		"builtin-modules": "^3.3.0",
 		"esbuild": "^0.19.12",
+		"eslint": "^8.57.0",
 		"obsidian": "latest",
-		"tslib": "2.3.1",
-		"typescript": "4.4.4"
+		"rimraf": "^5.0.5",
+		"tslib": "^2.6.2",
+		"typescript": "^5.3.3"
 	},
-	"dependencies": {
-		"leveldown": "^6.1.1",
-		"levelup": "^5.1.1",
-		"natural": "^8.0.1"
-	}
+	"dependencies": {}
 }

@@ -38,11 +38,33 @@ A powerful plugin for Obsidian that automatically discovers and suggests related
 
 The plugin can be configured through the settings tab:
 
+- **Debug Mode**: Enable detailed logging for troubleshooting and development
 - **Similarity Threshold** (0-1): Minimum similarity score required to consider notes as related
 - **Existing Link Weight** (0-1): Weight given to existing links when calculating relationships
 - **Content Similarity Weight** (0-1): Weight given to content similarity when calculating relationships
 - **Maximum Suggestions** (1-10): Maximum number of related notes to display
 - **Cache Timeout** (1-30 minutes): How long to cache similarity calculations
+
+### Debug Logging
+
+When Debug Mode is enabled, the plugin provides detailed logging about its operations:
+
+- Text processing and tokenization details
+- TF-IDF calculations and similarity scores
+- File processing events and timing
+- UI updates and user interactions
+- Cache operations and performance metrics
+
+To view the logs:
+1. Enable Debug Mode in settings
+2. Open the Developer Console (View -> Toggle Developer Tools)
+3. Look for entries prefixed with `[Related Notes]`
+
+This can be helpful for:
+- Understanding how the plugin processes your notes
+- Troubleshooting unexpected behavior
+- Performance optimization
+- Development and debugging
 
 ## Development
 

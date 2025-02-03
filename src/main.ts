@@ -1,7 +1,6 @@
 import { Plugin, TFile, MarkdownView, WorkspaceLeaf } from 'obsidian';
-import * as natural from 'natural';
-import levelup from 'levelup';
-import leveldown from 'leveldown';
+import { WordTokenizer, TfIdf } from './nlp';
+import { Logger } from './logger';
 import { RelatedNotesSettingTab } from './settings';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 
@@ -14,7 +13,7 @@ interface RelatedNotesSettings {
 }
 
 const DEFAULT_SETTINGS: RelatedNotesSettings = {
-  similarityThreshold: 0.3,
+  similarityThreshold: 0.0,
   existingLinkWeight: 0.4,
   contentSimilarityWeight: 0.6,
   maxSuggestions: 5,
@@ -23,14 +22,20 @@ const DEFAULT_SETTINGS: RelatedNotesSettings = {
 
 export default class RelatedNotesPlugin extends Plugin {
   settings: RelatedNotesSettings;
-  private tokenizer: natural.WordTokenizer;
-  private tfidf: natural.TfIdf;
-  private db: levelup.LevelUp;
-  private documentVectors: Map<string, number[]>;
+  private tokenizer: WordTokenizer;
+  private tfidf: TfIdf;
+  private documentVectors: Map<string, number[] | undefined>;
   private processingQueue: Set<string>;
+  private isPluginActive = false;  // Add this flag
+
 
   async onload() {
+    Logger.info('Plugin loading...');
+    Logger.time('Plugin load');
+    this.isPluginActive = true;  // Set flag when plugin loads
+
     await this.loadSettings();
+    Logger.info('Settings loaded', this.settings);
 
     // Register view type
     this.registerView(
@@ -39,13 +44,11 @@ export default class RelatedNotesPlugin extends Plugin {
     );
 
     // Initialize NLP components
-    this.tokenizer = new natural.WordTokenizer();
-    this.tfidf = new natural.TfIdf();
+    this.tokenizer = new WordTokenizer();
+    this.tfidf = new TfIdf();
     this.documentVectors = new Map();
     this.processingQueue = new Set();
-
-    // Initialize LevelDB
-    this.db = levelup(leveldown('./data'));
+    Logger.info('NLP components initialized');
 
     // Add ribbon icon
     const ribbonIconEl = this.addRibbonIcon(
@@ -91,13 +94,29 @@ export default class RelatedNotesPlugin extends Plugin {
     if (this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE).length === 0) {
       const leaf = this.app.workspace.getRightLeaf(false);
       if (leaf) {
-        await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE });
+        await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
+        // Wait for view to be created
+        const view = leaf.view;
+        if (view instanceof RelatedNotesView) {
+          // Ensure view is properly initialized
+          if (!view.containerEl.children[1]) {
+            await view.onOpen();
+          }
+          Logger.info('Related notes view initialized');
+        } else {
+          Logger.error('Failed to initialize Related Notes view');
+        }
       }
     }
+
+    Logger.timeEnd('Plugin load');
+    Logger.info('Plugin loaded successfully');
   }
 
-  async onunload() {
-    await this.db.close();
+  onunload() {
+    Logger.info('Plugin unloading...');
+    this.isPluginActive = false;
+    this.app.workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
   }
 
   async loadSettings() {
@@ -110,83 +129,192 @@ export default class RelatedNotesPlugin extends Plugin {
 
   private async processFile(file: TFile) {
     if (this.processingQueue.has(file.path)) {
+      Logger.info(`File ${file.path} is already being processed, skipping`);
       return;
     }
 
+    Logger.time(`Process file: ${file.path}`);
+    Logger.info(`Processing file: ${file.path}`);
     this.processingQueue.add(file.path);
     try {
       const content = await this.app.vault.read(file);
+      Logger.info("In try block")
+      Logger.info(`File content length: ${content.length} characters`);
+
+      Logger.time('Tokenization');
       const tokens = this.tokenizer.tokenize(content.toLowerCase());
+      Logger.timeEnd('Tokenization');
+      Logger.info(`Tokenized into ${tokens.length} tokens`);
 
       // Add to TF-IDF
+      Logger.time('TF-IDF processing');
       this.tfidf.addDocument(tokens);
 
       // Calculate TF-IDF vector
       const terms = new Set(tokens);
+      Logger.info(`Unique terms: ${terms.size}`);
       const vector: number[] = [];
       terms.forEach(term => {
-        const tfidfScore = this.tfidf.tfidf(term, this.tfidf.documents.length - 1);
+        const tfidfScore = this.tfidf.tfidf(term, this.tfidf.documentsList.length - 1);
         vector.push(tfidfScore);
       });
+      Logger.timeEnd('TF-IDF processing');
+      Logger.info(`Generated vector of length ${vector.length}`);
 
       // Store document vector
       this.documentVectors.set(file.path, vector);
+      Logger.info(`Vector stored in memory for ${file.path}`);
 
-      // Store in LevelDB for persistence
-      await this.db.put(file.path, JSON.stringify(vector));
+      // Store vector in plugin data
+      Logger.time('Vector persistence');
+      const existingData = await this.loadData();
+      await this.saveData({
+        ...existingData,
+        [`vector-${file.path}`]: vector
+      });
+      Logger.timeEnd('Vector persistence');
+      Logger.info(`Vector persisted to disk for ${file.path}`);
     } catch (error) {
-      console.error(`Error processing file ${file.path}:`, error);
+      Logger.error(`Error processing file ${file.path}:`, error);
     } finally {
       this.processingQueue.delete(file.path);
+      Logger.timeEnd(`Process file: ${file.path}`);
     }
   }
 
   private async showRelatedNotes(file: TFile) {
-    if (!file) return;
-
-    const currentVector = this.documentVectors.get(file.path);
-    if (!currentVector) {
-      await this.processFile(file);
+    if (!this.isPluginActive) {
+      Logger.warn('Plugin is not active, cannot show related notes');
       return;
     }
 
-    const relatedNotes = await this.findRelatedNotes(file, currentVector);
-
-    // Get or create the related notes view
-    let relatedView = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE)[0]?.view as RelatedNotesView;
-
-    if (!relatedView) {
-      const leaf = this.app.workspace.getRightLeaf(false);
-      if (leaf) {
-        await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE });
-        relatedView = leaf.view as RelatedNotesView;
-      }
+    if (!file) {
+      Logger.warn('Attempted to show related notes with no file');
+      return;
     }
 
-    // Update the view with new related notes
-    if (relatedView) {
-      await relatedView.updateForFile(file, relatedNotes);
+    Logger.time(`Show related notes: ${file.path}`);
+    Logger.info(`Finding related notes for: ${file.path}`);
+
+    try {
+      // Try to get vector from memory first
+      let currentVector = this.documentVectors.get(file.path);
+      Logger.info(`Vector in memory: ${currentVector ? 'yes' : 'no'}`);
+
+      // If not in memory, try to get from database
+      if (!currentVector) {
+        Logger.info('Vector not in memory, checking persistent storage');
+        try {
+          const data = await this.loadData();
+          const storedVector = data[`vector-${file.path}`];
+          if (storedVector) {
+            Logger.info('Vector found in persistent storage');
+            currentVector = storedVector;
+          } else {
+            Logger.info('Vector not found in persistent storage');
+          }
+          this.documentVectors.set(file.path, currentVector);
+        } catch (error) {
+          Logger.warn('Error loading vector from persistent storage, reprocessing file');
+          // If not found in database, process the file
+          await this.processFile(file);
+          currentVector = this.documentVectors.get(file.path);
+        }
+      }
+
+      if (!currentVector) {
+        Logger.error(`Unable to generate vector for ${file.path}`);
+        return;
+      }
+
+      Logger.info(`Vector available for processing, length: ${currentVector.length}`);
+
+      // At this point TypeScript knows currentVector is defined
+      Logger.time('Find related notes');
+      const relatedNotes = await this.findRelatedNotes(file, currentVector);
+      Logger.timeEnd('Find related notes');
+      Logger.info(`Found ${relatedNotes.length} related notes`);
+
+      // Get or create the related notes view
+      let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE)[0];
+
+      if (!leaf) {
+        if (!this.isPluginActive) {
+          Logger.warn('Plugin became inactive while creating view');
+          return;
+        }
+        leaf = this.app.workspace.getRightLeaf(false);
+        if (!leaf) {
+          Logger.error('Could not create related notes view');
+          return;
+        }
+        await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE });
+        this.app.workspace.revealLeaf(leaf);
+      } else {
+        this.app.workspace.revealLeaf(leaf);
+      }
+
+      if (!this.isPluginActive) {
+        Logger.warn('Plugin became inactive while setting up view');
+        return;
+      }
+
+      // Ensure view is properly initialized
+      if (!leaf.view) {
+        await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
+      }
+
+      // Get the view after ensuring it's initialized
+      const view = leaf.view;
+      if (!(view instanceof RelatedNotesView)) {
+        Logger.error('View is not properly initialized as RelatedNotesView');
+        return;
+      }
+
+      // Check plugin is still active before updating view
+      if (!this.isPluginActive) {
+        Logger.warn('Plugin became inactive before updating view');
+        return;
+      }
+
+      // Initialize view if needed and update with related notes
+      if (!view.containerEl.children[1]) {
+        await view.onOpen();
+      }
+      await view.updateForFile(file, relatedNotes);
+      Logger.info('Related notes view updated successfully');
+    } catch (error) {
+      Logger.error(`Error showing related notes for ${file.path}:`, error);
+    } finally {
+      Logger.timeEnd(`Show related notes: ${file.path}`);
     }
   }
 
-  private async findRelatedNotes(file: TFile, currentVector: number[]) {
+  private async findRelatedNotes(file: TFile, currentVector: number[]): Promise<Array<{ file: TFile; similarity: number }>> {
+    Logger.info(`Finding related notes for ${file.path} with vector length ${currentVector.length}`);
     const similarities: Array<{ file: TFile; similarity: number }> = [];
 
     for (const [path, vector] of this.documentVectors.entries()) {
-      if (path === file.path) continue;
+      if (path === file.path || !vector) continue;
 
       const similarity = this.calculateCosineSimilarity(currentVector, vector);
+      Logger.info(`Similarity with ${path}: ${similarity}`);
+
       if (similarity >= this.settings.similarityThreshold) {
         const targetFile = this.app.vault.getAbstractFileByPath(path);
         if (targetFile instanceof TFile) {
           similarities.push({ file: targetFile, similarity });
+          Logger.info(`Added ${path} to related notes with similarity ${similarity}`);
         }
       }
     }
 
-    return similarities
+    const sortedResults = similarities
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, this.settings.maxSuggestions);
+
+    Logger.info(`Returning ${sortedResults.length} related notes after filtering and sorting`);
+    return sortedResults;
   }
 
   private calculateCosineSimilarity(vec1: number[], vec2: number[]): number {
