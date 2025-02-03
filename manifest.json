@@ -3,9 +3,11 @@
 	"name": "Related Notes",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
+	"description": "Discover related notes automatically using Natural Language Processing (NLP) and TF-IDF similarity analysis.",
 	"author": "Oluwasanya Awe",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"authorUrl": "https://github.com/mrboxtobox/obsidian-related-notes",
+	"fundingUrl": {
+		"Github": "https://github.com/sponsors/mrboxtobox"
+	},
 	"isDesktopOnly": false
 }
