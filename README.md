@@ -1,15 +1,15 @@
 # Related Notes Plugin for Obsidian
 
-A powerful plugin for Obsidian that automatically discovers and suggests related notes using Natural Language Processing (NLP) and TF-IDF similarity analysis. It helps you uncover connections between your notes that you might have missed.
+A powerful plugin for Obsidian that automatically discovers and suggests related notes using Natural Language Processing (NLP) and BM25 similarity analysis. It helps you uncover connections between your notes that you might have missed.
 
 ## Features
 
 - 🔍 Automatically analyzes note content using NLP techniques
-- 📊 Uses TF-IDF (Term Frequency-Inverse Document Frequency) for accurate similarity matching
+- 📊 Uses BM25 (Best Matching 25) for accurate content-based similarity matching
 - 🎯 Configurable similarity threshold for fine-tuned suggestions
-- 📝 Shows similarity scores for each related note
-- 🔗 Quick "Add Link" button to reference related notes
-- 💾 Persistent caching for improved performance
+- 🔗 Smart "Add Link" button that shows when a link already exists
+- 💾 Smart caching with file modification tracking
+- 📄 Intelligent file type filtering (only processes text-based files)
 - ⚡ Real-time updates as you edit notes
 - 🎨 Clean, native-looking UI that matches Obsidian's theme
 
@@ -33,6 +33,7 @@ A powerful plugin for Obsidian that automatically discovers and suggests related
 
 1. When viewing related notes, click the "Add Link" button next to any suggestion
 2. A link to that note will be inserted at your current cursor position
+3. Once linked, the button will change to "Linked" to indicate the connection exists
 
 ## Configuration
 
@@ -40,17 +41,31 @@ The plugin can be configured through the settings tab:
 
 - **Debug Mode**: Enable detailed logging for troubleshooting and development
 - **Similarity Threshold** (0-1): Minimum similarity score required to consider notes as related
-- **Existing Link Weight** (0-1): Weight given to existing links when calculating relationships
-- **Content Similarity Weight** (0-1): Weight given to content similarity when calculating relationships
 - **Maximum Suggestions** (1-10): Maximum number of related notes to display
-- **Cache Timeout** (1-30 minutes): How long to cache similarity calculations
+
+### File Type Support
+
+The plugin processes the following file types:
+- Markdown (.md)
+- Text (.txt)
+- Web files (.html, .css, .js, .jsx, .ts, .tsx)
+- Configuration files (.json, .yml, .yaml)
+
+Other file types (like images, PDFs, etc.) are automatically skipped to optimize performance.
+
+### Caching System
+
+The plugin uses a sophisticated caching system to improve performance:
+- Vectors are cached in memory and persisted to disk
+- Cache invalidation based on file modification time (automatically recomputes if file changes)
+- Smart cache management to prevent unnecessary recomputation
 
 ### Debug Logging
 
 When Debug Mode is enabled, the plugin provides detailed logging about its operations:
 
 - Text processing and tokenization details
-- TF-IDF calculations and similarity scores
+- BM25 calculations and similarity scores
 - File processing events and timing
 - UI updates and user interactions
 - Cache operations and performance metrics
@@ -109,8 +124,6 @@ npm run build
 
 ### Key Dependencies
 
-- `natural` - Natural language processing library
-- `levelup/leveldown` - Persistent storage for caching
 - `obsidian` - Obsidian API types and utilities
 
 ## Building From Source

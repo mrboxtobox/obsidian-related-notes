@@ -44,6 +44,15 @@ export class RelatedNotesView extends ItemView {
     Logger.info('Related Notes view DOM structure initialized');
   }
 
+  private hasExistingLink(content: string, targetBasename: string): boolean {
+    const relatedSectionRegex = /\n## Related Notes\n([\s\S]*?)(\n#|$)/;
+    const match = content.match(relatedSectionRegex);
+    if (match) {
+      return match[1].includes(`[[${targetBasename}]]`);
+    }
+    return false;
+  }
+
   async updateForFile(file: TFile | null, relatedNotes: Array<{ file: TFile; similarity: number }>) {
     Logger.info('Updating view for file:', file?.path);
 
@@ -86,7 +95,10 @@ export class RelatedNotesView extends ItemView {
     const listEl = contentEl.createEl('ul');
     listEl.addClass('related-notes-list');
 
-    for (const { file: relatedFile, similarity } of relatedNotes) {
+    // Get current file content to check for existing links
+    const currentContent = await this.app.vault.read(file);
+
+    for (const { file: relatedFile } of relatedNotes) {
       const listItemEl = listEl.createEl('li');
       listItemEl.addClass('related-note-item');
 
@@ -96,12 +108,6 @@ export class RelatedNotesView extends ItemView {
         cls: 'related-note-link'
       });
 
-      // Add similarity score
-      const scoreEl = listItemEl.createEl('span', {
-        text: ` (${(similarity * 100).toFixed(1)}% similar)`,
-        cls: 'related-note-score'
-      });
-
       // Add click handler
       linkEl.addEventListener('click', async (e) => {
         e.preventDefault();
@@ -109,26 +115,80 @@ export class RelatedNotesView extends ItemView {
         await this.app.workspace.getLeaf().openFile(relatedFile);
       });
 
-      // Add "Add Link" button
+      // Check if link already exists
+      const hasLink = this.hasExistingLink(currentContent, relatedFile.basename);
+
+      // Add "Add Link" button with appropriate state
       const addLinkButton = listItemEl.createEl('button', {
-        text: 'Add Link',
-        cls: 'related-note-add-link'
+        text: hasLink ? 'Linked' : 'Add Link',
+        cls: hasLink ? 'related-note-linked' : 'related-note-add-link'
       });
 
-      addLinkButton.addEventListener('click', async () => {
-        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!activeView) {
-          Logger.warn('No active view found when attempting to add link');
-          return;
-        }
+      if (!hasLink) {
+        addLinkButton.addEventListener('click', async () => {
+          if (!this.currentFile) {
+            Logger.warn('No current file when attempting to add link');
+            return;
+          }
 
-        Logger.info('Adding link to note:', relatedFile.path);
-        const editor = activeView.editor;
-        const cursor = editor.getCursor();
-        const linkText = `[[${relatedFile.basename}]]`;
-        editor.replaceRange(linkText, cursor);
-        Logger.info('Link added successfully');
-      });
+          const activeLeaf = this.app.workspace.getLeaf(false);
+          if (!activeLeaf) {
+            Logger.warn('No active leaf found when attempting to add link');
+            return;
+          }
+
+          // Ensure the current file is open and active
+          await activeLeaf.openFile(this.currentFile);
+          const activeView = activeLeaf.view;
+
+          if (!(activeView instanceof MarkdownView)) {
+            Logger.warn('Active view is not a markdown view');
+            return;
+          }
+
+          Logger.info('Adding link to note:', relatedFile.path);
+          const editor = activeView.editor;
+          const content = editor.getValue();
+
+          // Find or create the Related Notes section at the bottom
+          const relatedSectionRegex = /\n## Related Notes\n([\s\S]*?)(\n#|$)/;
+          let newContent: string;
+
+          const match = content.match(relatedSectionRegex);
+          if (match) {
+            // Section exists, append link if it doesn't already exist
+            const existingLinks = match[1];
+
+            // Check if link already exists
+            if (!existingLinks.includes(`[[${relatedFile.basename}]]`)) {
+              // Replace the section with existing links plus new link
+              newContent = content.replace(
+                relatedSectionRegex,
+                `\n## Related Notes\n${existingLinks}[[${relatedFile.basename}]]\n$2`
+              );
+            } else {
+              // Link already exists, don't modify content
+              Logger.info('Link already exists in Related Notes section');
+              return;
+            }
+          } else {
+            // Create new section at the bottom
+            if (content.endsWith('\n')) {
+              newContent = content + `\n## Related Notes\n[[${relatedFile.basename}]]\n`;
+            } else {
+              newContent = content + `\n\n## Related Notes\n[[${relatedFile.basename}]]\n`;
+            }
+          }
+
+          editor.setValue(newContent);
+          Logger.info('Link added successfully to Related Notes section');
+
+          // Update button state
+          addLinkButton.setText('Linked');
+          addLinkButton.removeClass('related-note-add-link');
+          addLinkButton.addClass('related-note-linked');
+        });
+      }
     }
   }
 }
@@ -158,12 +218,6 @@ style.textContent = `
   flex-grow: 1;
 }
 
-.related-note-score {
-  color: var(--text-muted);
-  font-size: 0.9em;
-  margin-right: 10px;
-}
-
 .related-note-add-link {
   font-size: 0.8em;
   padding: 4px 8px;
@@ -177,6 +231,16 @@ style.textContent = `
 
 .related-note-add-link:hover {
   background-color: var(--interactive-accent-hover);
+}
+
+.related-note-linked {
+  font-size: 0.8em;
+  padding: 4px 8px;
+  background-color: var(--background-modifier-success);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 4px;
+  cursor: default;
 }
 `;
 
