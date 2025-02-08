@@ -1,7 +1,7 @@
 # LLM Context for Obsidian Related Notes Plugin
 
 ## Project Overview
-This is a production-ready Obsidian plugin that suggests related notes using NLP and TF-IDF similarity analysis. The plugin is at version 1.0.0 and uses modern dependencies for natural language processing and data persistence.
+This is a production-ready Obsidian plugin that suggests related notes using NLP and BM25 similarity analysis. The plugin is at version 1.0.0 and uses modern dependencies for natural language processing and data persistence.
 
 ## Key Files
 - `main.ts` - Core plugin functionality
@@ -57,9 +57,10 @@ The project uses esbuild for bundling and includes:
    - [x] Manifest configured
 
 ## Outstanding Tasks
-1. Monitor the effectiveness of the recent fix for side panel visibility:
-   - Added `revealLeaf` calls in `showRelatedNotes` method to ensure side panel becomes visible when dice button is clicked
-   - Verify this continues to work across different Obsidian versions and contexts
+1. Monitor BM25 effectiveness:
+   - Verify relevance ranking improvement over previous TF-IDF implementation
+   - Collect user feedback on suggestion quality
+   - Consider tuning BM25 parameters (k1 and b) based on real-world usage
 
 ## Notes for LLMs
 1. Always check version numbers in both manifest.json and package.json when making updates
@@ -69,6 +70,11 @@ The project uses esbuild for bundling and includes:
 5. Consider mobile compatibility (plugin is not desktop-only)
 6. Custom NLP Implementation:
    - WordTokenizer in nlp.ts handles text tokenization with preprocessing
-   - TfIdf in nlp.ts implements TF-IDF algorithm for document similarity
+   - BM25 in nlp.ts implements BM25 algorithm for document similarity
    - No external NLP dependencies - all algorithms implemented in-house
    - Document vectors stored using Obsidian's data API for persistence
+7. Recent Changes:
+   - Switched from TF-IDF to BM25 for better relevance ranking
+   - Removed similarity percentages from UI for cleaner display
+   - Enhanced Add Link button to show different states (Add Link/Linked)
+   - Simplified settings by focusing on content-based similarity
