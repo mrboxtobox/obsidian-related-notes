@@ -1,11 +1,13 @@
 # Related Notes Plugin for Obsidian
 
-A powerful plugin for Obsidian that automatically discovers and suggests related notes using Natural Language Processing (NLP) and BM25 similarity analysis. It helps you uncover connections between your notes that you might have missed.
+Uncover connections between notes with this plugin. It uses A powerful plugin for Obsidian that automatically discovers and suggests related notes using Natural Language Processing (NLP) and similarity analysis. It helps you uncover connections between your notes that you might have missed.
 
 ## Features
 
 - 🔍 Automatically analyzes note content using NLP techniques
-- 📊 Uses BM25 (Best Matching 25) for accurate content-based similarity matching
+- 📊 Multiple local embedding providers:
+  - BM25 (Best Matching 25) for fast term-frequency based matching
+  - Hybrid BM25 + MinHash LSH for enhanced similarity detection (formerly FastText)
 - 🎯 Configurable similarity threshold for fine-tuned suggestions
 - 🔗 Smart "Add Link" button that shows when a link already exists
 - 💾 Smart caching with file modification tracking
@@ -39,9 +41,30 @@ A powerful plugin for Obsidian that automatically discovers and suggests related
 
 The plugin can be configured through the settings tab:
 
+- **Embedding Provider**: Choose between BM25 or Hybrid BM25 + MinHash LSH
 - **Debug Mode**: Enable detailed logging for troubleshooting and development
 - **Similarity Threshold** (0-1): Minimum similarity score required to consider notes as related
 - **Maximum Suggestions** (1-10): Maximum number of related notes to display
+
+### Embedding Providers
+
+#### BM25 (Default)
+- Local processing, no data leaves your device
+- Fast and privacy-focused
+- Works well for keyword-based similarity
+- No setup required
+
+#### Hybrid BM25 + MinHash LSH (formerly FastText)
+- Three-stage hybrid approach for optimal performance:
+  1. LSH for fast candidate retrieval
+  2. MinHash for efficient similarity estimation
+  3. BM25 for term-frequency based scoring
+- Enhanced similarity detection through combined metrics
+- Efficient memory usage and fast retrieval
+- Configurable parameters for fine-tuning:
+  - Hash functions and bands for LSH
+  - BM25 scoring parameters
+- No external dependencies or setup required
 
 ### File Type Support
 
