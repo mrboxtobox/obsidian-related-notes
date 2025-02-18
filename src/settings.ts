@@ -18,6 +18,19 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     containerEl.createEl('h2', { text: 'Related Notes Settings' });
 
     new Setting(containerEl)
+      .setName('Embedding Provider')
+      .setDesc('Choose which embedding provider to use for calculating note similarity.')
+      .addDropdown(dropdown => dropdown
+        .addOption('bm25', 'BM25 (Local)')
+        .addOption('hybrid', 'Hybrid BM25 + MinHash LSH (Local)')
+        .setValue(this.plugin.settings.embeddingProvider)
+        .onChange(async (value) => {
+          this.plugin.settings.embeddingProvider = value as 'bm25' | 'hybrid';
+          await this.plugin.saveSettings();
+          Logger.info('Embedding provider changed:', value);
+        }));
+
+    new Setting(containerEl)
       .setName('Debug Mode')
       .setDesc('Enable detailed logging for troubleshooting.')
       .addToggle(toggle => toggle
