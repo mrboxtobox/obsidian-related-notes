@@ -1,134 +1,357 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+/**
+ * @file Main plugin file for the Related Notes Obsidian plugin.
+ * 
+ * This plugin suggests related notes using NLP techniques and hybrid similarity analysis.
+ * It supports both BM25 and Hybrid (BM25 + MinHash LSH) embedding providers for local processing.
+ */
 
-// Remember to rename these classes and interfaces!
+import { Plugin, TFile, MarkdownView, WorkspaceLeaf } from 'obsidian';
+import { Logger } from './logger';
+import { RelatedNotesSettingTab } from './settings';
+import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE, BM25EmbeddingProvider, HybridEmbeddingProvider } from './core';
 
-interface MyPluginSettings {
-	mySetting: string;
+/**
+ * Plugin settings interface defining configuration options
+ */
+interface RelatedNotesSettings {
+  similarityThreshold: number;
+  maxSuggestions: number;
+  embeddingProvider: 'bm25' | 'hybrid';
+  debugMode: boolean;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+const DEFAULT_SETTINGS: RelatedNotesSettings = {
+  similarityThreshold: 0.7,
+  maxSuggestions: 10,
+  embeddingProvider: 'bm25',
+  debugMode: true
+};
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+/**
+ * Main plugin class that handles initialization, event management, and core functionality
+ * for finding and displaying related notes.
+ */
+export default class RelatedNotesPlugin extends Plugin {
+  settings: RelatedNotesSettings;
+  private embeddingProvider: BM25EmbeddingProvider | HybridEmbeddingProvider;
+  private processingQueue: Set<string>;
+  private isPluginActive = false;
+  private isInitialized = false;
+  private isViewVisible = false;
 
-	async onload() {
-		await this.loadSettings();
+  async onload() {
+    Logger.info('Plugin loading...');
+    Logger.time('Plugin load');
+    this.isPluginActive = true;
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+    await this.loadSettings();
+    Logger.info('Settings loaded', this.settings);
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+    // Register view type
+    this.registerView(
+      RELATED_NOTES_VIEW_TYPE,
+      (leaf: WorkspaceLeaf) => new RelatedNotesView(leaf, this)
+    );
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+    // Initialize embedding provider
+    this.embeddingProvider = this.settings.embeddingProvider === 'bm25'
+      ? new BM25EmbeddingProvider()
+      : new HybridEmbeddingProvider();
+    await this.embeddingProvider.initialize();
+    this.processingQueue = new Set();
+    Logger.info('Embedding provider initialized');
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
+    // Initialize document index
+    await this.initializeIndex();
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+    // Add ribbon icon
+    this.addRibbonIcon(
+      'zap',
+      'Toggle Related Notes',
+      async () => {
+        const leaves = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+        if (leaves.length > 0) {
+          // View exists, detach it
+          this.isViewVisible = false;
+          this.app.workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+        } else {
+          // Create new view
+          this.isViewVisible = true;
+          const leaf = this.app.workspace.getRightLeaf(false);
+          if (leaf) {
+            await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
+            // Force the view to initialize even if no file is open
+            const view = leaf.view;
+            if (view instanceof RelatedNotesView) {
+              const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+              Logger.debug(`activeView: ${activeView} | activeView.file: ${activeView?.file}`)
+              if (activeView && activeView.file) {
+                await this.showRelatedNotes(activeView.file);
+              } else {
+                await view.updateForFile(null, []);
+              }
+            }
+          }
+        }
+      }
+    );
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
+    // Register event handlers
+    this.registerEvent(
+      this.app.workspace.on('file-open', async (file) => {
+        if (file instanceof TFile) {
+          await this.processFile(file);
+          // Only update related notes if view is already visible
+          if (this.isViewVisible) {
+            await this.showRelatedNotes(file);
+          }
+        }
+      })
+    );
 
-	onunload() {
+    // Handle file deletions
+    this.registerEvent(
+      this.app.vault.on('delete', async (file) => {
+        if (file instanceof TFile) {
+          Logger.info(`File deleted: ${file.path}`);
+          await this.embeddingProvider.cleanup();
+        }
+      })
+    );
 
-	}
+    // Handle file renames
+    this.registerEvent(
+      this.app.vault.on('rename', async (file, oldPath) => {
+        if (file instanceof TFile) {
+          Logger.info(`File renamed from ${oldPath} to ${file.path}`);
+          // Remove old path from cache
+          await this.embeddingProvider.cleanup();
+          // Process file with new path
+          await this.processFile(file);
+        }
+      })
+    );
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
+    // Handle file modifications
+    this.registerEvent(
+      this.app.vault.on('modify', async (file) => {
+        if (file instanceof TFile) {
+          Logger.info(`File modified: ${file.path}`);
+          // Only process if we have a cached embedding
+          await this.processFile(file);
+          // Update related notes if view is visible and this is the active file
+          if (this.isViewVisible) {
+            const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (activeView && activeView.file && activeView.file.path === file.path) {
+              await this.showRelatedNotes(file);
+            }
+          }
+        }
+      })
+    );
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+    // Handle file creations
+    this.registerEvent(
+      this.app.vault.on('create', async (file) => {
+        if (file instanceof TFile && file.extension === 'md') {
+          Logger.info(`New markdown file created: ${file.path}`);
+          await this.processFile(file);
+        }
+      })
+    );
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+    // Add settings tab
+    this.addSettingTab(new RelatedNotesSettingTab(this.app, this));
 
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+    // Register commands
+    this.addCommand({
+      id: 'find-related-notes',
+      name: 'Find Related Notes',
+      checkCallback: (checking: boolean) => {
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (activeView && activeView.file) {
+          if (!checking) {
+            this.showRelatedNotes(activeView.file);
+          }
+          return true;
+        }
+        return false;
+      }
+    });
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
+    Logger.timeEnd('Plugin load');
+    Logger.info('Plugin loaded successfully');
+  }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+  async onunload() {
+    Logger.info('Plugin unloading...');
+    this.isPluginActive = false;
+    this.isViewVisible = false;
+    await this.embeddingProvider.cleanup();
+    this.app.workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+  }
 
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
 
-	display(): void {
-		const {containerEl} = this;
+  async saveSettings() {
+    const oldProvider = this.settings.embeddingProvider;
+    await this.saveData(this.settings);
 
-		containerEl.empty();
+    // Check if embedding provider settings changed
+    if (this.settings.embeddingProvider !== oldProvider) {
+      Logger.info('Embedding provider settings changed, reinitializing...');
+      this.embeddingProvider = this.settings.embeddingProvider === 'bm25'
+        ? new BM25EmbeddingProvider()
+        : new HybridEmbeddingProvider();
+      await this.embeddingProvider.initialize();
+      // Clear initialization flag to reprocess files with new provider
+      this.isInitialized = false;
+      await this.initializeIndex();
+    }
+  }
 
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+  public isMarkdownFile(file: TFile): boolean {
+    return file.extension.toLowerCase() === 'md';
+  }
+
+  private async initializeIndex() {
+    if (this.isInitialized) return;
+
+    Logger.info('Initializing document index...');
+    const markdownFiles = this.app.vault.getMarkdownFiles();
+
+    for (const file of markdownFiles) {
+      if (this.processingQueue.has(file.path)) continue;
+      await this.processFile(file);
+    }
+
+    this.isInitialized = true;
+    Logger.info('Document index initialized');
+  }
+
+  private async processFile(file: TFile) {
+    if (this.processingQueue.has(file.path)) {
+      Logger.info(`File ${file.path} is already being processed, skipping`);
+      return;
+    }
+
+    // Skip non-markdown files
+    if (!this.isMarkdownFile(file)) {
+      Logger.info(`Skipping non-markdown file: ${file.path}`);
+      return;
+    }
+
+    Logger.time(`Process file: ${file.path}`);
+    Logger.info(`Processing file: ${file.path}`);
+    this.processingQueue.add(file.path);
+
+    try {
+      const content = await this.app.vault.read(file);
+      await this.embeddingProvider.generateEmbedding(content);
+    } catch (error) {
+      Logger.error(`Error processing file ${file.path}:`, error);
+    } finally {
+      this.processingQueue.delete(file.path);
+      Logger.timeEnd(`Process file: ${file.path}`);
+    }
+  }
+
+
+  private async showRelatedNotes(file: TFile) {
+    if (!this.isPluginActive) {
+      Logger.warn('Plugin is not active, cannot show related notes');
+      return;
+    }
+
+    if (!file) {
+      Logger.warn('Attempted to show related notes with no file');
+      return;
+    }
+
+    Logger.time(`Show related notes: ${file.path}`);
+    Logger.info(`Finding related notes for: ${file.path}`);
+
+    try {
+      const content = await this.app.vault.read(file);
+      const vector = await this.embeddingProvider.generateEmbedding(content);
+      const relatedNotes = await this.findRelatedNotes(file, vector);
+
+      // Get or create the related notes view
+      let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE)[0];
+
+      if (!leaf) {
+        if (!this.isPluginActive) {
+          Logger.warn('Plugin became inactive while creating view');
+          return;
+        }
+        leaf = this.app.workspace.getRightLeaf(false);
+        if (!leaf) {
+          Logger.error('Could not create related notes view');
+          return;
+        }
+        await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE });
+        this.app.workspace.revealLeaf(leaf);
+      } else {
+        this.app.workspace.revealLeaf(leaf);
+      }
+
+      if (!this.isPluginActive) {
+        Logger.warn('Plugin became inactive while setting up view');
+        return;
+      }
+
+      // Ensure view is properly initialized
+      if (!leaf.view) {
+        await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
+      }
+
+      // Get the view after ensuring it's initialized
+      const view = leaf.view;
+      if (!(view instanceof RelatedNotesView)) {
+        Logger.error('View is not properly initialized as RelatedNotesView');
+        return;
+      }
+
+      // Check plugin is still active before updating view
+      if (!this.isPluginActive) {
+        Logger.warn('Plugin became inactive before updating view');
+        return;
+      }
+
+      // Initialize view if needed and update with related notes
+      if (!view.containerEl.children[1]) {
+        await view.onOpen();
+      }
+      await view.updateForFile(file, relatedNotes);
+      Logger.info('Related notes view updated successfully');
+    } catch (error) {
+      Logger.error(`Error showing related notes for ${file.path}:`, error);
+    } finally {
+      Logger.timeEnd(`Show related notes: ${file.path}`);
+    }
+  }
+
+  private async findRelatedNotes(file: TFile, currentVector: number[]): Promise<Array<{ file: TFile; similarity: number }>> {
+    const similarities: Array<{ file: TFile; similarity: number }> = [];
+    const allFiles = this.app.vault.getMarkdownFiles();
+
+    for (const otherFile of allFiles) {
+      if (otherFile.path === file.path) continue;
+
+      const content = await this.app.vault.read(otherFile);
+      const otherVector = await this.embeddingProvider.generateEmbedding(content);
+      const similarity = this.embeddingProvider.calculateSimilarity(currentVector, otherVector);
+
+      if (similarity >= this.settings.similarityThreshold) {
+        similarities.push({ file: otherFile, similarity });
+      }
+    }
+
+    return similarities
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, this.settings.maxSuggestions);
+  }
 }
