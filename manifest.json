@@ -1,13 +1,17 @@
 {
 	"id": "obsidian-related-notes",
+	"description": "Discover related notes and uncover missed connections",
+	"author": "Oluwasanya Awe",
+	"minAppVersion": "0.15.0",
 	"name": "Related Notes",
 	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Discover related notes automatically using Natural Language Processing (NLP) and TF-IDF similarity analysis.",
-	"author": "Oluwasanya Awe",
-	"authorUrl": "https://github.com/mrboxtobox/obsidian-related-notes",
+	"authorUrl": "https://straitstreet.co/",
 	"fundingUrl": {
-		"Github": "https://github.com/sponsors/mrboxtobox"
+		"Buy Me a Coffee": "https://buymeacoffee.com/oluwasanya"
 	},
-	"isDesktopOnly": false
+	"isDesktopOnly": false,
+	"files": [
+		"main.js",
+		"styles.css"
+	]
 }

@@ -1,7 +1,7 @@
 # LLM Context for Obsidian Related Notes Plugin
 
 ## Project Overview
-This is a production-ready Obsidian plugin that suggests related notes using NLP and hybrid similarity analysis. The plugin uses a combination of BM25 and MinHash LSH for efficient local processing, with no external dependencies.
+This is a production-ready Obsidian plugin that suggests related notes using proven text similarity algorithms. The plugin uses a combination of BM25 and MinHash LSH for efficient local processing, with no external dependencies.
 
 ## Key Files
 - `main.ts` - Core plugin functionality and event handling
@@ -9,10 +9,10 @@ This is a production-ready Obsidian plugin that suggests related notes using NLP
   - File event handling (create, modify, delete, rename)
   - Settings management
   - View registration and management
-- `core.ts` - Core NLP functionality and embedding providers
+- `core.ts` - Core similarity algorithms and providers
   - RelatedNotesView implementation
-  - BM25EmbeddingProvider implementation
-  - HybridEmbeddingProvider implementation
+  - BM25Provider implementation
+  - MinHashLSHProvider implementation
   - WordTokenizer and similarity calculation utilities
 - `settings.ts` - Settings management
   - Settings UI implementation
@@ -47,24 +47,25 @@ The project uses esbuild for bundling and includes:
 
 ## Implementation Details
 
-### NLP Implementation
+### Similarity Algorithms
 1. BM25 Provider
    - Classic BM25 algorithm for document similarity
    - Optimized for keyword-based matching
    - Fast local processing with no external dependencies
+   - Ideal for small to medium-sized vaults
 
-2. Hybrid Provider (BM25 + MinHash LSH)
+2. MinHash LSH + BM25 Provider
    - Three-stage hybrid retrieval approach:
      1. LSH (Locality-Sensitive Hashing) for fast candidate retrieval
      2. MinHash for efficient similarity estimation
      3. BM25 for term-frequency based scoring
+   - Recommended for large vaults (>10,000 notes)
+   - Sub-linear search time complexity
    - Configurable parameters:
      - numHashes: Number of hash functions for MinHash (default: 100)
      - numBands: Number of bands for LSH (default: 20)
      - k1: BM25 term frequency saturation parameter (default: 1.5)
      - b: BM25 document length normalization (default: 0.75)
-     - titleWeight: Weight for title matches (default: 2.0)
-     - fuzzyDistance: Levenshtein distance for fuzzy matching (default: 1)
 
 ### Core Components
 1. Document Processing
@@ -74,14 +75,18 @@ The project uses esbuild for bundling and includes:
    - Tokenization and normalization
 
 2. Similarity Calculation
-   - Combined Jaccard and BM25 similarity scores
-   - Efficient vector operations
+   - BM25 scoring for term importance
+   - MinHash signatures for efficient Jaccard similarity estimation
+   - LSH for sub-linear time candidate retrieval
    - Configurable similarity thresholds
 
 3. Caching System
-   - In-memory vector caching
-   - File modification tracking
-   - Smart cache invalidation
+   - Document signatures cached in memory
+   - BM25 vectors cached for fast scoring
+   - LSH index structures maintained for efficient retrieval
+   - Cache invalidation based on file modification time
+   - Indexes and scores only recomputed when content changes
+   - Smart cache management to prevent unnecessary recomputation
 
 4. UI Components
    - Native Obsidian theme integration
@@ -100,11 +105,11 @@ The project uses esbuild for bundling and includes:
    - Consider Obsidian API compatibility
 
 3. **Testing Areas**
-   - NLP functionality with various note contents
+   - Similarity algorithm effectiveness
    - Cache performance with large vaults
    - UI responsiveness
    - Settings persistence
-   - MinHash LSH effectiveness
+   - MinHash LSH scalability
 
 4. **Production Checklist**
    - [x] Version numbers synchronized
@@ -115,8 +120,8 @@ The project uses esbuild for bundling and includes:
    - [x] Manifest configured
 
 ## Outstanding Tasks
-1. Monitor hybrid embedding effectiveness:
-   - Compare BM25-only vs hybrid approach
+1. Monitor similarity algorithm effectiveness:
+   - Compare BM25-only vs MinHash LSH approach
    - Collect user feedback on suggestion quality
    - Evaluate MinHash parameter tuning
    - Analyze LSH band configuration impact
@@ -139,15 +144,17 @@ The project uses esbuild for bundling and includes:
 3. UI components follow Obsidian's design patterns
 4. Cache implementation is critical for performance
 5. Consider mobile compatibility
-6. All NLP algorithms are implemented in-house
+6. All similarity algorithms are implemented in-house
 7. Document vectors use Obsidian's data API for persistence
 
 ## Recent Changes
-- Removed manual styles loading (`loadStyles()` method) since Obsidian automatically loads plugin CSS files
-- Improved documentation with detailed JSDoc comments
+- Removed unnecessary embedding references
+- Clarified BM25 and MinHash LSH implementations
+- Added recommendation for MinHash LSH with large corpora (>10,000 notes)
+- Enhanced caching system with smarter invalidation
+- Improved documentation with detailed algorithm descriptions
 - Enhanced error handling and logging
-- Refined similarity calculation with combined metrics
-- Improved efficiency with LSH-based retrieval
+- Refined similarity calculation with proper index management
 - Added proper TypeScript type safety
 
 ## Style Loading
