@@ -1,17 +1,17 @@
 # Related Notes Plugin for Obsidian
 
-Uncover connections between notes with this plugin. It uses A powerful plugin for Obsidian that automatically discovers and suggests related notes using Natural Language Processing (NLP) and similarity analysis. It helps you uncover connections between your notes that you might have missed.
+Uncover connections between notes with this plugin. This plugin uses advanced text similarity techniques to automatically suggest related notes based on content similarity, helping you discover connections in your knowledge base.
 
 ## Features
 
-- 🔍 Automatically analyzes note content using NLP techniques
-- 📊 Multiple local embedding providers:
+- 🔍 Automatically analyzes note content using proven similarity algorithms
+- 📊 Multiple local similarity providers:
   - BM25 (Best Matching 25) for fast term-frequency based matching
-  - Hybrid BM25 + MinHash LSH for enhanced similarity detection (formerly FastText)
+  - MinHash LSH + BM25 for efficient large-scale similarity detection
 - 🎯 Configurable similarity threshold for fine-tuned suggestions
 - 🔗 Smart "Add Link" button that shows when a link already exists
-- 💾 Smart caching with file modification tracking
-- 📄 Intelligent file type filtering (only processes text-based files)
+- 💾 Intelligent caching with file modification tracking
+- 📄 Intelligent file type filtering (only processes markdown files)
 - ⚡ Real-time updates as you edit notes
 - 🎨 Clean, native-looking UI that matches Obsidian's theme
 
@@ -41,26 +41,27 @@ Uncover connections between notes with this plugin. It uses A powerful plugin fo
 
 The plugin can be configured through the settings tab:
 
-- **Embedding Provider**: Choose between BM25 or Hybrid BM25 + MinHash LSH
+- **Similarity Provider**: Choose between BM25 or MinHash LSH + BM25
 - **Debug Mode**: Enable detailed logging for troubleshooting and development
 - **Similarity Threshold** (0-1): Minimum similarity score required to consider notes as related
 - **Maximum Suggestions** (1-10): Maximum number of related notes to display
 
-### Embedding Providers
+### Similarity Providers
 
 #### BM25 (Default)
 - Local processing, no data leaves your device
 - Fast and privacy-focused
 - Works well for keyword-based similarity
+- Ideal for small to medium-sized vaults
 - No setup required
 
-#### Hybrid BM25 + MinHash LSH (formerly FastText)
+#### MinHash LSH + BM25
 - Three-stage hybrid approach for optimal performance:
   1. LSH for fast candidate retrieval
   2. MinHash for efficient similarity estimation
   3. BM25 for term-frequency based scoring
-- Enhanced similarity detection through combined metrics
-- Efficient memory usage and fast retrieval
+- Recommended for large vaults (>10,000 notes)
+- Efficient memory usage and sub-linear search time
 - Configurable parameters for fine-tuning:
   - Hash functions and bands for LSH
   - BM25 scoring parameters
@@ -68,19 +69,15 @@ The plugin can be configured through the settings tab:
 
 ### File Type Support
 
-The plugin processes the following file types:
-- Markdown (.md)
-- Text (.txt)
-- Web files (.html, .css, .js, .jsx, .ts, .tsx)
-- Configuration files (.json, .yml, .yaml)
-
-Other file types (like images, PDFs, etc.) are automatically skipped to optimize performance.
+The plugin currently processes Markdown (.md) files only, as these are the primary content files in Obsidian. Other file types are automatically skipped to optimize performance and maintain focus on note relationships.
 
 ### Caching System
 
-The plugin uses a sophisticated caching system to improve performance:
-- Vectors are cached in memory and persisted to disk
-- Cache invalidation based on file modification time (automatically recomputes if file changes)
+The plugin uses an intelligent caching system to improve performance:
+- Document signatures and BM25 vectors are cached in memory
+- LSH index structures are maintained for efficient retrieval
+- Cache invalidation based on file modification time
+- Indexes and scores are only recomputed when content changes
 - Smart cache management to prevent unnecessary recomputation
 
 ### Debug Logging
@@ -89,6 +86,8 @@ When Debug Mode is enabled, the plugin provides detailed logging about its opera
 
 - Text processing and tokenization details
 - BM25 calculations and similarity scores
+- MinHash signature generation
+- LSH index operations
 - File processing events and timing
 - UI updates and user interactions
 - Cache operations and performance metrics
@@ -108,8 +107,8 @@ This can be helpful for:
 
 ### Prerequisites
 
-- Node.js 16+
-- npm or yarn
+- Node.js 18+
+- npm
 - Basic knowledge of TypeScript and Obsidian Plugin Development
 
 ### Setup
@@ -138,9 +137,10 @@ npm run build
 
 ### Project Structure
 
-- `main.ts` - Main plugin file with core functionality
+- `main.ts` - Main plugin file with core functionality and event handling
+- `core.ts` - Core similarity algorithms and providers
 - `settings.ts` - Settings tab implementation
-- `ui.ts` - Related notes view implementation
+- `logger.ts` - Logging utility
 - `styles.css` - Custom CSS styles
 - `manifest.json` - Plugin manifest
 - `package.json` - Project configuration and dependencies
