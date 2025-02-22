@@ -147,6 +147,13 @@ The project uses esbuild for bundling and includes:
 7. Document vectors use Obsidian's data API for persistence
 
 ## Recent Changes
+- Added top contributing words feature:
+  - Each related note now shows the top 2 words that contributed to its similarity score
+  - Words are displayed as clickable hashtags
+  - Clicking a hashtag triggers Obsidian's search for that word
+  - Enhanced similarity providers to track word contributions
+  - Added CSS styling for hashtags with hover effects
+- Previous changes:
 - Removed "Add Link" functionality to simplify the UI and focus on core similarity features
 - Implemented two-stage similarity search for MinHash LSH provider:
   - Stage 1: Use LSH for fast candidate filtering (0.5x threshold)

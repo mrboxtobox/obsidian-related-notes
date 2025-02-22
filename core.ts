@@ -32,6 +32,19 @@ export class RelatedNotesView extends ItemView {
     return 'Related Notes';
   }
 
+  private setLoading(loading: boolean) {
+    const container = this.containerEl.children[1];
+    if (!container) return;
+
+    const existingLoader = container.querySelector('.related-notes-loading');
+    if (loading && !existingLoader) {
+      const loader = container.createDiv({ cls: 'related-notes-loading' });
+      loader.textContent = 'Indexing notes...';
+    } else if (!loading && existingLoader) {
+      existingLoader.remove();
+    }
+  }
+
   public async onOpen() {
     if (!this.containerEl.children[1]) {
       this.containerEl.createDiv();
@@ -61,10 +74,12 @@ export class RelatedNotesView extends ItemView {
     return match ? match[1].includes(`[[${targetBasename}]]`) : false;
   }
 
-  public async updateForFile(file: TFile | null, relatedNotes: Array<{ file: TFile; similarity: number }>) {
+  public async updateForFile(file: TFile | null, relatedNotes: Array<{ file: TFile; similarity: number; topWords: string[] }>, isIndexing?: boolean) {
     const fragment = document.createDocumentFragment();
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;
+
+    this.setLoading(isIndexing || false);
 
     // Prepare content based on file state
     if (!file) {
@@ -89,7 +104,7 @@ export class RelatedNotesView extends ItemView {
       const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
       const currentContent = await this.app.vault.cachedRead(file);
 
-      const listItems = await Promise.all(relatedNotes.map(async ({ file: relatedFile, similarity }) => {
+      const listItems = await Promise.all(relatedNotes.map(async ({ file: relatedFile, similarity, topWords }) => {
         const listItemEl = document.createElement('li');
         listItemEl.className = 'related-note-item';
 
@@ -110,6 +125,33 @@ export class RelatedNotesView extends ItemView {
         }
 
         listItemEl.appendChild(linkContainer);
+
+        // Add hashtags if available
+        if (topWords && topWords.length > 0) {
+          const hashtagsContainer = document.createElement('div');
+          hashtagsContainer.className = 'related-note-hashtags';
+
+          topWords.forEach(word => {
+            const hashtag = document.createElement('span');
+            hashtag.className = 'related-note-hashtag';
+            hashtag.textContent = `#${word}`;
+            hashtag.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              // Trigger search for this word
+              const searchLeaf = this.app.workspace.getLeavesOfType('search')[0] ||
+                this.app.workspace.getRightLeaf(false);
+              this.app.workspace.revealLeaf(searchLeaf);
+              searchLeaf.setViewState({
+                type: 'search',
+                state: { query: word }
+              });
+            });
+            hashtagsContainer.appendChild(hashtag);
+          });
+
+          listItemEl.appendChild(hashtagsContainer);
+        }
 
         // Add event listener for link click
         linkEl.addEventListener('click', async (e) => {
@@ -142,7 +184,7 @@ export interface SimilarityProvider {
   initialize(): Promise<void>;
   cleanup(path?: string): Promise<void>;
   generateVector(text: string): Promise<number[]>;
-  calculateSimilarity(vec1: number[], vec2: number[]): number;
+  calculateSimilarity(vec1: number[], vec2: number[]): { similarity: number; topWords: string[] };
 }
 
 interface TokenizeOptions {
@@ -292,7 +334,7 @@ export class BM25 {
   private avgDocLength: number;
   private k1: number;
   private b: number;
-  private vocabulary: Map<string, number>; // Maps terms to their fixed position in vectors
+  vocabulary: Map<string, number>; // Maps terms to their fixed position in vectors
   private nextTermIndex: number;
 
   constructor(config: { k1: number; b: number } = DEFAULT_CONFIG.bm25) {
@@ -422,6 +464,10 @@ export class BM25Provider implements SimilarityProvider {
   private bm25: BM25;
   private tokenizer: WordTokenizer;
 
+  get vocabulary(): Map<string, number> {
+    return this.bm25.vocabulary;
+  }
+
   constructor() {
     this.bm25 = new BM25(DEFAULT_CONFIG.bm25);
     this.tokenizer = new WordTokenizer();
@@ -449,7 +495,7 @@ export class BM25Provider implements SimilarityProvider {
     return vector;
   }
 
-  calculateSimilarity(vec1: number[], vec2: number[]): number {
+  calculateSimilarity(vec1: number[], vec2: number[]): { similarity: number; topWords: string[] } {
     if (vec1.length !== vec2.length) {
       throw new Error(`Vectors must have the same length. Got ${vec1.length} and ${vec2.length}`);
     }
@@ -457,15 +503,32 @@ export class BM25Provider implements SimilarityProvider {
     let dotProduct = 0;
     let norm1 = 0;
     let norm2 = 0;
+    const contributions: { word: string; contribution: number }[] = [];
 
     for (let i = 0; i < vec1.length; i++) {
-      dotProduct += vec1[i] * vec2[i];
+      const contribution = vec1[i] * vec2[i];
+      dotProduct += contribution;
       norm1 += vec1[i] * vec1[i];
       norm2 += vec2[i] * vec2[i];
+
+      // Get the word for this vector position
+      for (const [word, index] of this.vocabulary.entries()) {
+        if (index === i && contribution > 0) {
+          contributions.push({ word, contribution });
+          break;
+        }
+      }
     }
 
-    if (norm1 === 0 || norm2 === 0) return 0;
-    return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+    if (norm1 === 0 || norm2 === 0) return { similarity: 0, topWords: [] };
+
+    const similarity = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+    const topWords = contributions
+      .sort((a, b) => b.contribution - a.contribution)
+      .slice(0, 2)
+      .map(c => c.word);
+
+    return { similarity, topWords };
   }
 }
 
@@ -546,23 +609,42 @@ export class MinHashLSHProvider implements SimilarityProvider {
     }
   }
 
-  calculateSimilarity(vec1: any, vec2: any): number {
+  calculateSimilarity(vec1: any, vec2: any): { similarity: number; topWords: string[] } {
     // For temporary vectors (during search), use BM25 similarity
     if (vec1.type === 'temp' || vec2.type === 'temp') {
       const bm251 = vec1.type === 'temp' ? vec1.bm25 : vec1;
       const bm252 = vec2.type === 'temp' ? vec2.bm25 : vec2;
 
-      // Calculate BM25 cosine similarity
+      // Calculate BM25 cosine similarity with word contributions
       let dotProduct = 0;
       let norm1 = 0;
       let norm2 = 0;
+      const contributions: { word: string; contribution: number }[] = [];
+
       for (let i = 0; i < bm251.length; i++) {
-        dotProduct += bm251[i] * bm252[i];
+        const contribution = bm251[i] * bm252[i];
+        dotProduct += contribution;
         norm1 += bm251[i] * bm251[i];
         norm2 += bm252[i] * bm252[i];
+
+        // Get the word for this vector position
+        for (const [word, index] of this.bm25.vocabulary.entries()) {
+          if (index === i && contribution > 0) {
+            contributions.push({ word, contribution });
+            break;
+          }
+        }
       }
-      return norm1 === 0 || norm2 === 0 ? 0 :
+
+      const similarity = norm1 === 0 || norm2 === 0 ? 0 :
         dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+
+      const topWords = contributions
+        .sort((a, b) => b.contribution - a.contribution)
+        .slice(0, 2)
+        .map(c => c.word);
+
+      return { similarity, topWords };
     }
 
     // For LSH filtering (between stored vectors), use MinHash similarity
@@ -573,7 +655,10 @@ export class MinHashLSHProvider implements SimilarityProvider {
     for (let i = 0; i < this.similarity.numHashes; i++) {
       if (minhash1[i] === minhash2[i]) matches++;
     }
-    return matches / this.similarity.numHashes;
+    return {
+      similarity: matches / this.similarity.numHashes,
+      topWords: [] // MinHash doesn't provide word-level contributions
+    };
   }
 }
 
