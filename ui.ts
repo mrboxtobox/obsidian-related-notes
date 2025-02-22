@@ -6,7 +6,6 @@
 import { ItemView, WorkspaceLeaf, TFile, MarkdownView } from 'obsidian';
 import RelatedNotesPlugin from './main';
 import { Logger } from './utils';
-import { RelatedNotesSettings } from './settings';
 
 // UI Components
 export const RELATED_NOTES_VIEW_TYPE = 'related-notes-view';

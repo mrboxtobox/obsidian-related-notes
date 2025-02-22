@@ -7,16 +7,23 @@
 
 import { Plugin, TFile, MarkdownView, WorkspaceLeaf } from 'obsidian';
 import { Logger, LogLevel } from './utils';
-import { RelatedNotesSettingTab, RelatedNotesSettings, DEFAULT_CONFIG } from './settings';
 import { SimilarityProvider, SimilarityProviderV2 } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 
+interface RelatedNotesSettings {
+  similarityThreshold: number,
+  maxSuggestions: number,
+  debugMode: boolean,
+  showAdvanced: boolean,
+  logLevel: LogLevel,
+}
+
 const DEFAULT_SETTINGS: RelatedNotesSettings = {
   similarityThreshold: 0.0,
-  maxSuggestions: 10,
+  maxSuggestions: 20,
   debugMode: true,
   showAdvanced: false,
-  logLevel: 'debug',
+  logLevel: LogLevel.DEBUG,
 };
 
 /**
@@ -141,8 +148,6 @@ export default class RelatedNotesPlugin extends Plugin {
       })
     );
 
-    this.addSettingTab(new RelatedNotesSettingTab(this.app, this));
-
     this.addCommand({
       id: 'toggle-related-notes',
       name: 'Toggle related notes',
@@ -176,32 +181,10 @@ export default class RelatedNotesPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-
-    // Set log level based on settings
-    const logLevelMap: Record<RelatedNotesSettings['logLevel'], LogLevel> = {
-      'error': LogLevel.ERROR,
-      'warn': LogLevel.WARN,
-      'info': LogLevel.INFO,
-      'debug': LogLevel.DEBUG
-    };
-    Logger.setLogLevel(logLevelMap[this.settings.logLevel]);
   }
 
   async saveSettings() {
-    const oldLogLevel = this.settings.logLevel;
     await this.saveData(this.settings);
-
-    // Update log level if changed
-    if (oldLogLevel !== this.settings.logLevel) {
-      const logLevelMap: Record<RelatedNotesSettings['logLevel'], LogLevel> = {
-        'error': LogLevel.ERROR,
-        'warn': LogLevel.WARN,
-        'info': LogLevel.INFO,
-        'debug': LogLevel.DEBUG
-      };
-      Logger.setLogLevel(logLevelMap[this.settings.logLevel]);
-      Logger.info('Log level changed to: ' + this.settings.logLevel);
-    }
   }
 
   public isMarkdownFile(file: TFile): boolean {
@@ -224,14 +207,16 @@ export default class RelatedNotesPlugin extends Plugin {
       await view.updateForFile(null, [], true);
     }
 
-    const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
-    for (let i = 0; i < files.length; i += batchSize.indexing) {
+    const batchSize = 1;
+    const indexing = 3;
+    const delayBetweenBatches = 50;
+    for (let i = 0; i < files.length; i += indexing) {
       // Check if pane is still visible before processing each batch
       if (!this.isRelatedNotesVisible()) {
         return;
       }
 
-      const batch = files.slice(i, i + batchSize.indexing);
+      const batch = files.slice(i, i + indexing);
       await Promise.all(
         batch.map(file => {
           if (this.processingQueue.has(file.path)) return Promise.resolve();
@@ -239,7 +224,7 @@ export default class RelatedNotesPlugin extends Plugin {
         })
       );
 
-      if (i + batchSize.indexing < files.length) {
+      if (i + indexing < files.length) {
         await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
       }
     }
@@ -374,13 +359,14 @@ export default class RelatedNotesPlugin extends Plugin {
     Logger.info(`Finding related notes for: ${file.path}`);
     const similarities: Array<{ file: TFile; similarity: number; topWords: string[] }> = [];
     const allFiles = this.app.vault.getMarkdownFiles();
-    const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
-    Logger.debug(`Using batch size: ${batchSize.search}, delay: ${delayBetweenBatches}ms`);
+    const search = 3;
+    const delayBetweenBatches = 50;
+    Logger.debug(`Using batch size: ${search}, delay: ${delayBetweenBatches}ms`);
 
     // First, use LSH to find candidate files
     const candidateFiles: TFile[] = [];
-    for (let i = 0; i < allFiles.length; i += batchSize.search) {
-      const batch = allFiles.slice(i, i + batchSize.search);
+    for (let i = 0; i < allFiles.length; i += search) {
+      const batch = allFiles.slice(i, i + search);
       await Promise.all(
         batch.map(async (otherFile) => {
           if (otherFile.path === file.path) return;
