@@ -27,12 +27,44 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
     containerEl.createEl('h2', { text: 'Related Notes Settings' });
 
-    // General Settings
-    containerEl.createEl('h3', { text: 'General Settings' });
+    // Basic Settings
+    new Setting(containerEl)
+      .setName('Show Advanced Settings')
+      .setDesc('Toggle to show or hide advanced configuration options.')
+      .addToggle(toggle => {
+        toggle
+          .setValue(this.plugin.settings.showAdvanced || false)
+          .onChange(async (value) => {
+            this.plugin.settings.showAdvanced = value;
+            await this.plugin.saveSettings();
+            this.display(); // Refresh to show/hide advanced settings
+          });
+      });
+
+    containerEl.createEl('h3', { text: 'Basic Settings' });
+
+    new Setting(containerEl)
+      .setName('Maximum Suggestions')
+      .setDesc('Maximum number of related notes to display.')
+      .addSlider(slider => slider
+        .setLimits(1, 20, 1)
+        .setValue(this.plugin.settings.maxSuggestions)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.maxSuggestions = value;
+          await this.plugin.saveSettings();
+        }));
+
+    if (!this.plugin.settings.showAdvanced) {
+      return;
+    }
+
+    // Advanced Settings
+    containerEl.createEl('h3', { text: 'Advanced Settings' });
 
     new Setting(containerEl)
       .setName('Similarity Provider')
-      .setDesc('Choose which algorithm to use for calculating note similarity.')
+      .setDesc('Choose which algorithm to use for calculating note similarity. This is automatically set based on vault size but can be manually overridden.')
       .addDropdown(dropdown => dropdown
         .addOption('bm25', 'BM25 (Best for small-medium vaults)')
         .addOption('minhash-lsh', 'MinHash LSH + BM25 (Best for large vaults >10,000 notes)')

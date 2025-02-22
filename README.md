@@ -1,24 +1,17 @@
 # Related Notes Plugin for Obsidian
 
-Uncover connections between notes with this plugin. This plugin uses advanced text similarity techniques to automatically suggest related notes based on content similarity, helping you discover connections in your knowledge base.
+Uncover connections between notes in your vault using this plugin.
 
 ## Features
 
 - 🔍 Automatically analyzes note content using proven similarity algorithms
-- 📊 Multiple local similarity providers:
-  - BM25 (Best Matching 25) for fast term-frequency based matching
-  - MinHash LSH + BM25 for efficient large-scale similarity detection
-- 🎯 Configurable similarity threshold for fine-tuned suggestions
-- 🔗 Smart "Add Link" button that shows when a link already exists
-- 💾 Intelligent caching with file modification tracking
-- 📄 Intelligent file type filtering (only processes markdown files)
-- ⚡ Real-time updates as you edit notes
-- 🎨 Clean, native-looking UI that matches Obsidian's theme
+- 📊 MinHash LSH + BM25 (Best Matching 25) for fast term-frequency based matching
+- ⚡ Fully local processing with complete data privacy
 
 ## Installation
 
 1. Open Obsidian Settings
-2. Navigate to Community Plugins and disable Safe Mode
+2. Navigate to Community Plugins and disable Restricted mode
 3. Click Browse and search for "Related Notes"
 4. Click Install
 5. Enable the plugin in the Community Plugins tab
@@ -27,44 +20,45 @@ Uncover connections between notes with this plugin. This plugin uses advanced te
 
 ### Viewing Related Notes
 
-1. Click the dice icon in the ribbon to open the Related Notes pane
+1. Click the lightning (⚡️) icon in the ribbon to open the Related Notes pane
 2. The plugin will automatically show related notes for your currently active note
-3. You can also use the command palette and search for "Find Related Notes"
-
-### Adding Links
-
-1. When viewing related notes, click the "Add Link" button next to any suggestion
-2. A link to that note will be inserted at your current cursor position
-3. Once linked, the button will change to "Linked" to indicate the connection exists
+3. You can also use the command palette and search for "Toggle related notes"
 
 ## Configuration
 
-The plugin can be configured through the settings tab:
+The plugin features a streamlined settings interface with both basic and advanced options:
 
-- **Similarity Provider**: Choose between BM25 or MinHash LSH + BM25
-- **Debug Mode**: Enable detailed logging for troubleshooting and development
-- **Similarity Threshold** (0-1): Minimum similarity score required to consider notes as related
-- **Maximum Suggestions** (1-10): Maximum number of related notes to display
+### Basic Settings
+- **Maximum Suggestions**: Control how many related notes are displayed (1-20)
+
+### Advanced Settings
+Toggle advanced settings to access detailed configuration options:
+
+- **Similarity Provider**: Automatically switches between BM25 and MinHash LSH based on vault size (>10,000 notes), but can be manually overridden
+- **Debug Mode**: Enable detailed logging for troubleshooting
+- **Similarity Threshold**: Fine-tune the minimum similarity score (0-1)
+- **Processing Settings**: Configure batch sizes and delays
+- **Algorithm Parameters**: Detailed settings for BM25 and MinHash LSH
 
 ### Similarity Providers
 
-#### BM25 (Default)
+The plugin automatically selects the optimal similarity provider based on your vault size:
+
+#### BM25 (For Small-Medium Vaults)
 - Local processing, no data leaves your device
 - Fast and privacy-focused
 - Works well for keyword-based similarity
-- Ideal for small to medium-sized vaults
+- Ideal for vaults with fewer than 10,000 notes
 - No setup required
 
-#### MinHash LSH + BM25
+#### MinHash LSH + BM25 (For Large Vaults)
+- Automatically selected for vaults with 10,000+ notes
 - Three-stage hybrid approach for optimal performance:
   1. LSH for fast candidate retrieval
   2. MinHash for efficient similarity estimation
   3. BM25 for term-frequency based scoring
-- Recommended for large vaults (>10,000 notes)
 - Efficient memory usage and sub-linear search time
-- Configurable parameters for fine-tuning:
-  - Hash functions and bands for LSH
-  - BM25 scoring parameters
+- Advanced configuration available in settings
 - No external dependencies or setup required
 
 ### File Type Support

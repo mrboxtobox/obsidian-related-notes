@@ -91,7 +91,6 @@ The project uses esbuild for bundling and includes:
 4. UI Components
    - Native Obsidian theme integration
    - Real-time updates
-   - Interactive link management
 
 ## Future Development Guidelines
 1. **Version Updates**
@@ -148,14 +147,52 @@ The project uses esbuild for bundling and includes:
 7. Document vectors use Obsidian's data API for persistence
 
 ## Recent Changes
-- Removed unnecessary embedding references
+- Removed "Add Link" functionality to simplify the UI and focus on core similarity features
+- Implemented two-stage similarity search for MinHash LSH provider:
+  - Stage 1: Use LSH for fast candidate filtering (0.5x threshold)
+  - Stage 2: Apply BM25 scoring only on filtered candidates
+- Implemented automatic MinHash LSH selection for vaults with >10,000 notes
+- Simplified settings UI with basic/advanced toggle:
+  - Basic: Only shows maximum suggestions setting
+  - Advanced: Reveals all detailed configuration options
+- Updated documentation to reflect automatic algorithm selection
 - Clarified BM25 and MinHash LSH implementations
-- Added recommendation for MinHash LSH with large corpora (>10,000 notes)
 - Enhanced caching system with smarter invalidation
 - Improved documentation with detailed algorithm descriptions
 - Enhanced error handling and logging
 - Refined similarity calculation with proper index management
 - Added proper TypeScript type safety
+
+## Search Algorithm Details
+The plugin now uses a more efficient two-stage search approach when using MinHash LSH:
+
+1. Candidate Selection (LSH)
+   - Uses MinHash LSH with a relaxed threshold (0.5x of final threshold)
+   - Quickly filters potential candidates
+   - Reduces the search space significantly
+   - Helps maintain sub-linear search time
+
+2. Precise Scoring (BM25)
+   - Applied only to filtered candidates
+   - Uses BM25 algorithm for accurate content similarity
+   - Ensures high-quality results
+   - More computationally intensive but applied to fewer documents
+
+This approach provides:
+- Better performance through reduced computation
+- Maintained accuracy with BM25 scoring
+- Scalability for large vaults
+- Memory efficiency
+
+## Current Settings Structure
+- Basic Settings:
+  - Maximum Suggestions (1-20)
+- Advanced Settings (toggled):
+  - Similarity Provider (auto-selected based on vault size)
+  - Debug Mode
+  - Similarity Threshold
+  - Processing Settings
+  - Algorithm Parameters (BM25 and MinHash LSH)
 
 ## Style Loading
 The plugin's styles (styles.css) are automatically loaded by Obsidian's plugin system. The previous manual style loading implementation was redundant and has been removed to prevent potential issues with duplicate style loading.
