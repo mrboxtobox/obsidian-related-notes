@@ -203,6 +203,12 @@ export default class RelatedNotesPlugin extends Plugin {
     if (this.isIndexInitialized) return;
     const files = this.app.vault.getMarkdownFiles();
 
+    // Show loading state in view if it exists
+    const view = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE)[0]?.view;
+    if (view instanceof RelatedNotesView) {
+      await view.updateForFile(null, [], true);
+    }
+
     const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
     for (let i = 0; i < files.length; i += batchSize.indexing) {
       const batch = files.slice(i, i + batchSize.indexing);
@@ -219,6 +225,11 @@ export default class RelatedNotesPlugin extends Plugin {
     }
 
     this.isIndexInitialized = true;
+
+    // Remove loading state
+    if (view instanceof RelatedNotesView) {
+      await view.updateForFile(null, [], false);
+    }
   }
 
   private async processFile(file: TFile) {
@@ -287,8 +298,8 @@ export default class RelatedNotesPlugin extends Plugin {
     }
   }
 
-  private async findRelatedNotes(file: TFile, currentVector: any): Promise<Array<{ file: TFile; similarity: number }>> {
-    const similarities: Array<{ file: TFile; similarity: number }> = [];
+  private async findRelatedNotes(file: TFile, currentVector: any): Promise<Array<{ file: TFile; similarity: number; topWords: string[] }>> {
+    const similarities: Array<{ file: TFile; similarity: number; topWords: string[] }> = [];
     const allFiles = this.app.vault.getMarkdownFiles();
     const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
 
@@ -302,7 +313,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
           const content = await this.app.vault.cachedRead(otherFile);
           const otherVector = await this.similarityProvider.generateVector(content);
-          const lshSimilarity = this.similarityProvider.calculateSimilarity(otherVector, currentVector);
+          const { similarity: lshSimilarity } = this.similarityProvider.calculateSimilarity(otherVector, currentVector);
 
           // Use a lower threshold for LSH filtering to avoid false negatives
           if (lshSimilarity >= this.settings.similarityThreshold * 0.5) {
@@ -320,10 +331,10 @@ export default class RelatedNotesPlugin extends Plugin {
     for (const candidateFile of candidateFiles) {
       const content = await this.app.vault.cachedRead(candidateFile);
       const candidateVector = await this.similarityProvider.generateVector(content);
-      const similarity = this.similarityProvider.calculateSimilarity(candidateVector, currentVector);
+      const { similarity, topWords } = this.similarityProvider.calculateSimilarity(candidateVector, currentVector);
 
       if (similarity >= this.settings.similarityThreshold) {
-        similarities.push({ file: candidateFile, similarity });
+        similarities.push({ file: candidateFile, similarity, topWords });
       }
     }
 
