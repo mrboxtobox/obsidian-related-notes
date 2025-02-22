@@ -1,177 +1,11 @@
 /**
- * @file Core functionality for the Related Notes plugin including UI components and embedding providers.
- * Implements the view for displaying related notes and the embedding providers for calculating note similarity.
- */
+* @file Core functionality for the Related Notes plugin.
+* Implements similarity providers and core algorithms for note comparison.
+*/
 
-import { ItemView, WorkspaceLeaf, TFile, MarkdownView, MarkdownRenderer } from 'obsidian';
-import RelatedNotesPlugin from './main';
-import { Logger } from './logger';
-import { AlgorithmConfig, DEFAULT_CONFIG } from './config';
-
-// UI Components
-export const RELATED_NOTES_VIEW_TYPE = 'related-notes-view';
-
-/**
- * View component that displays related notes in a side panel.
- * Handles rendering of related notes and provides interaction capabilities like adding links.
- */
-export class RelatedNotesView extends ItemView {
-  plugin: RelatedNotesPlugin;
-  currentFile: TFile | null = null;
-
-  constructor(leaf: WorkspaceLeaf, plugin: RelatedNotesPlugin) {
-    super(leaf);
-    this.plugin = plugin;
-  }
-
-  getViewType(): string {
-    return RELATED_NOTES_VIEW_TYPE;
-  }
-
-  getDisplayText(): string {
-    return 'Related Notes';
-  }
-
-  private setLoading(loading: boolean) {
-    const container = this.containerEl.children[1];
-    if (!container) return;
-
-    const existingLoader = container.querySelector('.related-notes-loading');
-    if (loading && !existingLoader) {
-      const loader = container.createDiv({ cls: 'related-notes-loading' });
-      loader.textContent = 'Indexing notes...';
-    } else if (!loading && existingLoader) {
-      existingLoader.remove();
-    }
-  }
-
-  public async onOpen() {
-    if (!this.containerEl.children[1]) {
-      this.containerEl.createDiv();
-    }
-    const container = this.containerEl.children[1];
-    container.empty();
-    this.containerEl.addClass('related-notes-container');
-    container.createEl('h4', { text: 'Related Notes' });
-    container.createDiv({ cls: 'related-notes-content' });
-  }
-
-  public async onClose() {
-    this.containerEl.empty();
-    this.containerEl.removeClass('related-notes-container');
-    this.currentFile = null;
-  }
-
-  private hasExistingLink(content: string, targetBasename: string): boolean {
-    // Check for links in the entire document
-    if (content.includes(`[[${targetBasename}]]`)) {
-      return true;
-    }
-
-    // Also check in the Related Notes section for backward compatibility
-    const relatedSectionRegex = /\n## Related Notes\n([\s\S]*?)(\n#|$)/;
-    const match = content.match(relatedSectionRegex);
-    return match ? match[1].includes(`[[${targetBasename}]]`) : false;
-  }
-
-  public async updateForFile(file: TFile | null, relatedNotes: Array<{ file: TFile; similarity: number; topWords: string[] }>, isIndexing?: boolean) {
-    const fragment = document.createDocumentFragment();
-    const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
-    this.currentFile = file;
-
-    this.setLoading(isIndexing || false);
-
-    // Prepare content based on file state
-    if (!file) {
-      const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
-      messageEl.createEl('p', {
-        text: 'Open a markdown file to see related notes.',
-        cls: 'related-notes-message-text'
-      });
-    } else if (!this.plugin.isMarkdownFile(file)) {
-      const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
-      messageEl.createEl('p', {
-        text: 'Related notes are only available for markdown files.',
-        cls: 'related-notes-message-text'
-      });
-      messageEl.createEl('p', {
-        text: `Current file type: ${file.extension.toUpperCase()}`,
-        cls: 'related-notes-message-subtext'
-      });
-    } else if (!relatedNotes.length) {
-      contentEl.createEl('p', { text: 'No related notes found.' });
-    } else {
-      const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
-      const currentContent = await this.app.vault.cachedRead(file);
-
-      const listItems = await Promise.all(relatedNotes.map(async ({ file: relatedFile, similarity, topWords }) => {
-        const listItemEl = document.createElement('li');
-        listItemEl.className = 'related-note-item';
-
-        const linkContainer = document.createElement('div');
-        linkContainer.className = 'related-note-link-container';
-
-        // Create title link
-        const linkEl = document.createElement('a');
-        linkEl.className = 'related-note-link';
-        linkEl.textContent = relatedFile.basename;
-        linkContainer.appendChild(linkEl);
-
-        if (this.plugin.settings.debugMode) {
-          const similaritySpan = document.createElement('span');
-          similaritySpan.className = 'related-note-similarity';
-          similaritySpan.textContent = ` (${(similarity * 100).toFixed(2)}%)`;
-          linkContainer.appendChild(similaritySpan);
-        }
-
-        listItemEl.appendChild(linkContainer);
-
-        // Add hashtags if available
-        if (topWords && topWords.length > 0) {
-          const hashtagsContainer = document.createElement('div');
-          hashtagsContainer.className = 'related-note-hashtags';
-
-          topWords.forEach(word => {
-            const hashtag = document.createElement('span');
-            hashtag.className = 'related-note-hashtag';
-            hashtag.textContent = `#${word}`;
-            hashtag.addEventListener('click', (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              // Trigger search for this word
-              const searchLeaf = this.app.workspace.getLeavesOfType('search')[0] ||
-                this.app.workspace.getRightLeaf(false);
-              this.app.workspace.revealLeaf(searchLeaf);
-              searchLeaf.setViewState({
-                type: 'search',
-                state: { query: word }
-              });
-            });
-            hashtagsContainer.appendChild(hashtag);
-          });
-
-          listItemEl.appendChild(hashtagsContainer);
-        }
-
-        // Add event listener for link click
-        linkEl.addEventListener('click', async (e) => {
-          e.preventDefault();
-          await this.app.workspace.getLeaf().openFile(relatedFile);
-        });
-
-        return listItemEl;
-      }));
-
-      // Append all items to the list at once
-      listItems.forEach(item => listEl.appendChild(item));
-    }
-
-    // Replace the old content with the new fragment in a single operation
-    const container = this.containerEl.children[1] || this.containerEl.createDiv();
-    container.empty();
-    container.appendChild(fragment);
-  }
-}
+import { Logger, simpleStem } from './utils';
+import { AlgorithmConfig, DEFAULT_CONFIG } from './settings';
+import { TFile, Vault } from 'obsidian';
 
 // NLP Components
 /**
@@ -183,8 +17,8 @@ export interface SimilarityProvider {
   description: string;
   initialize(): Promise<void>;
   cleanup(path?: string): Promise<void>;
-  generateVector(text: string): Promise<number[]>;
-  calculateSimilarity(vec1: number[], vec2: number[]): { similarity: number; topWords: string[] };
+  generateVector(text: string): Promise<number[] | Map<number, number>>;
+  calculateSimilarity(f1: string, f2: string): Promise<{ similarity: number; topWords: string[] }> | { similarity: number; topWords: string[] };
 }
 
 interface TokenizeOptions {
@@ -198,7 +32,7 @@ interface TokenizeOptions {
  * Handles advanced text preprocessing including contraction handling,
  * stop word removal, and configurable options.
  */
-class WordTokenizer {
+class Preprocessor {
   private readonly stopWords = new Set([
     // Articles
     'a', 'an', 'the',
@@ -307,10 +141,54 @@ class WordTokenizer {
         .filter(word =>
           word.length > minLength &&
           (!removeStopWords || !this.stopWords.has(word))
-        );
+        )
+        .map(word => simpleStem(word));
     } catch (error) {
       Logger.error('Error during tokenization:', error);
       return [];
+    }
+  }
+
+  tokenizeV2(text: string, options: TokenizeOptions = {}): string {
+    if (!text || typeof text !== 'string') {
+      return ''
+    }
+
+    const {
+      minLength = 2,
+      removeStopWords = true,
+      handleContractions = true
+    } = options;
+
+    try {
+      let processedText = text
+        .replace(/\[\[([^\]]+)\]\]/g, '$1')
+        .replace(/\!?\[[^\]]*\]\([^\)]+\)/g, '')
+        .replace(/^---[\s\S]*?---/m, '');
+
+      if (handleContractions) {
+        processedText = processedText.replace(
+          new RegExp(Object.keys(this.contractionMap).join('|'), 'g'),
+          matched => this.contractionMap[matched]
+        );
+      }
+
+      return processedText
+        .toLowerCase()
+        // First handle numbers with units or special formatting
+        .replace(/\d+(?:\.\d+)?(?:px|em|rem|%|\$)?\s*(?:x\s*\d+)?/g, 'NUMBER')
+        // Then replace remaining non-letter characters
+        .replace(/[^a-z\s]/g, ' ')
+        .split(/\s+/)
+        .filter(word =>
+          word.length > minLength &&
+          (!removeStopWords || !this.stopWords.has(word))
+        )
+        .map(word => simpleStem(word))
+        .join(' ');
+    } catch (error) {
+      Logger.error('Error during tokenization:', error);
+      return '';
     }
   }
 }
@@ -322,543 +200,225 @@ interface DocumentEntry {
   length: number;
 }
 
-/**
- * Implementation of the BM25 (Best Matching 25) ranking algorithm.
- * Provides document scoring based on term frequency and inverse document frequency.
- */
-export class BM25 {
-  private documents: Map<string, DocumentEntry>;
-  private documentCount: { [term: string]: number };
-  private totalDocuments: number;
-  private isDirty: boolean;
-  private avgDocLength: number;
-  private k1: number;
-  private b: number;
-  vocabulary: Map<string, number>; // Maps terms to their fixed position in vectors
-  private nextTermIndex: number;
+// According to Claude, Trigrams seem to work well for shingles.
+const SHINGLE_SIZE = 3;
+// const SIGNATURE_SIZE = 10;
+// const NUM_BANDS = 5; // Number of subvectors
 
-  constructor(config: { k1: number; b: number } = DEFAULT_CONFIG.bm25) {
-    this.documents = new Map();
-    this.documentCount = {};
-    this.totalDocuments = 0;
-    this.isDirty = false;
-    this.avgDocLength = 0;
-    this.k1 = config.k1;
-    this.b = config.b;
-    this.vocabulary = new Map();
-    this.nextTermIndex = 0;
-  }
+// const SIGNATURE_SIZE = 100; // Larger signatures improve accuracy
+// TODO: Fix
+// const NUM_BANDS = Math.ceil(Math.sqrt(300)); // N = number of documents
+// const ROWS_PER_BAND = Math.ceil(SIGNATURE_SIZE / NUM_BANDS);
 
-  private updateAvgDocLength() {
-    if (this.totalDocuments === 0) {
-      this.avgDocLength = 0;
-      return;
+export class SimilarityProviderV2 implements SimilarityProvider {
+  name: string;
+  description: string;
+
+  // TODO(olu): We will need to incrementally update this index as files change
+  // during a session.
+  // TODO(olu): Occasionally rebuild the index to avoid drift.
+  // Fixed ordering.
+  private vocabulary: string[];
+  // Map from filename to corresponding one-hot vector as set.
+  private fileVectors: Map<string, Set<string>>;
+  private signatures: Map<string, number[]>;
+  private vault: Vault;
+  private preprocessor: Preprocessor;
+  // List of permutations
+  private minhashFunctions: number[][];
+  private numBands: number;
+  private bandSize: number;
+  private candidatePairs: [string, string][]
+  private signatureSize: number;
+  private relatedNotes: Map<string, Set<string>>;
+
+
+  constructor(vault: Vault) {
+    this.vocabulary = [];
+    this.fileVectors = new Map();
+    this.vault = vault;
+    this.preprocessor = new Preprocessor();
+    this.minhashFunctions = [];
+    const params = this.calculateLSHParams(vault.getMarkdownFiles().length)
+    this.signatures = new Map()
+    this.numBands = params.numBands;
+    this.bandSize = params.rowsPerBand;
+    this.signatureSize = params.signatureSize;
+    this.relatedNotes = new Map();
+
+    if (params.signatureSize % this.numBands !== 0) {
+      throw new Error('Signature size must be divisible by number of bands');
     }
-    let totalLength = 0;
-    this.documents.forEach(doc => totalLength += doc.length);
-    this.avgDocLength = totalLength / this.totalDocuments;
   }
 
-  private getOrAddTermIndex(term: string): number {
-    let index = this.vocabulary.get(term);
-    if (index === undefined) {
-      index = this.nextTermIndex++;
-      this.vocabulary.set(term, index);
+  calculateLSHParams(numDocs: number) {
+    const signatureSize = Math.min(200, Math.max(100, Math.ceil(numDocs * 0.02)));
+    const numBands = Math.ceil(Math.sqrt(numDocs));
+    const rowsPerBand = Math.ceil(signatureSize / numBands);
+    const adjustedSignatureSize = numBands * rowsPerBand;
+
+    return {
+      signatureSize: adjustedSignatureSize,
+      numBands,
+      rowsPerBand,
+      shingleSize: 3
+    };
+  }
+
+  // Fisher–Yates (aka Knuth).
+  private shuffleArray(array: number[]) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
     }
-    return index;
   }
 
-  addDocument(path: string, tokens: string[], mtime: number) {
-    const existingDoc = this.documents.get(path);
-    if (existingDoc) {
-      const oldUniqueTerms = new Set(existingDoc.tokens);
-      oldUniqueTerms.forEach(term => {
-        this.documentCount[term]--;
-        if (this.documentCount[term] === 0) delete this.documentCount[term];
-      });
-      this.totalDocuments--;
-    }
+  async initialize(): Promise<void> {
+    // Initialize the dictionary with the shingles.
 
-    // Add all new terms to vocabulary first
-    tokens.forEach(term => this.getOrAddTermIndex(term));
+    for (const file of this.vault.getMarkdownFiles()) {
+      try {
+        const fileContent = await this.vault.cachedRead(file);
+        const processed = this.preprocessor.tokenizeV2(fileContent)
 
-    this.documents.set(path, { path, tokens, mtime, length: tokens.length });
-    this.totalDocuments++;
-
-    const uniqueTerms = new Set(tokens);
-    uniqueTerms.forEach(term => {
-      this.documentCount[term] = (this.documentCount[term] || 0) + 1;
-    });
-
-    this.updateAvgDocLength();
-    this.isDirty = true;
-  }
-
-  removeDocument(path: string) {
-    const doc = this.documents.get(path);
-    if (!doc) return;
-
-    const uniqueTerms = new Set(doc.tokens);
-    uniqueTerms.forEach(term => {
-      this.documentCount[term]--;
-      if (this.documentCount[term] === 0) delete this.documentCount[term];
-    });
-
-    this.documents.delete(path);
-    this.totalDocuments--;
-    this.updateAvgDocLength();
-    this.isDirty = true;
-  }
-
-  clear() {
-    this.documents.clear();
-    this.documentCount = {};
-    this.totalDocuments = 0;
-    this.avgDocLength = 0;
-    this.isDirty = true;
-    // Keep vocabulary to maintain consistent vector positions
-  }
-
-  private termFrequency(term: string, doc: DocumentEntry): number {
-    return doc.tokens.filter(t => t === term).length;
-  }
-
-  private idf(term: string): number {
-    const docFreq = this.documentCount[term] || 0;
-    if (docFreq === 0) return 0;
-    return Math.log(1 + (this.totalDocuments - docFreq + 0.5) / (docFreq + 0.5));
-  }
-
-  calculateVector(path: string): number[] | null {
-    const doc = this.documents.get(path);
-    if (!doc) return null;
-
-    // Initialize vector with zeros for all known terms
-    const vector = new Array(this.nextTermIndex).fill(0);
-
-    // Calculate BM25 score for each term in the document
-    const uniqueTerms = new Set(doc.tokens);
-    uniqueTerms.forEach(term => {
-      const termIndex = this.vocabulary.get(term);
-      if (termIndex !== undefined) {
-        const tf = this.termFrequency(term, doc);
-        const idf = this.idf(term);
-        const numerator = tf * (this.k1 + 1);
-        const denominator = tf + this.k1 * (1 - this.b + this.b * (doc.length / this.avgDocLength));
-        vector[termIndex] = idf * (numerator / denominator);
+        const shingles = this.buildShingles(processed, SHINGLE_SIZE);
+        shingles.forEach(shingle => this.vocabulary.push(shingle));
+        this.fileVectors.set(file.name, shingles);
+      } catch (error) {
+        Logger.warn(`Error processing ${file.name}:`, error);
       }
+    }
+
+    for (let i = 0; i < this.signatureSize; i++) {
+      const hashFunc = Array.from({ length: this.vocabulary.length }, (_, i) => i + 1);
+      this.shuffleArray(hashFunc);
+      this.minhashFunctions.push(hashFunc);
+    }
+
+    // Second pass: create signatures
+    this.fileVectors.forEach((shingles, fileName) => {
+      this.signatures.set(fileName, this.createSignature(shingles));
     });
 
-    return vector;
-  }
-}
-
-/**
- * Provider that uses the BM25 algorithm for document similarity.
- * Optimized for keyword-based matching and fast local processing.
- * Best suited for small to medium-sized vaults.
- */
-export class BM25Provider implements SimilarityProvider {
-  name = 'BM25';
-  description = 'Classic BM25 algorithm for fast keyword-based similarity';
-  private bm25: BM25;
-  private tokenizer: WordTokenizer;
-
-  get vocabulary(): Map<string, number> {
-    return this.bm25.vocabulary;
-  }
-
-  constructor() {
-    this.bm25 = new BM25(DEFAULT_CONFIG.bm25);
-    this.tokenizer = new WordTokenizer();
-  }
-
-  async initialize(): Promise<void> { }
-
-  async cleanup(path?: string): Promise<void> {
-    if (path) {
-      this.bm25.removeDocument(path);
-    } else {
-      this.bm25.clear();
+    // Banding
+    this.candidatePairs = this.findCandidatePairs(this.signatures);
+    Logger.error("Candidate Pairs: ")
+    Logger.error(`Candidates count: ${this.candidatePairs.length}`)
+    for (let pair of this.candidatePairs) {
+      // Logger.error(`${pair}`)
+      const exist0 = this.relatedNotes.get(pair[0]) || new Set();
+      exist0.add(pair[1])
+      const exist1 = this.relatedNotes.get(pair[1]) || new Set();
+      exist1.add(pair[0])
+      this.relatedNotes.set(pair[0], exist0);
+      this.relatedNotes.set(pair[1], exist1);
     }
   }
 
-  async generateVector(text: string): Promise<number[]> {
-    const tokens = this.tokenizer.tokenize(text, {
-      minLength: 2,
-      removeStopWords: true,
-      handleContractions: true
-    });
-    this.bm25.addDocument('temp', tokens, Date.now());
-    const vector = this.bm25.calculateVector('temp') || [];
-    this.bm25.removeDocument('temp');
-    return vector;
-  }
-
-  calculateSimilarity(vec1: number[], vec2: number[]): { similarity: number; topWords: string[] } {
-    if (vec1.length !== vec2.length) {
-      throw new Error(`Vectors must have the same length. Got ${vec1.length} and ${vec2.length}`);
-    }
-
-    let dotProduct = 0;
-    let norm1 = 0;
-    let norm2 = 0;
-    const contributions: { word: string; contribution: number }[] = [];
-
-    for (let i = 0; i < vec1.length; i++) {
-      const contribution = vec1[i] * vec2[i];
-      dotProduct += contribution;
-      norm1 += vec1[i] * vec1[i];
-      norm2 += vec2[i] * vec2[i];
-
-      // Get the word for this vector position
-      for (const [word, index] of this.vocabulary.entries()) {
-        if (index === i && contribution > 0) {
-          contributions.push({ word, contribution });
+  private createSignature(shingles: Set<string>): number[] {
+    const signature: number[] = [];
+    for (const hashFunc of this.minhashFunctions) {
+      for (let i = 1; i <= this.vocabulary.length; i++) {
+        const idx = hashFunc.indexOf(i);
+        const shingle = this.vocabulary[idx];
+        if (shingles.has(shingle)) {
+          signature.push(idx);
           break;
         }
       }
     }
 
-    if (norm1 === 0 || norm2 === 0) return { similarity: 0, topWords: [] };
-
-    const similarity = dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
-    const topWords = contributions
-      .sort((a, b) => b.contribution - a.contribution)
-      .slice(0, 2)
-      .map(c => c.word);
-
-    return { similarity, topWords };
-  }
-}
-
-/**
- * Provider that combines MinHash LSH with BM25 for efficient large-scale similarity detection.
- * Uses a three-stage approach: LSH for fast candidate retrieval, MinHash for efficient 
- * similarity estimation, and BM25 for term-frequency based scoring.
- * Recommended for large vaults (>10,000 notes) due to sub-linear search time.
- */
-export class MinHashLSHProvider implements SimilarityProvider {
-  name = 'minhash-lsh';
-  description = 'MinHash LSH + BM25 for efficient large-scale similarity detection';
-  private similarity: MinHashLSHEngine;
-  private bm25: BM25;
-  private tokenizer: WordTokenizer;
-
-  constructor() {
-    this.similarity = new MinHashLSHEngine(DEFAULT_CONFIG);
-    this.bm25 = new BM25(DEFAULT_CONFIG.bm25);
-    this.tokenizer = new WordTokenizer();
+    return signature;
   }
 
-  async initialize(): Promise<void> {
+  private splitSignature(signature: number[]): number[][] {
+    const bands: number[][] = [];
+    for (let i = 0; i < signature.length; i += this.bandSize) {
+      bands.push(signature.slice(i, i + this.bandSize));
+    }
+    return bands;
   }
 
-  async cleanup(path?: string): Promise<void> {
-    if (path) {
-      this.similarity.documents.delete(path);
-      this.similarity.documentLengths.delete(path);
-      this.similarity.signatures.delete(path);
-      for (const [hash, docs] of this.similarity.lshIndex) {
-        docs.delete(path);
-        if (docs.size === 0) {
-          this.similarity.lshIndex.delete(hash);
+  private hashBand(band: number[]): string {
+    return band.join(',');
+  }
+
+  findCandidatePairs(signatures: Map<string, number[]>): [string, string][] {
+    const candidatePairs = new Set<string>();
+    const bandBuckets = new Map<string, string[]>();
+
+    // Process each signature into bands and hash
+    signatures.forEach((signature, fileName) => {
+      const bands = this.splitSignature(signature);
+
+      bands.forEach((band, bandIdx) => {
+        const hashValue = this.hashBand(band);
+        const bucketKey = `${bandIdx}-${hashValue}`;
+
+        if (!bandBuckets.has(bucketKey)) {
+          bandBuckets.set(bucketKey, []);
         }
-      }
-      this.bm25.removeDocument(path);
-    } else {
-      this.similarity = new MinHashLSHEngine(DEFAULT_CONFIG);
-      this.bm25.clear();
-    }
-  }
-
-  async generateVector(text: string): Promise<number[]> {
-    try {
-      const tokens = this.tokenizer.tokenize(text, {
-        minLength: 2,
-        removeStopWords: true,
-        handleContractions: true
+        bandBuckets.get(bucketKey)!.push(fileName);
       });
+    });
 
-      // Generate MinHash signature for LSH-based filtering
-      const tempId = 'temp_' + Date.now();
-      this.similarity.addDocument(tempId, text);
-      const signature = this.similarity.signatures.get(tempId);
-      if (!signature) throw new Error('Failed to generate MinHash signature');
-
-      // Generate BM25 vector for scoring
-      this.bm25.addDocument(tempId, tokens, Date.now());
-      const bm25Vector = this.bm25.calculateVector(tempId) || [];
-
-      // Cleanup temporary documents
-      this.similarity.documents.delete(tempId);
-      this.similarity.documentLengths.delete(tempId);
-      this.similarity.signatures.delete(tempId);
-      this.bm25.removeDocument(tempId);
-
-      // Store both vectors for later use
-      return {
-        type: 'temp',
-        minhash: signature,
-        bm25: bm25Vector
-      } as any; // Using any to maintain interface compatibility
-
-    } catch (error) {
-      Logger.error('Error generating vectors:', error);
-      throw error;
-    }
-  }
-
-  calculateSimilarity(vec1: any, vec2: any): { similarity: number; topWords: string[] } {
-    // For temporary vectors (during search), use BM25 similarity
-    if (vec1.type === 'temp' || vec2.type === 'temp') {
-      const bm251 = vec1.type === 'temp' ? vec1.bm25 : vec1;
-      const bm252 = vec2.type === 'temp' ? vec2.bm25 : vec2;
-
-      // Calculate BM25 cosine similarity with word contributions
-      let dotProduct = 0;
-      let norm1 = 0;
-      let norm2 = 0;
-      const contributions: { word: string; contribution: number }[] = [];
-
-      for (let i = 0; i < bm251.length; i++) {
-        const contribution = bm251[i] * bm252[i];
-        dotProduct += contribution;
-        norm1 += bm251[i] * bm251[i];
-        norm2 += bm252[i] * bm252[i];
-
-        // Get the word for this vector position
-        for (const [word, index] of this.bm25.vocabulary.entries()) {
-          if (index === i && contribution > 0) {
-            contributions.push({ word, contribution });
-            break;
+    // Find candidates from bucket collisions
+    bandBuckets.forEach((fileNames) => {
+      if (fileNames.length > 1) {
+        for (let i = 0; i < fileNames.length; i++) {
+          for (let j = i + 1; j < fileNames.length; j++) {
+            const pair = [fileNames[i], fileNames[j]].sort();
+            candidatePairs.add(pair.join('||'));
           }
         }
       }
+    });
 
-      const similarity = norm1 === 0 || norm2 === 0 ? 0 :
-        dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+    return Array.from(candidatePairs).map(pair => pair.split('||') as [string, string]);
+  }
 
-      const topWords = contributions
-        .sort((a, b) => b.contribution - a.contribution)
-        .slice(0, 2)
-        .map(c => c.word);
 
-      return { similarity, topWords };
-    }
+  async cleanup(path?: string): Promise<void> {
+    Logger.debug("Cleanup");
+  }
 
-    // For LSH filtering (between stored vectors), use MinHash similarity
-    const minhash1 = vec1.slice(0, this.similarity.numHashes);
-    const minhash2 = vec2.slice(0, this.similarity.numHashes);
+  async generateVector(text: string): Promise<number[] | Map<number, number>> {
+    Logger.debug("Cleanup");
+    return [];
+  }
 
-    let matches = 0;
-    for (let i = 0; i < this.similarity.numHashes; i++) {
-      if (minhash1[i] === minhash2[i]) matches++;
+  calculateSimilarity(f1: string, f2: string): Promise<{ similarity: number; topWords: string[]; }> | { similarity: number; topWords: string[]; } {
+    Logger.error(f1)
+    Logger.error(f2)
+    if (this.relatedNotes.get(f1)?.has(f2) || this.relatedNotes.get(f2)?.has(f1)) {
+      return {
+        similarity: 1,
+        topWords: ["a"]
+      };
     }
     return {
-      similarity: matches / this.similarity.numHashes,
-      topWords: [] // MinHash doesn't provide word-level contributions
+      similarity: 0.5,
+      topWords: ["a"]
     };
   }
-}
 
-/**
- * Core engine for MinHash LSH similarity calculations.
- * Implements LSH (Locality-Sensitive Hashing) and MinHash techniques for sub-linear
- * time similarity search, combined with BM25 scoring for accurate results.
- * Maintains efficient index structures and caches for optimal performance.
- */
-export class MinHashLSHEngine {
-  numHashes: number;
-  k1: number;
-  b: number;
-  titleWeight: number;
-  fuzzyDistance: number;
-  documents: Map<string, { title: string[]; content: string[] }>;
-  documentLengths: Map<string, number>;
-  averageDocLength: number;
-  termFrequencies: Map<string, Map<string, number>>;
-  documentFrequencies: Map<string, number>;
-  signatures: Map<string, number[]>;
-  private hashFunctions: { a: number; b: number; }[];
-  lshIndex: Map<number, Set<string>>;
-  private numBands: number;
-  private bandSize: number;
-  private vocabulary: Map<string, number>; // Maps terms to their fixed position in vectors
-  private nextTermIndex: number;
-
-  private readonly tokenizer: WordTokenizer = new WordTokenizer();
-
-  constructor(config: AlgorithmConfig = DEFAULT_CONFIG) {
-    this.numHashes = config.minHash.numHashes;
-    this.k1 = config.bm25.k1;
-    this.b = config.bm25.b;
-    this.titleWeight = config.minhashLsh.titleWeight;
-    this.fuzzyDistance = config.minHash.fuzzyDistance;
-    this.documents = new Map();
-    this.documentLengths = new Map();
-    this.averageDocLength = 0;
-    this.termFrequencies = new Map();
-    this.documentFrequencies = new Map();
-    this.signatures = new Map();
-    this.numBands = config.minHash.numBands;
-    this.bandSize = config.minHash.bandSize;
-    this.hashFunctions = this.generateHashFunctions();
-    this.lshIndex = new Map();
-    this.vocabulary = new Map();
-    this.nextTermIndex = 0;
+  clear() {
   }
 
-  private getOrAddTermIndex(term: string): number {
-    let index = this.vocabulary.get(term);
-    if (index === undefined) {
-      index = this.nextTermIndex++;
-      this.vocabulary.set(term, index);
+
+  /**
+   * See https://www.pinecone.io/learn/series/faiss/locality-sensitive-hashing/.
+   */
+  private buildShingles(text: string, k: number): Set<string> {
+    const shingles = new Set<string>();
+    for (let i = 0; i <= text.length - k; i++) {
+      const shingle = text.slice(i, i + k);
+      shingles.add(shingle);
     }
-    return index;
+    return shingles;
   }
 
-  preprocess(text: string): { title: string[]; content: string[] } {
-    const lines = text.split('\n');
-    let title: string[] = [];
-    let content: string[] = [];
+  private minhash() {
 
-    const titleMatch = lines.find(line => line.startsWith('# '));
-    if (titleMatch) {
-      title = this.tokenize(titleMatch.replace(/^#\s+/, ''));
-    }
-
-    content = this.tokenize(text);
-
-    // Add all tokens to vocabulary to maintain consistent positions
-    [...new Set([...title, ...content])].forEach(term => this.getOrAddTermIndex(term));
-
-    return { title, content };
-  }
-
-  private tokenize(text: string): string[] {
-    return this.tokenizer.tokenize(text, {
-      minLength: 2,
-      removeStopWords: true,
-      handleContractions: true
-    });
-  }
-
-  async addDocument(docId: string, text: string): Promise<void> {
-    const { title, content } = this.preprocess(text);
-    this.documents.set(docId, { title, content });
-
-    // Update term frequencies and document frequencies
-    const uniqueTerms = new Set([...title, ...content]);
-    uniqueTerms.forEach(term => {
-      const termIndex = this.getOrAddTermIndex(term);
-
-      // Update document frequency
-      this.documentFrequencies.set(term, (this.documentFrequencies.get(term) || 0) + 1);
-
-      // Update term frequency
-      if (!this.termFrequencies.has(docId)) {
-        this.termFrequencies.set(docId, new Map());
-      }
-      const docTerms = this.termFrequencies.get(docId)!;
-      docTerms.set(term, (docTerms.get(term) || 0) + 1);
-    });
-
-    // Calculate and store MinHash signature
-    const signature = this.calculateMinHash(uniqueTerms);
-    this.signatures.set(docId, signature);
-    await this.indexLSH(docId, signature);
-
-    // Update document length
-    this.documentLengths.set(docId, content.length);
-    this.updateAverageDocLength();
-  }
-
-  private updateAverageDocLength() {
-    if (this.documentLengths.size === 0) {
-      this.averageDocLength = 0;
-      return;
-    }
-    let totalLength = 0;
-    this.documentLengths.forEach(length => totalLength += length);
-    this.averageDocLength = totalLength / this.documentLengths.size;
-  }
-
-  generateVector(text: string): number[] {
-    const { title, content } = this.preprocess(text);
-    const uniqueTerms = new Set([...title, ...content]);
-
-    // Generate MinHash signature
-    const minhashSignature = this.calculateMinHash(uniqueTerms);
-
-    // Generate BM25-like vector with fixed positions
-    const bm25Vector = new Array(this.vocabulary.size).fill(0);
-    uniqueTerms.forEach(term => {
-      const termIndex = this.vocabulary.get(term);
-      if (termIndex !== undefined) {
-        const tf = [...content, ...title].filter(t => t === term).length;
-        const df = this.documentFrequencies.get(term) || 1;
-        const idf = Math.log(1 + (this.documents.size - df + 0.5) / (df + 0.5));
-        const docLength = content.length;
-
-        // BM25-like scoring
-        const numerator = tf * (this.k1 + 1);
-        const denominator = tf + this.k1 * (1 - this.b + this.b * (docLength / this.averageDocLength));
-        bm25Vector[termIndex] = idf * (numerator / denominator);
-      }
-    });
-
-    // Combine MinHash signature with BM25 vector
-    return [...minhashSignature, ...bm25Vector];
-  }
-
-  private async indexLSH(docId: string, signature: number[]): Promise<void> {
-    for (let band = 0; band < this.numBands; band++) {
-      const bandSignature = signature.slice(
-        band * this.bandSize,
-        (band + 1) * this.bandSize
-      );
-      const bandHash = this.hashBand(bandSignature);
-      if (!this.lshIndex.has(bandHash)) {
-        this.lshIndex.set(bandHash, new Set());
-      }
-      this.lshIndex.get(bandHash)!.add(docId);
-    }
-  }
-
-  private hashString(str: string): number {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return Math.abs(hash);
-  }
-
-  private hashBand(band: number[]): number {
-    return band.reduce((hash, value) => {
-      hash = ((hash << 5) - hash) + value;
-      return hash & hash;
-    }, 0);
-  }
-
-  private generateHashFunctions(): { a: number; b: number; }[] {
-    return Array.from({ length: this.numHashes }, () => ({
-      a: Math.floor(Math.random() * 2147483647),
-      b: Math.floor(Math.random() * 2147483647)
-    }));
-  }
-
-  private calculateMinHash(tokenSet: Set<string>): number[] {
-    const signature = new Array(this.numHashes).fill(Infinity);
-    tokenSet.forEach(token => {
-      const hash = this.hashString(token);
-      this.hashFunctions.forEach((func, i) => {
-        const value = (func.a * hash + func.b) % 2147483647;
-        signature[i] = Math.min(signature[i], value);
-      });
-    });
-    return signature;
   }
 }

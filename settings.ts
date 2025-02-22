@@ -1,12 +1,86 @@
 /**
- * @file Settings management for the Related Notes plugin.
- * Implements the settings tab UI and handles configuration changes.
+ * @file Unified settings management for the Related Notes plugin.
+ * Combines UI settings tab and core algorithm configuration.
  */
 
 import { App, PluginSettingTab, Setting, ButtonComponent } from 'obsidian';
 import RelatedNotesPlugin from './main';
-import { Logger } from './logger';
-import { DEFAULT_CONFIG } from './config';
+import { Logger } from './utils';
+
+/**
+ * Plugin settings interface defining configuration options
+ */
+export interface RelatedNotesSettings {
+  similarityThreshold: number;
+  maxSuggestions: number;
+  debugMode: boolean;
+  showAdvanced: boolean;
+  logLevel: 'error' | 'warn' | 'info' | 'debug';
+}
+
+/**
+ * Core algorithm configuration interface
+ */
+export interface AlgorithmConfig {
+  // MinHash LSH Configuration
+  minHash: {
+    numHashes: number;      // Number of hash functions to use
+    numBands: number;       // Number of bands for LSH
+    bandSize: number;       // Size of each band (derived from numHashes/numBands)
+    fuzzyDistance: number;  // Maximum edit distance for fuzzy matching
+  };
+
+  // BM25 Configuration
+  bm25: {
+    k1: number;  // Term frequency saturation parameter
+    b: number;   // Length normalization parameter
+  };
+
+  // MinHash LSH + BM25 Scoring
+  minhashLsh: {
+    titleWeight: number;    // Weight multiplier for title matches
+  };
+
+  // Processing Configuration
+  processing: {
+    batchSize: {
+      indexing: number;     // Batch size for initial indexing
+      search: number;       // Batch size for similarity search
+      lsh: number;         // Batch size for LSH operations
+    };
+    delayBetweenBatches: number;  // Milliseconds to wait between batches
+  };
+}
+
+/**
+ * Default algorithm configuration
+ */
+export const DEFAULT_CONFIG: AlgorithmConfig = {
+  minHash: {
+    numHashes: 10,
+    numBands: 2,
+    bandSize: 5,  // Derived from numHashes/numBands
+    fuzzyDistance: 1
+  },
+
+  bm25: {
+    k1: 1.5,  // Increased to give more weight to term frequency
+    b: 0.85   // Increased to give more weight to document length normalization
+  },
+
+  minhashLsh: {
+    titleWeight: 1.0 // Increase to give titles more weight.
+  },
+
+  processing: {
+    batchSize: {
+      indexing: 1,  // Process 3 files at a time during initial indexing
+      search: 1,    // Process 2 files at a time during similarity search
+      lsh: 1        // Process 3 documents at a time for LSH operations
+    },
+    delayBetweenBatches: 50  // 50ms delay between batches for mobile performance
+  }
+};
 
 /**
  * Settings tab implementation that provides UI controls for configuring the plugin.
@@ -44,14 +118,16 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Basic Settings' });
 
     new Setting(containerEl)
-      .setName('Maximum Suggestions')
-      .setDesc('Maximum number of related notes to display.')
-      .addSlider(slider => slider
-        .setLimits(1, 20, 1)
-        .setValue(this.plugin.settings.maxSuggestions)
-        .setDynamicTooltip()
+      .setName('Log Level')
+      .setDesc('Control the verbosity of logging. Error shows only errors, Warn adds warnings, Info adds general information, Debug shows all details.')
+      .addDropdown(dropdown => dropdown
+        .addOption('error', 'Error')
+        .addOption('warn', 'Warning')
+        .addOption('info', 'Info')
+        .addOption('debug', 'Debug')
+        .setValue(this.plugin.settings.logLevel)
         .onChange(async (value) => {
-          this.plugin.settings.maxSuggestions = value;
+          this.plugin.settings.logLevel = value as 'error' | 'warn' | 'info' | 'debug';
           await this.plugin.saveSettings();
         }));
 
@@ -61,18 +137,6 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
     // Advanced Settings
     containerEl.createEl('h3', { text: 'Advanced Settings' });
-
-    new Setting(containerEl)
-      .setName('Similarity Provider')
-      .setDesc('Choose which algorithm to use for calculating note similarity. This is automatically set based on vault size but can be manually overridden.')
-      .addDropdown(dropdown => dropdown
-        .addOption('bm25', 'BM25 (Best for small-medium vaults)')
-        .addOption('minhash-lsh', 'MinHash LSH + BM25 (Best for large vaults >10,000 notes)')
-        .setValue(this.plugin.settings.similarityProvider)
-        .onChange(async (value) => {
-          this.plugin.settings.similarityProvider = value as 'bm25' | 'minhash-lsh';
-          await this.plugin.saveSettings();
-        }));
 
     new Setting(containerEl)
       .setName('Debug Mode')
@@ -93,18 +157,6 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         .setDynamicTooltip()
         .onChange(async (value) => {
           this.plugin.settings.similarityThreshold = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
-      .setName('Maximum Suggestions')
-      .setDesc('Maximum number of related notes to display.')
-      .addSlider(slider => slider
-        .setLimits(1, 20, 1)
-        .setValue(this.plugin.settings.maxSuggestions)
-        .setDynamicTooltip()
-        .onChange(async (value) => {
-          this.plugin.settings.maxSuggestions = value;
           await this.plugin.saveSettings();
         }));
 
@@ -277,6 +329,5 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
             this.display(); // Refresh the settings tab
           });
       });
-
   }
 }

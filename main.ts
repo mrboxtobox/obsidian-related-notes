@@ -2,36 +2,22 @@
  * @file Main plugin file for the Related Notes Obsidian plugin.
  * 
  * This plugin suggests related notes using proven similarity algorithms.
- * It supports both BM25 and MinHash LSH + BM25 providers for efficient local processing.
+ * It uses MinHash LSH + BM25 providers for efficient local processing.
  */
 
 import { Plugin, TFile, MarkdownView, WorkspaceLeaf } from 'obsidian';
-import { Logger } from './logger';
-import { RelatedNotesSettingTab } from './settings';
-import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE, BM25Provider, MinHashLSHProvider } from './core';
-import { DEFAULT_CONFIG } from './config';
-
-/**
- * Plugin settings interface defining configuration options
- */
-interface RelatedNotesSettings {
-  similarityThreshold: number;
-  maxSuggestions: number;
-  similarityProvider: 'bm25' | 'minhash-lsh';
-  debugMode: boolean;
-  showAdvanced: boolean;
-}
+import { Logger, LogLevel } from './utils';
+import { RelatedNotesSettingTab, RelatedNotesSettings, DEFAULT_CONFIG } from './settings';
+import { SimilarityProvider, SimilarityProviderV2 } from './core';
+import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 
 const DEFAULT_SETTINGS: RelatedNotesSettings = {
-  similarityThreshold: 0.7,
+  similarityThreshold: 0.0,
   maxSuggestions: 10,
-  similarityProvider: 'bm25',
-  debugMode: false,
-  showAdvanced: false
+  debugMode: true,
+  showAdvanced: false,
+  logLevel: 'debug',
 };
-
-// Threshold for automatically switching to MinHash LSH
-const MINHASH_THRESHOLD = 10000; // Number of notes that triggers automatic MinHash LSH
 
 /**
  * Main plugin class that handles initialization, event management, and core functionality
@@ -39,7 +25,7 @@ const MINHASH_THRESHOLD = 10000; // Number of notes that triggers automatic MinH
  */
 export default class RelatedNotesPlugin extends Plugin {
   settings: RelatedNotesSettings;
-  private similarityProvider: BM25Provider | MinHashLSHProvider;
+  private similarityProvider: SimilarityProvider;
   private processingQueue: Set<string>;
   private isIndexInitialized = false;
 
@@ -51,9 +37,7 @@ export default class RelatedNotesPlugin extends Plugin {
       (leaf: WorkspaceLeaf) => new RelatedNotesView(leaf, this)
     );
 
-    this.similarityProvider = this.settings.similarityProvider === 'bm25'
-      ? new BM25Provider()
-      : new MinHashLSHProvider();
+    this.similarityProvider = new SimilarityProviderV2(this.app.vault);
     await this.similarityProvider.initialize();
     this.processingQueue = new Set();
 
@@ -63,28 +47,44 @@ export default class RelatedNotesPlugin extends Plugin {
       'zap',
       'Toggle related notes',
       async () => {
-        const leaves = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+        try {
+          const leaves = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
 
-        if (leaves.length > 0) {
-          workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
-        } else {
-          const leaf = workspace.getRightLeaf(false);
-          if (leaf) {
-            await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
-            const view = leaf.view;
-            if (view instanceof RelatedNotesView) {
-              if (!view.containerEl.children[1]) {
-                await view.onOpen();
-              }
-              const activeView = workspace.getMostRecentLeaf()?.view;
-              if (activeView instanceof MarkdownView && activeView.file) {
-                await this.showRelatedNotes(activeView.file);
-              }
-            } else {
-              Logger.warn('Invalid view type');
-            }
-            workspace.revealLeaf(leaf);
+          if (leaves.length > 0) {
+            workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+            return;
           }
+
+          const newLeaf = workspace.getRightLeaf(false);
+          if (!newLeaf) {
+            Logger.error('Failed to create new leaf');
+            return;
+          }
+
+          await newLeaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
+          const view = newLeaf.view;
+          if (!(view instanceof RelatedNotesView)) {
+            Logger.error('View not properly initialized');
+            return;
+          }
+
+          // Initialize view if needed
+          if (!view.containerEl.children[1]) {
+            await view.onOpen();
+          }
+
+          // Get active file if available
+          const activeView = workspace.getMostRecentLeaf()?.view;
+          if (activeView instanceof MarkdownView && activeView.file) {
+            await this.showRelatedNotes(activeView.file);
+          } else {
+            await view.updateForFile(null, []);
+          }
+
+          // Reveal leaf after content is ready
+          workspace.revealLeaf(newLeaf);
+        } catch (error) {
+          Logger.error('Error toggling related notes:', error);
         }
       }
     );
@@ -151,13 +151,17 @@ export default class RelatedNotesPlugin extends Plugin {
           return true;
         }
 
-        const { workspace } = this.app;
-        const leaves = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+        try {
+          const { workspace } = this.app;
+          const leaves = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
 
-        if (leaves.length > 0) {
-          workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
-        } else {
-          this.createAndInitializeView();
+          if (leaves.length > 0) {
+            workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+          } else {
+            this.createAndInitializeView();
+          }
+        } catch (error) {
+          Logger.error('Error executing toggle command:', error);
         }
         return true;
       }
@@ -173,25 +177,30 @@ export default class RelatedNotesPlugin extends Plugin {
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 
-    // Automatically select similarity provider based on vault size
-    const totalNotes = this.app.vault.getMarkdownFiles().length;
-    if (totalNotes >= MINHASH_THRESHOLD) {
-      this.settings.similarityProvider = 'minhash-lsh';
-      await this.saveSettings();
-    }
+    // Set log level based on settings
+    const logLevelMap: Record<RelatedNotesSettings['logLevel'], LogLevel> = {
+      'error': LogLevel.ERROR,
+      'warn': LogLevel.WARN,
+      'info': LogLevel.INFO,
+      'debug': LogLevel.DEBUG
+    };
+    Logger.setLogLevel(logLevelMap[this.settings.logLevel]);
   }
 
   async saveSettings() {
-    const oldProvider = this.settings.similarityProvider;
+    const oldLogLevel = this.settings.logLevel;
     await this.saveData(this.settings);
 
-    if (this.settings.similarityProvider !== oldProvider) {
-      this.similarityProvider = this.settings.similarityProvider === 'bm25'
-        ? new BM25Provider()
-        : new MinHashLSHProvider();
-      await this.similarityProvider.initialize();
-      this.isIndexInitialized = false;
-      await this.initializeIndex();
+    // Update log level if changed
+    if (oldLogLevel !== this.settings.logLevel) {
+      const logLevelMap: Record<RelatedNotesSettings['logLevel'], LogLevel> = {
+        'error': LogLevel.ERROR,
+        'warn': LogLevel.WARN,
+        'info': LogLevel.INFO,
+        'debug': LogLevel.DEBUG
+      };
+      Logger.setLogLevel(logLevelMap[this.settings.logLevel]);
+      Logger.info('Log level changed to: ' + this.settings.logLevel);
     }
   }
 
@@ -200,8 +209,14 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async initializeIndex() {
-    if (this.isIndexInitialized) return;
+    // Skip if pane is not visible or already initialized
+    if (this.isIndexInitialized || !this.isRelatedNotesVisible()) {
+      Logger.debug('Skipping index initialization - already initialized or pane not visible');
+      return;
+    }
+
     const files = this.app.vault.getMarkdownFiles();
+    Logger.info(`Initializing index with ${files.length} files`);
 
     // Show loading state in view if it exists
     const view = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE)[0]?.view;
@@ -211,6 +226,11 @@ export default class RelatedNotesPlugin extends Plugin {
 
     const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
     for (let i = 0; i < files.length; i += batchSize.indexing) {
+      // Check if pane is still visible before processing each batch
+      if (!this.isRelatedNotesVisible()) {
+        return;
+      }
+
       const batch = files.slice(i, i + batchSize.indexing);
       await Promise.all(
         batch.map(file => {
@@ -232,15 +252,24 @@ export default class RelatedNotesPlugin extends Plugin {
     }
   }
 
+  private isRelatedNotesVisible(): boolean {
+    const leaves = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+    return leaves.length > 0;
+  }
+
   private async processFile(file: TFile) {
-    if (this.processingQueue.has(file.path)) {
+    // Skip if pane is not visible or file is already being processed
+    if (!this.isRelatedNotesVisible() || this.processingQueue.has(file.path)) {
+      Logger.debug(`Skipping file processing for ${file.path} - pane not visible or already processing`);
       return;
     }
 
     if (!this.isMarkdownFile(file)) {
+      Logger.debug(`Skipping non-markdown file: ${file.path}`);
       return;
     }
     this.processingQueue.add(file.path);
+    Logger.debug(`Processing file: ${file.path}`);
 
     try {
       const content = await this.app.vault.cachedRead(file);
@@ -254,57 +283,102 @@ export default class RelatedNotesPlugin extends Plugin {
 
   private async createAndInitializeView() {
     const { workspace } = this.app;
-    const leaf = workspace.getRightLeaf(false);
-    if (leaf) {
-      await leaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
-      const view = leaf.view;
-      if (view instanceof RelatedNotesView) {
-        if (!view.containerEl.children[1]) {
-          await view.onOpen();
-        }
-        const activeView = workspace.getMostRecentLeaf()?.view;
-        if (activeView instanceof MarkdownView && activeView.file) {
-          await this.showRelatedNotes(activeView.file);
-        } else {
-          await view.updateForFile(null, []);
-        }
-      }
-      workspace.revealLeaf(leaf);
+    const newLeaf = workspace.getRightLeaf(false);
+    if (!newLeaf) {
+      Logger.error('Failed to create new leaf');
+      return;
     }
-  }
 
-  private async showRelatedNotes(file: TFile) {
     try {
-      const { workspace, vault } = this.app;
-      const content = await vault.cachedRead(file);
-      const vector = await this.similarityProvider.generateVector(content);
-      const relatedNotes = await this.findRelatedNotes(file, vector);
-
-      let leaf: WorkspaceLeaf = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE)[0];
-      workspace.revealLeaf(leaf);
-
-      const view = leaf.view;
+      await newLeaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
+      const view = newLeaf.view;
       if (!(view instanceof RelatedNotesView)) {
         Logger.error('View not properly initialized');
         return;
       }
 
+      // Initialize view if needed
       if (!view.containerEl.children[1]) {
         await view.onOpen();
       }
+
+      // Get active file if available
+      const activeView = workspace.getMostRecentLeaf()?.view;
+      if (activeView instanceof MarkdownView && activeView.file) {
+        await this.showRelatedNotes(activeView.file);
+      } else {
+        await view.updateForFile(null, []);
+      }
+
+      // Reveal leaf after content is ready
+      workspace.revealLeaf(newLeaf);
+    } catch (error) {
+      Logger.error('Error creating view:', error);
+    }
+  }
+
+  private async showRelatedNotes(file: TFile) {
+    // Skip if pane is not visible
+    if (!this.isRelatedNotesVisible()) {
+      return;
+    }
+
+    try {
+      const { workspace, vault } = this.app;
+
+      // Get or create the leaf first
+      let leaf = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE)[0];
+      if (!leaf) {
+        const newLeaf = workspace.getRightLeaf(false);
+        if (!newLeaf) {
+          Logger.error('Failed to create new leaf');
+          return;
+        }
+        await newLeaf.setViewState({ type: RELATED_NOTES_VIEW_TYPE, active: true });
+        leaf = newLeaf;
+      }
+
+      if (leaf === null || leaf === undefined) {
+        Logger.error(`Leaf not properly initialized:`);
+        return;
+      }
+
+      // Ensure view is properly initialized
+      const view = leaf.view;
+      if (!(view instanceof RelatedNotesView)) {
+        Logger.error(`View not properly initialized: ${view.constructor.name}`);
+        return;
+      }
+
+      // Initialize view if needed
+      if (!view.containerEl.children[1]) {
+        await view.onOpen();
+      }
+
+      // Generate content and find related notes
+      const content = await vault.cachedRead(file);
+      const vector = await this.similarityProvider.generateVector(content);
+      const relatedNotes = await this.findRelatedNotes(file, vector);
+
+      // Update view with new content
       await view.updateForFile(file, relatedNotes);
+
+      // Reveal leaf after content is ready
+      workspace.revealLeaf(leaf);
     } catch (error) {
       Logger.error(`Error showing related notes for ${file.path}:`, error);
     }
   }
 
   private async findRelatedNotes(file: TFile, currentVector: any): Promise<Array<{ file: TFile; similarity: number; topWords: string[] }>> {
+    Logger.info(`Finding related notes for: ${file.path}`);
     const similarities: Array<{ file: TFile; similarity: number; topWords: string[] }> = [];
     const allFiles = this.app.vault.getMarkdownFiles();
     const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
+    Logger.debug(`Using batch size: ${batchSize.search}, delay: ${delayBetweenBatches}ms`);
 
     // First, use LSH to find candidate files
-    const candidateFiles = new Set<TFile>();
+    const candidateFiles: TFile[] = [];
     for (let i = 0; i < allFiles.length; i += batchSize.search) {
       const batch = allFiles.slice(i, i + batchSize.search);
       await Promise.all(
@@ -313,29 +387,19 @@ export default class RelatedNotesPlugin extends Plugin {
 
           const content = await this.app.vault.cachedRead(otherFile);
           const otherVector = await this.similarityProvider.generateVector(content);
-          const { similarity: lshSimilarity } = this.similarityProvider.calculateSimilarity(otherVector, currentVector);
+          const similarity = await this.similarityProvider.calculateSimilarity(otherFile.name, file.name);
 
           // Use a lower threshold for LSH filtering to avoid false negatives
-          if (lshSimilarity >= this.settings.similarityThreshold * 0.5) {
-            candidateFiles.add(otherFile);
+          if (similarity.similarity >= this.settings.similarityThreshold * 0.5) {
+            candidateFiles.push(otherFile);
+            similarities.push({
+              file: otherFile,
+              similarity: similarity.similarity,
+              topWords: similarity.topWords,
+            })
           }
         })
       );
-
-      if (i + batchSize.search < allFiles.length) {
-        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
-      }
-    }
-
-    // Then, calculate BM25 similarity only for candidate files
-    for (const candidateFile of candidateFiles) {
-      const content = await this.app.vault.cachedRead(candidateFile);
-      const candidateVector = await this.similarityProvider.generateVector(content);
-      const { similarity, topWords } = this.similarityProvider.calculateSimilarity(candidateVector, currentVector);
-
-      if (similarity >= this.settings.similarityThreshold) {
-        similarities.push({ file: candidateFile, similarity, topWords });
-      }
     }
 
     return similarities

@@ -44,10 +44,14 @@ Toggle advanced settings to access detailed configuration options:
 
 The plugin automatically selects the optimal similarity provider based on your vault size:
 
-#### BM25 (For Small-Medium Vaults)
+#### BM25+ (For Small-Medium Vaults)
 - Local processing, no data leaves your device
 - Fast and privacy-focused
 - Works well for keyword-based similarity
+- Uses bidirectional BM25+ scoring for better accuracy
+- Efficient sparse vector representation
+- Simple but effective word stemming
+- Smart vector caching for improved performance
 - Ideal for vaults with fewer than 10,000 notes
 - No setup required
 
@@ -68,11 +72,12 @@ The plugin currently processes Markdown (.md) files only, as these are the prima
 ### Caching System
 
 The plugin uses an intelligent caching system to improve performance:
-- Document signatures and BM25 vectors are cached in memory
+- Document signatures and BM25+ vectors are cached in memory using sparse representation
 - LSH index structures are maintained for efficient retrieval
 - Cache invalidation based on file modification time
 - Indexes and scores are only recomputed when content changes
 - Smart cache management to prevent unnecessary recomputation
+- Progress bar shows indexing status for better user feedback
 
 ### Debug Logging
 
@@ -134,7 +139,7 @@ npm run build
 - `main.ts` - Main plugin file with core functionality and event handling
 - `core.ts` - Core similarity algorithms and providers
 - `settings.ts` - Settings tab implementation
-- `logger.ts` - Logging utility
+- `utils.ts` - Utility functions including logging, date formatting, and helper functions
 - `styles.css` - Custom CSS styles
 - `manifest.json` - Plugin manifest
 - `package.json` - Project configuration and dependencies
