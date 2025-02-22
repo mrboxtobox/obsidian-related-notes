@@ -3,7 +3,7 @@
  * Implements the view for displaying related notes and the embedding providers for calculating note similarity.
  */
 
-import { ItemView, WorkspaceLeaf, TFile, MarkdownView } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, MarkdownView, MarkdownRenderer } from 'obsidian';
 import RelatedNotesPlugin from './main';
 import { Logger } from './logger';
 import { AlgorithmConfig, DEFAULT_CONFIG } from './config';
@@ -96,6 +96,7 @@ export class RelatedNotesView extends ItemView {
         const linkContainer = document.createElement('div');
         linkContainer.className = 'related-note-link-container';
 
+        // Create title link
         const linkEl = document.createElement('a');
         linkEl.className = 'related-note-link';
         linkEl.textContent = relatedFile.basename;
@@ -108,57 +109,13 @@ export class RelatedNotesView extends ItemView {
           linkContainer.appendChild(similaritySpan);
         }
 
-        const hasLink = this.hasExistingLink(currentContent, relatedFile.basename);
-        const addLinkButton = document.createElement('button');
-        addLinkButton.textContent = hasLink ? 'Linked' : 'Add Link';
-        addLinkButton.className = hasLink ? 'related-note-linked' : 'related-note-add-link';
-
         listItemEl.appendChild(linkContainer);
-        listItemEl.appendChild(addLinkButton);
 
-        // Add event listeners after DOM elements are created
+        // Add event listener for link click
         linkEl.addEventListener('click', async (e) => {
           e.preventDefault();
           await this.app.workspace.getLeaf().openFile(relatedFile);
         });
-
-        if (!hasLink) {
-          addLinkButton.addEventListener('click', async () => {
-            if (!this.currentFile) return;
-
-            const activeLeaf = this.app.workspace.getLeaf(false);
-            if (!activeLeaf) return;
-
-            await activeLeaf.openFile(this.currentFile);
-            const activeView = activeLeaf.view;
-
-            if (!(activeView instanceof MarkdownView)) return;
-
-            const editor = activeView.editor;
-            const content = editor.getValue();
-            const relatedSectionRegex = /\n## Related Notes\n([\s\S]*?)(\n#|$)/;
-            let newContent: string;
-
-            const match = content.match(relatedSectionRegex);
-            if (match) {
-              if (!match[1].includes(`[[${relatedFile.basename}]]`)) {
-                newContent = content.replace(
-                  relatedSectionRegex,
-                  `\n## Related Notes\n${match[1]}[[${relatedFile.basename}]]\n$2`
-                );
-              } else {
-                return;
-              }
-            } else {
-              newContent = content + (content.endsWith('\n') ? '' : '\n') +
-                `\n## Related Notes\n[[${relatedFile.basename}]]\n`;
-            }
-
-            editor.setValue(newContent);
-            addLinkButton.textContent = 'Linked';
-            addLinkButton.className = 'related-note-linked';
-          });
-        }
 
         return listItemEl;
       }));
@@ -335,6 +292,8 @@ export class BM25 {
   private avgDocLength: number;
   private k1: number;
   private b: number;
+  private vocabulary: Map<string, number>; // Maps terms to their fixed position in vectors
+  private nextTermIndex: number;
 
   constructor(config: { k1: number; b: number } = DEFAULT_CONFIG.bm25) {
     this.documents = new Map();
@@ -344,6 +303,8 @@ export class BM25 {
     this.avgDocLength = 0;
     this.k1 = config.k1;
     this.b = config.b;
+    this.vocabulary = new Map();
+    this.nextTermIndex = 0;
   }
 
   private updateAvgDocLength() {
@@ -356,6 +317,15 @@ export class BM25 {
     this.avgDocLength = totalLength / this.totalDocuments;
   }
 
+  private getOrAddTermIndex(term: string): number {
+    let index = this.vocabulary.get(term);
+    if (index === undefined) {
+      index = this.nextTermIndex++;
+      this.vocabulary.set(term, index);
+    }
+    return index;
+  }
+
   addDocument(path: string, tokens: string[], mtime: number) {
     const existingDoc = this.documents.get(path);
     if (existingDoc) {
@@ -366,6 +336,9 @@ export class BM25 {
       });
       this.totalDocuments--;
     }
+
+    // Add all new terms to vocabulary first
+    tokens.forEach(term => this.getOrAddTermIndex(term));
 
     this.documents.set(path, { path, tokens, mtime, length: tokens.length });
     this.totalDocuments++;
@@ -401,6 +374,7 @@ export class BM25 {
     this.totalDocuments = 0;
     this.avgDocLength = 0;
     this.isDirty = true;
+    // Keep vocabulary to maintain consistent vector positions
   }
 
   private termFrequency(term: string, doc: DocumentEntry): number {
@@ -417,15 +391,20 @@ export class BM25 {
     const doc = this.documents.get(path);
     if (!doc) return null;
 
-    const terms = new Set(doc.tokens);
-    const vector: number[] = [];
+    // Initialize vector with zeros for all known terms
+    const vector = new Array(this.nextTermIndex).fill(0);
 
-    terms.forEach(term => {
-      const tf = this.termFrequency(term, doc);
-      const idf = this.idf(term);
-      const numerator = tf * (this.k1 + 1);
-      const denominator = tf + this.k1 * (1 - this.b + this.b * (doc.length / this.avgDocLength));
-      vector.push(idf * (numerator / denominator));
+    // Calculate BM25 score for each term in the document
+    const uniqueTerms = new Set(doc.tokens);
+    uniqueTerms.forEach(term => {
+      const termIndex = this.vocabulary.get(term);
+      if (termIndex !== undefined) {
+        const tf = this.termFrequency(term, doc);
+        const idf = this.idf(term);
+        const numerator = tf * (this.k1 + 1);
+        const denominator = tf + this.k1 * (1 - this.b + this.b * (doc.length / this.avgDocLength));
+        vector[termIndex] = idf * (numerator / denominator);
+      }
     });
 
     return vector;
@@ -471,14 +450,18 @@ export class BM25Provider implements SimilarityProvider {
   }
 
   calculateSimilarity(vec1: number[], vec2: number[]): number {
+    if (vec1.length !== vec2.length) {
+      throw new Error(`Vectors must have the same length. Got ${vec1.length} and ${vec2.length}`);
+    }
+
     let dotProduct = 0;
     let norm1 = 0;
     let norm2 = 0;
 
     for (let i = 0; i < vec1.length; i++) {
-      dotProduct += vec1[i] * (vec2[i] || 0);
+      dotProduct += vec1[i] * vec2[i];
       norm1 += vec1[i] * vec1[i];
-      norm2 += (vec2[i] || 0) * (vec2[i] || 0);
+      norm2 += vec2[i] * vec2[i];
     }
 
     if (norm1 === 0 || norm2 === 0) return 0;
@@ -534,13 +517,13 @@ export class MinHashLSHProvider implements SimilarityProvider {
         handleContractions: true
       });
 
-      // Generate MinHash signature for LSH
+      // Generate MinHash signature for LSH-based filtering
       const tempId = 'temp_' + Date.now();
       this.similarity.addDocument(tempId, text);
       const signature = this.similarity.signatures.get(tempId);
       if (!signature) throw new Error('Failed to generate MinHash signature');
 
-      // Generate BM25 scores
+      // Generate BM25 vector for scoring
       this.bm25.addDocument(tempId, tokens, Date.now());
       const bm25Vector = this.bm25.calculateVector(tempId) || [];
 
@@ -550,47 +533,47 @@ export class MinHashLSHProvider implements SimilarityProvider {
       this.similarity.signatures.delete(tempId);
       this.bm25.removeDocument(tempId);
 
-      // Return both MinHash signature and BM25 vector
-      return [...signature, ...bm25Vector];
+      // Store both vectors for later use
+      return {
+        type: 'temp',
+        minhash: signature,
+        bm25: bm25Vector
+      } as any; // Using any to maintain interface compatibility
+
     } catch (error) {
-      Logger.error('Error generating hybrid embedding:', error);
+      Logger.error('Error generating vectors:', error);
       throw error;
     }
   }
 
-  calculateSimilarity(vec1: number[], vec2: number[]): number {
-    if (vec1.length !== vec2.length) {
-      throw new Error(`Vectors must have the same length. Got ${vec1.length} and ${vec2.length}`);
+  calculateSimilarity(vec1: any, vec2: any): number {
+    // For temporary vectors (during search), use BM25 similarity
+    if (vec1.type === 'temp' || vec2.type === 'temp') {
+      const bm251 = vec1.type === 'temp' ? vec1.bm25 : vec1;
+      const bm252 = vec2.type === 'temp' ? vec2.bm25 : vec2;
+
+      // Calculate BM25 cosine similarity
+      let dotProduct = 0;
+      let norm1 = 0;
+      let norm2 = 0;
+      for (let i = 0; i < bm251.length; i++) {
+        dotProduct += bm251[i] * bm252[i];
+        norm1 += bm251[i] * bm251[i];
+        norm2 += bm252[i] * bm252[i];
+      }
+      return norm1 === 0 || norm2 === 0 ? 0 :
+        dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
     }
 
-    const hashLength = this.similarity.numHashes;
-    const minhash1 = vec1.slice(0, hashLength);
-    const minhash2 = vec2.slice(0, hashLength);
-    const bm251 = vec1.slice(hashLength);
-    const bm252 = vec2.slice(hashLength);
+    // For LSH filtering (between stored vectors), use MinHash similarity
+    const minhash1 = vec1.slice(0, this.similarity.numHashes);
+    const minhash2 = vec2.slice(0, this.similarity.numHashes);
 
-    // Calculate MinHash-based Jaccard similarity
     let matches = 0;
-    for (let i = 0; i < hashLength; i++) {
+    for (let i = 0; i < this.similarity.numHashes; i++) {
       if (minhash1[i] === minhash2[i]) matches++;
     }
-    const jaccardSim = matches / hashLength;
-
-    // Calculate BM25 cosine similarity
-    let dotProduct = 0;
-    let norm1 = 0;
-    let norm2 = 0;
-    for (let i = 0; i < bm251.length; i++) {
-      dotProduct += bm251[i] * bm252[i];
-      norm1 += bm251[i] * bm251[i];
-      norm2 += bm252[i] * bm252[i];
-    }
-    const bm25Sim = norm1 === 0 || norm2 === 0 ? 0 :
-      dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
-
-    // Weight MinHash similarity more heavily for structural similarity
-    // and BM25 for content similarity
-    return 0.7 * jaccardSim + 0.3 * bm25Sim;
+    return matches / this.similarity.numHashes;
   }
 }
 
@@ -616,6 +599,8 @@ export class MinHashLSHEngine {
   lshIndex: Map<number, Set<string>>;
   private numBands: number;
   private bandSize: number;
+  private vocabulary: Map<string, number>; // Maps terms to their fixed position in vectors
+  private nextTermIndex: number;
 
   private readonly tokenizer: WordTokenizer = new WordTokenizer();
 
@@ -635,6 +620,17 @@ export class MinHashLSHEngine {
     this.bandSize = config.minHash.bandSize;
     this.hashFunctions = this.generateHashFunctions();
     this.lshIndex = new Map();
+    this.vocabulary = new Map();
+    this.nextTermIndex = 0;
+  }
+
+  private getOrAddTermIndex(term: string): number {
+    let index = this.vocabulary.get(term);
+    if (index === undefined) {
+      index = this.nextTermIndex++;
+      this.vocabulary.set(term, index);
+    }
+    return index;
   }
 
   preprocess(text: string): { title: string[]; content: string[] } {
@@ -648,6 +644,10 @@ export class MinHashLSHEngine {
     }
 
     content = this.tokenize(text);
+
+    // Add all tokens to vocabulary to maintain consistent positions
+    [...new Set([...title, ...content])].forEach(term => this.getOrAddTermIndex(term));
+
     return { title, content };
   }
 
@@ -662,45 +662,69 @@ export class MinHashLSHEngine {
   async addDocument(docId: string, text: string): Promise<void> {
     const { title, content } = this.preprocess(text);
     this.documents.set(docId, { title, content });
-    const signature = this.calculateMinHash(new Set([...title, ...content]));
+
+    // Update term frequencies and document frequencies
+    const uniqueTerms = new Set([...title, ...content]);
+    uniqueTerms.forEach(term => {
+      const termIndex = this.getOrAddTermIndex(term);
+
+      // Update document frequency
+      this.documentFrequencies.set(term, (this.documentFrequencies.get(term) || 0) + 1);
+
+      // Update term frequency
+      if (!this.termFrequencies.has(docId)) {
+        this.termFrequencies.set(docId, new Map());
+      }
+      const docTerms = this.termFrequencies.get(docId)!;
+      docTerms.set(term, (docTerms.get(term) || 0) + 1);
+    });
+
+    // Calculate and store MinHash signature
+    const signature = this.calculateMinHash(uniqueTerms);
     this.signatures.set(docId, signature);
     await this.indexLSH(docId, signature);
+
+    // Update document length
+    this.documentLengths.set(docId, content.length);
+    this.updateAverageDocLength();
   }
 
-  async addDocuments(documents: Map<string, string>): Promise<void> {
-    const entries = Array.from(documents.entries());
-    const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
-
-    for (let i = 0; i < entries.length; i += batchSize.lsh) {
-      const batch = entries.slice(i, i + batchSize.lsh);
-      await Promise.all(
-        batch.map(([docId, text]) => this.addDocument(docId, text))
-      );
-
-      // Add a small delay between batches
-      if (i + batchSize.lsh < entries.length) {
-        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
-      }
+  private updateAverageDocLength() {
+    if (this.documentLengths.size === 0) {
+      this.averageDocLength = 0;
+      return;
     }
+    let totalLength = 0;
+    this.documentLengths.forEach(length => totalLength += length);
+    this.averageDocLength = totalLength / this.documentLengths.size;
   }
 
-  private generateHashFunctions(): { a: number; b: number; }[] {
-    return Array.from({ length: this.numHashes }, () => ({
-      a: Math.floor(Math.random() * 2147483647),
-      b: Math.floor(Math.random() * 2147483647)
-    }));
-  }
+  generateVector(text: string): number[] {
+    const { title, content } = this.preprocess(text);
+    const uniqueTerms = new Set([...title, ...content]);
 
-  private calculateMinHash(tokenSet: Set<string>): number[] {
-    const signature = new Array(this.numHashes).fill(Infinity);
-    tokenSet.forEach(token => {
-      const hash = this.hashString(token);
-      this.hashFunctions.forEach((func, i) => {
-        const value = (func.a * hash + func.b) % 2147483647;
-        signature[i] = Math.min(signature[i], value);
-      });
+    // Generate MinHash signature
+    const minhashSignature = this.calculateMinHash(uniqueTerms);
+
+    // Generate BM25-like vector with fixed positions
+    const bm25Vector = new Array(this.vocabulary.size).fill(0);
+    uniqueTerms.forEach(term => {
+      const termIndex = this.vocabulary.get(term);
+      if (termIndex !== undefined) {
+        const tf = [...content, ...title].filter(t => t === term).length;
+        const df = this.documentFrequencies.get(term) || 1;
+        const idf = Math.log(1 + (this.documents.size - df + 0.5) / (df + 0.5));
+        const docLength = content.length;
+
+        // BM25-like scoring
+        const numerator = tf * (this.k1 + 1);
+        const denominator = tf + this.k1 * (1 - this.b + this.b * (docLength / this.averageDocLength));
+        bm25Vector[termIndex] = idf * (numerator / denominator);
+      }
     });
-    return signature;
+
+    // Combine MinHash signature with BM25 vector
+    return [...minhashSignature, ...bm25Vector];
   }
 
   private async indexLSH(docId: string, signature: number[]): Promise<void> {
@@ -733,6 +757,23 @@ export class MinHashLSHEngine {
       return hash & hash;
     }, 0);
   }
-}
 
-// Styles are loaded from styles.css
+  private generateHashFunctions(): { a: number; b: number; }[] {
+    return Array.from({ length: this.numHashes }, () => ({
+      a: Math.floor(Math.random() * 2147483647),
+      b: Math.floor(Math.random() * 2147483647)
+    }));
+  }
+
+  private calculateMinHash(tokenSet: Set<string>): number[] {
+    const signature = new Array(this.numHashes).fill(Infinity);
+    tokenSet.forEach(token => {
+      const hash = this.hashString(token);
+      this.hashFunctions.forEach((func, i) => {
+        const value = (func.a * hash + func.b) % 2147483647;
+        signature[i] = Math.min(signature[i], value);
+      });
+    });
+    return signature;
+  }
+}

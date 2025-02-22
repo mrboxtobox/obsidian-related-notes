@@ -19,14 +19,19 @@ interface RelatedNotesSettings {
   maxSuggestions: number;
   similarityProvider: 'bm25' | 'minhash-lsh';
   debugMode: boolean;
+  showAdvanced: boolean;
 }
 
 const DEFAULT_SETTINGS: RelatedNotesSettings = {
   similarityThreshold: 0.7,
   maxSuggestions: 10,
   similarityProvider: 'bm25',
-  debugMode: true
+  debugMode: false,
+  showAdvanced: false
 };
+
+// Threshold for automatically switching to MinHash LSH
+const MINHASH_THRESHOLD = 10000; // Number of notes that triggers automatic MinHash LSH
 
 /**
  * Main plugin class that handles initialization, event management, and core functionality
@@ -56,7 +61,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
     this.addRibbonIcon(
       'zap',
-      'Toggle Related Notes',
+      'Toggle related notes',
       async () => {
         const leaves = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
 
@@ -140,7 +145,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
     this.addCommand({
       id: 'toggle-related-notes',
-      name: 'Toggle Related Notes',
+      name: 'Toggle related notes',
       checkCallback: (checking: boolean) => {
         if (checking) {
           return true;
@@ -167,6 +172,13 @@ export default class RelatedNotesPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+
+    // Automatically select similarity provider based on vault size
+    const totalNotes = this.app.vault.getMarkdownFiles().length;
+    if (totalNotes >= MINHASH_THRESHOLD) {
+      this.settings.similarityProvider = 'minhash-lsh';
+      await this.saveSettings();
+    }
   }
 
   async saveSettings() {
@@ -275,31 +287,44 @@ export default class RelatedNotesPlugin extends Plugin {
     }
   }
 
-  private async findRelatedNotes(file: TFile, currentVector: number[]): Promise<Array<{ file: TFile; similarity: number }>> {
+  private async findRelatedNotes(file: TFile, currentVector: any): Promise<Array<{ file: TFile; similarity: number }>> {
     const similarities: Array<{ file: TFile; similarity: number }> = [];
     const allFiles = this.app.vault.getMarkdownFiles();
-
     const { batchSize, delayBetweenBatches } = DEFAULT_CONFIG.processing;
+
+    // First, use LSH to find candidate files
+    const candidateFiles = new Set<TFile>();
     for (let i = 0; i < allFiles.length; i += batchSize.search) {
       const batch = allFiles.slice(i, i + batchSize.search);
-      const batchResults = await Promise.all(
+      await Promise.all(
         batch.map(async (otherFile) => {
-          if (otherFile.path === file.path) return null;
+          if (otherFile.path === file.path) return;
 
           const content = await this.app.vault.cachedRead(otherFile);
           const otherVector = await this.similarityProvider.generateVector(content);
-          const similarity = this.similarityProvider.calculateSimilarity(currentVector, otherVector);
+          const lshSimilarity = this.similarityProvider.calculateSimilarity(otherVector, currentVector);
 
-          if (similarity >= this.settings.similarityThreshold) {
-            return { file: otherFile, similarity };
+          // Use a lower threshold for LSH filtering to avoid false negatives
+          if (lshSimilarity >= this.settings.similarityThreshold * 0.5) {
+            candidateFiles.add(otherFile);
           }
-          return null;
         })
       );
 
-      similarities.push(...batchResults.filter((result): result is { file: TFile; similarity: number } =>
-        result !== null
-      ));
+      if (i + batchSize.search < allFiles.length) {
+        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+      }
+    }
+
+    // Then, calculate BM25 similarity only for candidate files
+    for (const candidateFile of candidateFiles) {
+      const content = await this.app.vault.cachedRead(candidateFile);
+      const candidateVector = await this.similarityProvider.generateVector(content);
+      const similarity = this.similarityProvider.calculateSimilarity(candidateVector, currentVector);
+
+      if (similarity >= this.settings.similarityThreshold) {
+        similarities.push({ file: candidateFile, similarity });
+      }
     }
 
     return similarities
