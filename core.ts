@@ -4,7 +4,6 @@
 */
 
 import { Logger, simpleStem } from './utils';
-import { AlgorithmConfig, DEFAULT_CONFIG } from './settings';
 import { TFile, Vault } from 'obsidian';
 
 // NLP Components
@@ -302,7 +301,6 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
     // Banding
     this.candidatePairs = this.findCandidatePairs(this.signatures);
-    Logger.error("Candidate Pairs: ")
     Logger.error(`Candidates count: ${this.candidatePairs.length}`)
     for (let pair of this.candidatePairs) {
       // Logger.error(`${pair}`)
@@ -388,8 +386,6 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   }
 
   calculateSimilarity(f1: string, f2: string): Promise<{ similarity: number; topWords: string[]; }> | { similarity: number; topWords: string[]; } {
-    Logger.error(f1)
-    Logger.error(f2)
     if (this.relatedNotes.get(f1)?.has(f2) || this.relatedNotes.get(f2)?.has(f1)) {
       return {
         similarity: 1,
