@@ -240,7 +240,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     // Initialize the dictionary with the shingles.
     let processedCount = 0;
 
-    for (const file of this.vault.getMarkdownFiles().splice(1, 20)) {
+    for (const file of this.vault.getMarkdownFiles()) {
       try {
         this.nameToTFile.set(file.basename, file);
         const fileContent = await this.vault.cachedRead(file);
