@@ -80,10 +80,10 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   constructor(
     private readonly vault: Vault,
     private readonly config = {
-      numBands: 4,
-      rowsPerBand: 3,
+      numBands: 5,
+      rowsPerBand: 2,
       shingleSize: 2,
-      batchSize: 100,
+      batchSize: 1,
       maxFiles: 5000
     }
   ) {
@@ -109,10 +109,23 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   }
 
   async initialize(onProgress?: (processed: number, total: number) => void): Promise<void> {
-    await this.buildVocabularyAndVectors(onProgress);
+    // Phase 1: Reading documents (0-25%)
+    await this.buildVocabularyAndVectors((processed, total) => {
+      const percentage = Math.floor((processed / total) * 25);
+      onProgress?.(percentage, 100);
+    });
+
+    // Phase 2: Analyzing patterns (25-50%)
     await this.generateHashFunctions();
+    onProgress?.(50, 100);
+
+    // Phase 3: Finding connections (50-75%)
     await this.createSignatures();
+    onProgress?.(75, 100);
+
+    // Phase 4: Building relationships (75-100%)
     await this.processCandidatePairs();
+    onProgress?.(100, 100);
   }
 
   private async buildVocabularyAndVectors(onProgress?: (processed: number, total: number) => void): Promise<void> {
@@ -225,8 +238,6 @@ export class SimilarityProviderV2 implements SimilarityProvider {
         }
       }
     });
-    console.log("candidate pairs", candidatePairs)
-
     return Array.from(candidatePairs).map(pair => pair.split('||') as [string, string]);
   }
 
