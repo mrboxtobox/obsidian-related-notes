@@ -102,7 +102,6 @@ export class RelatedNotesView extends ItemView {
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
     const listItems = notes.map(({ file: relatedFile, similarity }) => {
-      console.log(notes);
       const listItemEl = document.createElement('li');
       listItemEl.className = 'related-note-item';
 

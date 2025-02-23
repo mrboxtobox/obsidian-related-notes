@@ -31,15 +31,28 @@ export default class RelatedNotesPlugin extends Plugin {
   private async initializeSimilarityProvider() {
     this.similarityProvider = new SimilarityProviderV2(this.app.vault);
     await this.similarityProvider.initialize((processed, total) => {
-      this.statusBarItem.setText(`Indexing ${processed}/${total} documents...`);
+      const percentage = processed;
+      let message = "";
+
+      if (percentage <= 25) {
+        message = `Reading your notes... ${percentage}%`;
+      } else if (percentage <= 50) {
+        message = `Analyzing patterns... ${percentage}%`;
+      } else if (percentage <= 75) {
+        message = `Finding connections... ${percentage}%`;
+      } else {
+        message = `Building relationships... ${percentage}%`;
+      }
+
+      this.statusBarItem.setText(message);
     });
 
     if (this.similarityProvider instanceof SimilarityProviderV2 && this.similarityProvider.isCorpusSampled()) {
-      this.statusBarItem.setText("⚠️ Using sampled corpus");
-      this.statusBarItem.setAttribute('aria-label', 'Related notes is using a sampled subset of documents (max 5000) for performance');
-      this.statusBarItem.setAttribute('title', 'Related notes is using a sampled subset of documents (max 5000) for performance');
+      this.statusBarItem.setText("⚠️ Using a sample of your notes");
+      this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 5000 notes');
+      this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 5000 notes');
     } else {
-      this.statusBarItem.setText("Indexing complete");
+      this.statusBarItem.setText("Ready to find related notes");
       this.statusBarItem.removeAttribute('aria-label');
       this.statusBarItem.removeAttribute('title');
     }
@@ -113,7 +126,6 @@ export default class RelatedNotesPlugin extends Plugin {
     if (!(view instanceof RelatedNotesView)) return;
 
     const relatedNotes = await this.getRelatedNotes(file);
-    console.log("Showing related notes for", file, "->", relatedNotes)
     await view.updateForFile(file, relatedNotes);
   }
 
