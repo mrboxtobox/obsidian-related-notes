@@ -3,7 +3,6 @@
 * Implements similarity providers and core algorithms for note comparison.
 */
 
-
 import { Vault, TFile } from 'obsidian';
 
 'use strict';
@@ -67,7 +66,6 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     }
   }
 
-
   private readonly vocabulary: string[] = [];
   private readonly fileVectors = new Map<string, Set<string>>();
   private readonly signatures = new Map<string, number[]>();
@@ -116,16 +114,22 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     });
 
     // Phase 2: Analyzing patterns (25-50%)
-    await this.generateHashFunctions();
-    onProgress?.(50, 100);
+    await this.generateHashFunctions((processed, total) => {
+      const percentage = 25 + Math.floor((processed / total) * 25);
+      onProgress?.(percentage, 100);
+    });
 
     // Phase 3: Finding connections (50-75%)
-    await this.createSignatures();
-    onProgress?.(75, 100);
+    await this.createSignatures((processed, total) => {
+      const percentage = 50 + Math.floor((processed / total) * 25);
+      onProgress?.(percentage, 100);
+    });
 
     // Phase 4: Building relationships (75-100%)
-    await this.processCandidatePairs();
-    onProgress?.(100, 100);
+    await this.processCandidatePairs((processed, total) => {
+      const percentage = 75 + Math.floor((processed / total) * 25);
+      onProgress?.(percentage, 100);
+    });
   }
 
   private async buildVocabularyAndVectors(onProgress?: (processed: number, total: number) => void): Promise<void> {
@@ -157,7 +161,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     }
   }
 
-  private async generateHashFunctions(): Promise<void> {
+  private async generateHashFunctions(onProgress?: (processed: number, total: number) => void): Promise<void> {
     const signatureSize = this.config.numBands * this.config.rowsPerBand;
     for (let i = 0; i < signatureSize; i++) {
       const hashFunc = Array.from(
@@ -166,16 +170,23 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       );
       this.shuffleArray(hashFunc);
       this.minhashFunctions.push(hashFunc);
+
+      onProgress?.(i + 1, signatureSize);
+      await this.yieldToMain(i + 1, this.config.batchSize);
     }
   }
 
-  private async createSignatures(): Promise<void> {
+  private async createSignatures(onProgress?: (processed: number, total: number) => void): Promise<void> {
     let count = 0;
+    const totalFiles = this.fileVectors.size;
+
     for (const [fileName, shingles] of this.fileVectors) {
       const signature = await this.createSignature(shingles);
       this.signatures.set(fileName, signature);
 
-      await this.yieldToMain(++count, this.config.batchSize);
+      count++;
+      onProgress?.(count, totalFiles);
+      // await this.yieldToMain(count, this.config.batchSize);
     }
   }
 
@@ -195,8 +206,10 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     return signature;
   }
 
-  private async processCandidatePairs(): Promise<void> {
+  private async processCandidatePairs(onProgress?: (processed: number, total: number) => void): Promise<void> {
     const candidatePairs = this.findCandidatePairs();
+    let count = 0;
+    const total = candidatePairs.length;
 
     for (const [file1, file2] of candidatePairs) {
       if (!this.nameToTFile.has(file1) || !this.nameToTFile.has(file2)) {
@@ -210,6 +223,10 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       this.relatedNotes
         .set(file1, [...(this.relatedNotes.get(file1) || []), tfile2])
         .set(file2, [...(this.relatedNotes.get(file2) || []), tfile1]);
+
+      count++;
+      onProgress?.(count, total);
+      // await this.yieldToMain(count, this.config.batchSize);
     }
   }
 
