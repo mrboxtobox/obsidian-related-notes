@@ -3,7 +3,10 @@
 * Implements similarity providers and core algorithms for note comparison.
 */
 
+
 import { Vault, TFile } from 'obsidian';
+
+'use strict';
 
 const FREQUENCY_CAP = 10
 
@@ -94,7 +97,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       rowsPerBand: 5,
       shingleSize: 3,
       batchSize: 10,
-      maxFiles: 20
+      maxFiles: 100
     }
   ) {
     const signatureSize = config.numBands * config.rowsPerBand;
@@ -122,12 +125,13 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   }
 
   private async buildVocabularyAndVectors(): Promise<void> {
-    let processedCount = 0;
-    const files = this.vault.getMarkdownFiles().slice(1, this.config.maxFiles);
+    for (const file of this.vault.getMarkdownFiles()) {
+      this.nameToTFile.set(file.basename, file);
+    }
 
-    for (const file of files) {
+    let processedCount = 0;
+    for (const file of this.vault.getMarkdownFiles().slice(0, this.config.maxFiles)) {
       try {
-        this.nameToTFile.set(file.basename, file);
         const content = await this.vault.cachedRead(file);
         const processed = tokenize(content);
         const shingles = this.buildShingles(processed);
@@ -192,6 +196,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
       this.relatedNotes.set(file1, related1);
       this.relatedNotes.set(file2, related2);
+      console.log(this.relatedNotes)
     }
   }
 
@@ -220,6 +225,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
         }
       }
     });
+    console.log("candidate pairs", candidatePairs)
 
     return Array.from(candidatePairs).map(pair => pair.split('||') as [string, string]);
   }

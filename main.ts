@@ -2,9 +2,11 @@ import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian'
 import { RelatedNote, SimilarityProvider, SimilarityProviderV2 } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 
+'use strict';
+
 export default class RelatedNotesPlugin extends Plugin {
-  private similarityProvider: SimilarityProvider;
-  private statusBarItem: HTMLElement;
+  private similarityProvider!: SimilarityProvider;
+  private statusBarItem!: HTMLElement;
 
   async onload() {
     this.initializeUI();
@@ -35,7 +37,7 @@ export default class RelatedNotesPlugin extends Plugin {
   private registerEventHandlers() {
     this.registerEvent(
       this.app.workspace.on('file-open',
-        (file: TFile) => this.showRelatedNotes(this.app.workspace, file))
+        (file: TFile | null) => this.showRelatedNotes(this.app.workspace, file))
     );
   }
 
@@ -90,7 +92,7 @@ export default class RelatedNotesPlugin extends Plugin {
     return file.extension.toLowerCase() === 'md';
   }
 
-  private async showRelatedNotes(workspace: Workspace, file: TFile) {
+  private async showRelatedNotes(workspace: Workspace, file: TFile | null) {
     if (!(file instanceof TFile)) return;
 
     const leaves = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
@@ -100,6 +102,7 @@ export default class RelatedNotesPlugin extends Plugin {
     if (!(view instanceof RelatedNotesView)) return;
 
     const relatedNotes = await this.getRelatedNotes(file);
+    console.log("Showing related notes for", file, "->", relatedNotes)
     await view.updateForFile(file, relatedNotes);
   }
 
