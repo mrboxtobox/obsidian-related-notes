@@ -88,6 +88,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   private readonly signatures = new Map<string, number[]>();
   private readonly minhashFunctions: number[][] = [];
   private readonly relatedNotes = new Map<string, TFile[]>();
+  // name.md -> TFile[]
   private readonly nameToTFile = new Map<string, TFile>();
 
   constructor(
@@ -126,7 +127,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
   private async buildVocabularyAndVectors(): Promise<void> {
     for (const file of this.vault.getMarkdownFiles()) {
-      this.nameToTFile.set(file.basename, file);
+      this.nameToTFile.set(file.name, file);
     }
 
     let processedCount = 0;
@@ -188,15 +189,17 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     const candidatePairs = this.findCandidatePairs();
 
     for (const [file1, file2] of candidatePairs) {
-      const related1 = this.relatedNotes.get(file1) || [];
-      const related2 = this.relatedNotes.get(file2) || [];
+      if (!this.nameToTFile.has(file1) || !this.nameToTFile.has(file2)) {
+        console.error("File not found:", [file1, file2].find(f => !this.nameToTFile.has(f)));
+        continue;
+      }
 
-      related1.push(this.nameToTFile.get(file2)!);
-      related2.push(this.nameToTFile.get(file1)!);
+      const tfile1 = this.nameToTFile.get(file1)!;
+      const tfile2 = this.nameToTFile.get(file2)!;
 
-      this.relatedNotes.set(file1, related1);
-      this.relatedNotes.set(file2, related2);
-      console.log(this.relatedNotes)
+      this.relatedNotes
+        .set(file1, [...(this.relatedNotes.get(file1) || []), tfile2])
+        .set(file2, [...(this.relatedNotes.get(file2) || []), tfile1]);
     }
   }
 
