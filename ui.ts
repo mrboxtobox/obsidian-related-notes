@@ -104,18 +104,18 @@ export class RelatedNotesView extends ItemView {
     const listItems = notes.map(({ file: relatedFile, similarity }) => {
       const listItemEl = document.createElement('li');
       listItemEl.className = 'related-note-item';
+      listItemEl.style.cursor = 'pointer';
 
       const linkContainer = document.createElement('div');
       linkContainer.className = 'related-note-link-container';
 
-      const linkEl = document.createElement('a');
-      linkEl.className = 'related-note-link';
-      linkEl.textContent = relatedFile.basename;
-      linkContainer.appendChild(linkEl);
+      const nameEl = document.createElement('span');
+      nameEl.className = 'related-note-link';
+      nameEl.textContent = relatedFile.basename;
+      linkContainer.appendChild(nameEl);
       listItemEl.appendChild(linkContainer);
 
-      linkEl.addEventListener('click', async (e) => {
-        e.preventDefault();
+      listItemEl.addEventListener('click', async () => {
         try {
           const leaf = this.app.workspace.getLeaf();
           if (!leaf) return;
