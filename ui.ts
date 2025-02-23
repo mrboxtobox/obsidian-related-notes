@@ -51,6 +51,7 @@ export class RelatedNotesView extends ItemView {
 
   async reset() {
     const fragment = document.createDocumentFragment();
+    fragment.createEl('h4', { text: 'Related Notes' });
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
     messageEl.createEl('p', {
@@ -66,6 +67,7 @@ export class RelatedNotesView extends ItemView {
 
   async updateForFile(file: TFile, notes: RelatedNote[]) {
     const fragment = document.createDocumentFragment();
+    fragment.createEl('h4', { text: 'Related Notes' });
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;
 
@@ -80,11 +82,21 @@ export class RelatedNotesView extends ItemView {
         text: `Current file type: ${file.extension.toUpperCase()}`,
         cls: 'related-notes-message-subtext'
       });
+
+      // Replace the old content with the new fragment
+      const container = this.containerEl.children[1];
+      container.empty();
+      container.appendChild(fragment);
       return;
     }
 
     if (!notes.length) {
       contentEl.createEl('p', { text: 'No related notes found.' });
+
+      // Replace the old content with the new fragment
+      const container = this.containerEl.children[1];
+      container.empty();
+      container.appendChild(fragment);
       return;
     }
 

@@ -79,7 +79,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   constructor(
     private readonly vault: Vault,
     private readonly config = {
-      numBands: 5,
+      numBands: 4,
       rowsPerBand: 5,
       shingleSize: 2,
       batchSize: 10,
