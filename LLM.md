@@ -1,81 +1,75 @@
-# Code Organization Plan
+# Related Notes Plugin Development Notes
 
-## File Structure
-```
-.
-├── main.ts               # Main plugin file and initialization
-├── settings.ts          # Unified settings (UI + algorithm config)
-├── core.ts             # Core algorithmic implementations
-├── ui.ts              # UI components and view logic
-├── utils.ts          # Utilities (logging, text processing)
-└── similarity.worker.ts # Worker implementation
-```
+## Load Time Optimization
 
-## Planned Changes
+The plugin has been optimized for faster load times by implementing the following strategies:
 
-1. Settings Unification
-- Merge algorithm config into settings.ts
-- Keep all settings in one place for easier management
-- Maintain clear separation between UI settings and algorithm settings
+1. **Deferred Initialization**
+   - Heavy initialization moved to `onLayoutReady` callback
+   - Only essential components registered during initial `onload`
+   - View registration deferred until after app layout is ready
 
-2. Core Logic Organization
-- Keep core algorithmic implementations in core.ts
-- Improve provider interfaces and implementations
-- Better separation between core logic and UI
+2. **Initialization Order**
+   ```mermaid
+   graph TD
+      A[Plugin onload] --> B[Register Commands]
+      A --> C[Create Status Bar]
+      C --> D[onLayoutReady]
+      D --> E[Initialize UI]
+      D --> F[Register Event Handlers]
+      D --> G[Initialize Similarity Provider]
+   ```
 
-3. UI Separation
-- Move UI components to ui.ts
-- Keep view logic isolated from core functionality
+3. **Performance Considerations**
+   - Status bar provides immediate feedback during initialization
+   - View creation deferred until needed
+   - Heavy computation happens after app is interactive
 
-4. Utils Cleanup
-- Keep utilities organized in utils.ts
-- Maintain clear utility functions
-- Keep logging and text processing utilities well-structured
+## Development Guidelines
 
-## Implementation Status
+When making changes to the plugin:
 
-- [x] Merge config.ts into settings.ts
-- [x] Reorganize core.ts for better separation
-- [x] Move UI components to ui.ts
-- [x] Clean up utils.ts
-- [x] Update imports across files
-- [x] Test functionality
+1. Keep the `onload` function lightweight
+   - Only register essential components
+   - Use `onLayoutReady` for heavy initialization
+   - Avoid synchronous operations that could block app startup
 
-## Completed Changes
+2. View Management
+   - Views should be registered after layout is ready
+   - Keep view constructors lightweight
+   - Defer expensive operations in views until they're actually needed
 
-1. Settings Unification
-- Merged algorithm config into settings.ts
-- Exported RelatedNotesSettings interface
-- Improved type safety with proper interfaces
+3. Similarity Provider
+   - Initialization is deferred until after app startup
+   - Progress updates through status bar
+   - Sampling large note collections for better performance
 
-2. Core Logic Organization
-- Separated core algorithmic implementations
-- Improved provider interfaces
-- Maintained clear separation between core logic and UI
+## Best Practices
 
-3. UI Separation
-- Moved UI components to ui.ts
-- Kept view logic isolated from core functionality
+1. **Production Build**
+   - Always use production builds for releases
+   - Enable minification in build configuration
+   - Remove development/testing code
 
-4. Utils Cleanup
-- Maintained clear utility functions
-- Improved type safety with proper interfaces
-- Kept logging and text processing utilities well-structured
+2. **Startup Performance**
+   - Minimize synchronous operations in `onload`
+   - Use `onLayoutReady` for non-critical initialization
+   - Consider lazy loading for expensive features
 
-5. Import Updates
-- Updated all imports to reflect new file structure
-- Fixed type issues and improved type safety
-- Removed unused imports and files
+3. **View Performance**
+   - Keep view constructors minimal
+   - Load data only when views become visible
+   - Clean up resources when views are closed
 
-## Dependency Management
+## Future Considerations
 
-1. Dependency Cleanup
-- Removed unused `rimraf` dependency
-- Kept essential build dependencies:
-  - typescript: Required for TypeScript compilation
-  - obsidian: Required for Obsidian plugin development
-  - esbuild: Required for building
-  - builtin-modules: Used in esbuild.config.mjs for excluding Node.js built-ins
-  - @types/node: Required for Node.js TypeScript types
-  - tslib: Required TypeScript runtime library
-  - eslint and related plugins: Required for code quality
+1. Consider implementing:
+   - Caching for similarity computations
+   - Lazy loading for similarity provider
+   - Configuration options for initialization behavior
+   - Progressive loading of related notes
+
+2. Monitor:
+   - Memory usage during initialization
+   - Time spent in each initialization phase
+   - Impact on Obsidian startup time
