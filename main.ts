@@ -7,6 +7,7 @@ import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 export default class RelatedNotesPlugin extends Plugin {
   private similarityProvider!: SimilarityProvider;
   private statusBarItem!: HTMLElement;
+  private isInitialized = false;
 
   async onload() {
     this.initializeUI();
@@ -29,6 +30,7 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async initializeSimilarityProvider() {
+    this.isInitialized = false;
     this.similarityProvider = new SimilarityProviderV2(this.app.vault);
     await this.similarityProvider.initialize((processed, total) => {
       const percentage = processed;
@@ -56,6 +58,7 @@ export default class RelatedNotesPlugin extends Plugin {
       this.statusBarItem.removeAttribute('aria-label');
       this.statusBarItem.removeAttribute('title');
     }
+    this.isInitialized = true;
   }
 
   private registerEventHandlers() {
@@ -114,6 +117,10 @@ export default class RelatedNotesPlugin extends Plugin {
 
   public isMarkdownFile(file: TFile): boolean {
     return file.extension.toLowerCase() === 'md';
+  }
+
+  public isInitializationComplete(): boolean {
+    return this.isInitialized;
   }
 
   private async showRelatedNotes(workspace: Workspace, file: TFile | null) {

@@ -91,7 +91,22 @@ export class RelatedNotesView extends ItemView {
     }
 
     if (!notes.length) {
-      contentEl.createEl('p', { text: 'No related notes found.' });
+      const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
+      if (!this.plugin.isInitializationComplete()) {
+        messageEl.createEl('p', {
+          text: 'Still analyzing your notes...',
+          cls: 'related-notes-message-text'
+        });
+        messageEl.createEl('p', {
+          text: 'Related notes will appear here once indexing is complete.',
+          cls: 'related-notes-message-subtext'
+        });
+      } else {
+        messageEl.createEl('p', {
+          text: 'No related notes found.',
+          cls: 'related-notes-message-text'
+        });
+      }
 
       // Replace the old content with the new fragment
       const container = this.containerEl.children[1];
