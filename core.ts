@@ -75,15 +75,16 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   private readonly relatedNotes = new Map<string, TFile[]>();
   // name.md -> TFile[]
   private readonly nameToTFile = new Map<string, TFile>();
+  private isCorpusTruncated = false;
 
   constructor(
     private readonly vault: Vault,
     private readonly config = {
       numBands: 4,
-      rowsPerBand: 5,
+      rowsPerBand: 3,
       shingleSize: 2,
-      batchSize: 10,
-      maxFiles: Infinity
+      batchSize: 100,
+      maxFiles: 5000
     }
   ) {
     const signatureSize = config.numBands * config.rowsPerBand;
@@ -94,6 +95,10 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
   getCandidateFiles(file: TFile): TFile[] {
     return this.relatedNotes.get(file.name) || [];
+  }
+
+  isCorpusSampled(): boolean {
+    return this.isCorpusTruncated;
   }
 
   private shuffleArray(array: number[]): void {
@@ -119,6 +124,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     let processedCount = 0;
     const filesToProcess = allFiles.slice(0, this.config.maxFiles);
     const totalFiles = filesToProcess.length;
+    this.isCorpusTruncated = allFiles.length > this.config.maxFiles;
 
     for (const file of filesToProcess) {
       try {

@@ -33,7 +33,16 @@ export default class RelatedNotesPlugin extends Plugin {
     await this.similarityProvider.initialize((processed, total) => {
       this.statusBarItem.setText(`Indexing ${processed}/${total} documents...`);
     });
-    this.statusBarItem.setText("Indexing complete");
+
+    if (this.similarityProvider instanceof SimilarityProviderV2 && this.similarityProvider.isCorpusSampled()) {
+      this.statusBarItem.setText("⚠️ Using sampled corpus");
+      this.statusBarItem.setAttribute('aria-label', 'Related notes is using a sampled subset of documents (max 5000) for performance');
+      this.statusBarItem.setAttribute('title', 'Related notes is using a sampled subset of documents (max 5000) for performance');
+    } else {
+      this.statusBarItem.setText("Indexing complete");
+      this.statusBarItem.removeAttribute('aria-label');
+      this.statusBarItem.removeAttribute('title');
+    }
   }
 
   private registerEventHandlers() {
