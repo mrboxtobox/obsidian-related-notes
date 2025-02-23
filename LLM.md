@@ -66,3 +66,16 @@
 - Updated all imports to reflect new file structure
 - Fixed type issues and improved type safety
 - Removed unused imports and files
+
+## Dependency Management
+
+1. Dependency Cleanup
+- Removed unused `rimraf` dependency
+- Kept essential build dependencies:
+  - typescript: Required for TypeScript compilation
+  - obsidian: Required for Obsidian plugin development
+  - esbuild: Required for building
+  - builtin-modules: Used in esbuild.config.mjs for excluding Node.js built-ins
+  - @types/node: Required for Node.js TypeScript types
+  - tslib: Required TypeScript runtime library
+  - eslint and related plugins: Required for code quality

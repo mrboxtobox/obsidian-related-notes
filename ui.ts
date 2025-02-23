@@ -7,6 +7,8 @@ import { ItemView, WorkspaceLeaf, TFile, MarkdownView } from 'obsidian';
 import RelatedNotesPlugin from './main';
 import { RelatedNote } from './core';
 
+'use strict';
+
 export const RELATED_NOTES_VIEW_TYPE = 'related-notes-view';
 
 export class RelatedNotesView extends ItemView {
@@ -87,7 +89,8 @@ export class RelatedNotesView extends ItemView {
     }
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
-    const listItems = notes.map(({ file: relatedFile }) => {
+    const listItems = notes.map(({ file: relatedFile, similarity }) => {
+      console.log(notes);
       const listItemEl = document.createElement('li');
       listItemEl.className = 'related-note-item';
 
