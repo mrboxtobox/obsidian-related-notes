@@ -20,7 +20,7 @@ export interface SimilarityInfo {
 }
 
 export interface SimilarityProvider {
-  initialize(): Promise<void>;
+  initialize(onProgress?: (processed: number, total: number) => void): Promise<void>;
   getCandidateFiles(file: TFile): TFile[];
   computeCappedCosineSimilarity(file1: TFile, file2: TFile): Promise<SimilarityInfo>;
 }
@@ -39,20 +39,6 @@ export function tokenize(text: string): string {
     ["'d", " would"], ["'ll", " will"], ["'ve", " have"]
   ]);
 
-  function stem(word: string): string {
-    if (word.length < 3) return word;
-
-    word = word.toLowerCase();
-
-    if (word.endsWith('ies')) return word.slice(0, -3) + 'y';
-    if (word.endsWith('es')) return word.slice(0, -2);
-    if (word.endsWith('s')) return word.slice(0, -1);
-    if (word.endsWith('ed')) return word.slice(0, -2);
-    if (word.endsWith('ing')) return word.slice(0, -3);
-
-    return word;
-  }
-
   try {
     // Replace contractions
     let processed = text.replace(
@@ -67,7 +53,6 @@ export function tokenize(text: string): string {
       .split(/\s+/)
       // Filter stop words and short terms
       .filter(word => word.length > 2 && !stopWords.has(word))
-      .map(stem)
       .join(' ');
   } catch (error) {
     console.error('Error during tokenization:', error);
@@ -118,20 +103,24 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     }
   }
 
-  async initialize(): Promise<void> {
-    await this.buildVocabularyAndVectors();
+  async initialize(onProgress?: (processed: number, total: number) => void): Promise<void> {
+    await this.buildVocabularyAndVectors(onProgress);
     await this.generateHashFunctions();
     await this.createSignatures();
     await this.processCandidatePairs();
   }
 
-  private async buildVocabularyAndVectors(): Promise<void> {
-    for (const file of this.vault.getMarkdownFiles()) {
+  private async buildVocabularyAndVectors(onProgress?: (processed: number, total: number) => void): Promise<void> {
+    const allFiles = this.vault.getMarkdownFiles();
+    for (const file of allFiles) {
       this.nameToTFile.set(file.name, file);
     }
 
     let processedCount = 0;
-    for (const file of this.vault.getMarkdownFiles().slice(0, this.config.maxFiles)) {
+    const filesToProcess = allFiles.slice(0, this.config.maxFiles);
+    const totalFiles = filesToProcess.length;
+
+    for (const file of filesToProcess) {
       try {
         const content = await this.vault.cachedRead(file);
         const processed = tokenize(content);
@@ -140,7 +129,9 @@ export class SimilarityProviderV2 implements SimilarityProvider {
         shingles.forEach(shingle => this.vocabulary.push(shingle));
         this.fileVectors.set(file.name, shingles);
 
-        await this.yieldToMain(++processedCount, this.config.batchSize);
+        processedCount++;
+        onProgress?.(processedCount, totalFiles);
+        await this.yieldToMain(processedCount, this.config.batchSize);
       } catch (error) {
         console.warn(`Error processing ${file.name}:`, error);
       }
