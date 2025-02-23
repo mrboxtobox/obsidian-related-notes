@@ -110,9 +110,21 @@ export default class RelatedNotesPlugin extends Plugin {
 
   private async getRelatedNotes(file: TFile): Promise<Array<RelatedNote>> {
     const candidates = this.similarityProvider.getCandidateFiles(file);
-    return candidates.map((candidate: TFile) => ({
-      file: candidate,
-      similarity: 0.5
-    }));
+
+    // Calculate similarities for all candidates.
+    const similarityPromises = candidates.map(async (candidate) => {
+      const similarity = await this.similarityProvider.computeCappedCosineSimilarity(file, candidate);
+      return {
+        file: candidate,
+        similarity: similarity.similarity
+      };
+    });
+
+    const relatedNotes = await Promise.all(similarityPromises);
+
+    // Sort by similarity (highest first) and take top 5
+    return relatedNotes
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 5);
   }
 }

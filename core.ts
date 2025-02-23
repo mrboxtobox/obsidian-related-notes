@@ -81,9 +81,9 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     private readonly config = {
       numBands: 5,
       rowsPerBand: 5,
-      shingleSize: 3,
+      shingleSize: 2,
       batchSize: 10,
-      maxFiles: 100
+      maxFiles: Infinity
     }
   ) {
     const signatureSize = config.numBands * config.rowsPerBand;
