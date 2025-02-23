@@ -10,16 +10,19 @@ export default class RelatedNotesPlugin extends Plugin {
   private isInitialized = false;
 
   async onload() {
-    this.initializeUI();
-    await this.initializeSimilarityProvider();
-    this.registerEventHandlers();
+    // Register essential components immediately
     this.registerCommands();
+    this.statusBarItem = this.addStatusBarItem();
+    this.statusBarItem.setText("Initializing...");
+
+    // Defer heavy initialization until layout is ready
+    this.app.workspace.onLayoutReady(async () => {
+      await this.initializePlugin();
+    });
   }
 
-  private initializeUI() {
-    this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.setText("Indexing...");
-
+  private async initializePlugin() {
+    // Initialize UI components
     this.registerView(
       RELATED_NOTES_VIEW_TYPE,
       (leaf: WorkspaceLeaf) => new RelatedNotesView(leaf, this)
@@ -27,9 +30,11 @@ export default class RelatedNotesPlugin extends Plugin {
 
     this.addRibbonIcon('zap', 'Toggle related notes',
       () => this.toggleRelatedNotes(this.app.workspace));
-  }
 
-  private async initializeSimilarityProvider() {
+    // Register event handlers
+    this.registerEventHandlers();
+
+    // Initialize similarity provider
     this.isInitialized = false;
     this.similarityProvider = new SimilarityProviderV2(this.app.vault);
     await this.similarityProvider.initialize((processed, total) => {
