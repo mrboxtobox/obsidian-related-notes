@@ -143,22 +143,6 @@
   color: var(--text-muted);
 }
 
-.related-notes-progress {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background-color: var(--background-modifier-border);
-  z-index: 1000;
-}
-
-.related-notes-progress-bar {
-  height: 100%;
-  width: 0;
-  background-color: var(--text-accent);
-  transition: width 0.3s ease-in-out;
-}
 
 /* Message styles */
 .related-notes-message {
