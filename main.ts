@@ -30,8 +30,10 @@ export default class RelatedNotesPlugin extends Plugin {
 
   private async initializeSimilarityProvider() {
     this.similarityProvider = new SimilarityProviderV2(this.app.vault);
-    await this.similarityProvider.initialize();
-    this.statusBarItem.setText("Indexed 10/10");
+    await this.similarityProvider.initialize((processed, total) => {
+      this.statusBarItem.setText(`Indexing ${processed}/${total} documents...`);
+    });
+    this.statusBarItem.setText("Indexing complete");
   }
 
   private registerEventHandlers() {
