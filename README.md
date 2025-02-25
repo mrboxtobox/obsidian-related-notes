@@ -71,7 +71,7 @@ Enable to view detailed statistics about the plugin's operation:
 - **Memory Usage**: See how much memory the plugin is using (vocabulary size, file vectors, signatures, cache sizes, etc.)
 - **NLP Metrics**: View natural language processing statistics (shingle size, document length, similarity provider, etc.)
 
-The re-indexing process now includes a visual progress indicator showing the current phase and completion percentage.
+The re-indexing process now includes a visual progress indicator below the button, showing the current phase and completion percentage.
 
 ### Similarity Providers
 
