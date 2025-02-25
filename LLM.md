@@ -380,12 +380,18 @@ The plugin now includes a dedicated settings tab with reindexing functionality a
    - Created a cleaner, more focused settings interface
 
 3. **Added Re-indexing Progress Indicator**
-   - Added a visual progress bar next to the re-index button
+   - Added a visual progress bar below the re-index button
    - Shows real-time progress during re-indexing operations
    - Displays the current phase of the re-indexing process
    - Provides percentage completion feedback
    - Automatically hides when re-indexing is complete
    - Improves user experience by providing visual feedback during long operations
+
+4. **Fixed Show Stats Toggle**
+   - Fixed the show stats toggle to refresh the display immediately after toggling
+   - Added proper UI update to show/hide stats in real-time
+   - Maintained all the detailed statistics when enabled
+   - Improved user experience with immediate visual feedback
 
 ## Future Considerations
 

@@ -217,18 +217,13 @@
 }
 
 /* Re-indexing progress container styles */
-.related-notes-reindex-container {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .related-notes-progress-container {
   height: 10px;
   background-color: var(--background-modifier-border);
   border-radius: 5px;
   overflow: hidden;
-  width: 150px;
+  margin-top: 8px;
+  width: 100%;
 }
 
 .related-notes-progress-indicator {
@@ -241,5 +236,6 @@
 .related-notes-progress-text {
   font-size: 12px;
   color: var(--text-muted);
-  min-width: 80px;
+  margin-top: 4px;
+  display: block;
 }
