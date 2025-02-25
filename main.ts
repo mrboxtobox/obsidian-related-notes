@@ -32,6 +32,8 @@ export default class RelatedNotesPlugin extends Plugin {
   similarityProvider!: SimilarityProvider;
   private statusBarItem!: HTMLElement;
   private isInitialized = false;
+  private isReindexing = false;
+  private reindexCancelled = false;
 
   async onload() {
     // Load settings
@@ -143,61 +145,117 @@ export default class RelatedNotesPlugin extends Plugin {
   /**
    * Forces a complete re-indexing of all notes
    * This is useful when the user wants to ensure the index is up-to-date
+   * @throws Error if indexing is cancelled
    */
   public async forceReindex(): Promise<void> {
     if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
       return;
     }
 
-    // Update status bar
-    this.isInitialized = false;
-    this.statusBarItem.setText("Re-indexing notes...");
+    // Set reindexing state
+    this.isReindexing = true;
+    this.reindexCancelled = false;
 
-    // Force re-indexing with progress reporting
-    await this.similarityProvider.forceReindex((processed, total) => {
-      const percentage = processed;
-      let message = "";
-      let phase = "";
+    try {
+      // Update status bar
+      this.isInitialized = false;
+      this.statusBarItem.setText("Re-indexing notes...");
 
-      // Determine the current phase based on percentage
-      if (percentage <= 25) {
-        phase = "Reading your notes";
-      } else if (percentage <= 50) {
-        phase = "Analyzing patterns";
-      } else if (percentage <= 75) {
-        phase = "Finding connections";
+      // Force re-indexing with progress reporting
+      await this.similarityProvider.forceReindex((processed, total) => {
+        // Periodically yield to main thread to check for cancellation
+        // This ensures the UI remains responsive and can detect cancel button clicks
+        const yieldToMainAndCheckCancellation = async () => {
+          // TODO(olu): Use requestAnimationFrame if available (better for UI responsiveness).
+          // Fallback to setTimeout with 0ms delay
+          await new Promise<void>((resolve, reject) => {
+            setTimeout(() => {
+              // Check if reindexing was cancelled
+              if (this.reindexCancelled) {
+                reject(new Error('Indexing cancelled'));
+              } else {
+                resolve();
+              }
+            }, 0);
+          });
+        };
+
+        // Yield to main thread every 5% progress
+        if (processed % 5 === 0) {
+          yieldToMainAndCheckCancellation();
+        }
+
+        const percentage = processed;
+        let message = "";
+        let phase = "";
+
+        // Determine the current phase based on percentage
+        if (percentage <= 25) {
+          phase = "Reading your notes";
+        } else if (percentage <= 50) {
+          phase = "Analyzing patterns";
+        } else if (percentage <= 75) {
+          phase = "Finding connections";
+        } else {
+          phase = "Building relationships";
+        }
+
+        // Simple progress message with percentage
+        message = `Re-indexing: ${phase}... ${percentage}%`;
+
+        this.statusBarItem.setText(message);
+      });
+
+      // Update status bar after re-indexing
+      if (this.similarityProvider.isCorpusSampled()) {
+        this.statusBarItem.setText("⚠️ Using a sample of your notes");
+        this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
+        this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
       } else {
-        phase = "Building relationships";
+        this.statusBarItem.setText("Ready to find related notes");
+        this.statusBarItem.removeAttribute('aria-label');
+        this.statusBarItem.removeAttribute('title');
       }
+      this.isInitialized = true;
 
-      // Simple progress message with percentage
-      message = `Re-indexing: ${phase}... ${percentage}%`;
-
-      this.statusBarItem.setText(message);
-    });
-
-    // Update status bar after re-indexing
-    if (this.similarityProvider.isCorpusSampled()) {
-      this.statusBarItem.setText("⚠️ Using a sample of your notes");
-      this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
-      this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
-    } else {
-      this.statusBarItem.setText("Ready to find related notes");
-      this.statusBarItem.removeAttribute('aria-label');
-      this.statusBarItem.removeAttribute('title');
-    }
-    this.isInitialized = true;
-
-    // Refresh the view if it's open
-    const leaves = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
-    if (leaves.length > 0) {
-      const view = leaves[0].view;
-      if (view instanceof RelatedNotesView) {
-        const activeView = this.app.workspace.getMostRecentLeaf()?.view;
-        if (activeView instanceof MarkdownView && activeView.file) {
-          await this.showRelatedNotes(this.app.workspace, activeView.file);
+      // Refresh the view if it's open
+      const leaves = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+      if (leaves.length > 0) {
+        const view = leaves[0].view;
+        if (view instanceof RelatedNotesView) {
+          const activeView = this.app.workspace.getMostRecentLeaf()?.view;
+          if (activeView instanceof MarkdownView && activeView.file) {
+            await this.showRelatedNotes(this.app.workspace, activeView.file);
+          }
         }
       }
+    } catch (error) {
+      // If indexing was cancelled, update the status bar
+      if (error instanceof Error && error.message === 'Indexing cancelled') {
+        this.statusBarItem.setText("Re-indexing cancelled");
+        setTimeout(() => {
+          this.statusBarItem.setText("Ready to find related notes");
+        }, 2000);
+        throw error; // Re-throw to be caught by the settings tab
+      }
+      // For other errors, log and update status bar
+      console.error("Error during re-indexing:", error);
+      this.statusBarItem.setText("Error during re-indexing");
+      setTimeout(() => {
+        this.statusBarItem.setText("Ready to find related notes");
+      }, 2000);
+    } finally {
+      // Reset reindexing state
+      this.isReindexing = false;
+    }
+  }
+
+  /**
+   * Cancels the current re-indexing operation
+   */
+  public cancelReindex(): void {
+    if (this.isReindexing) {
+      this.reindexCancelled = true;
     }
   }
 
