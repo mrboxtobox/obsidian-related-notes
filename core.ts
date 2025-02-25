@@ -170,9 +170,19 @@ export function tokenize(text: string): string {
 }
 
 export class SimilarityProviderV2 implements SimilarityProvider {
-  private async yieldToMain(count: number, batchSize: number): Promise<void> {
-    if (count % batchSize === 0) {
-      await new Promise(resolve => setTimeout(resolve, 0));
+  /**
+   * Yields to the main thread to prevent UI blocking during intensive operations
+   * @param count Current iteration count
+   * @param batchSize Number of operations to perform before yielding
+   * @param forceYield When true, always yield regardless of count/batchSize
+   * @returns Promise that resolves after yielding
+   */
+  private async yieldToMain(count: number, batchSize: number, forceYield: boolean = false): Promise<void> {
+    // Yield if we've hit the batch size or if yielding is forced
+    if (forceYield || count % batchSize === 0) {
+      // Use requestAnimationFrame if available (better for UI responsiveness)
+      // Fallback to setTimeout with 0ms delay
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
     }
   }
 
@@ -291,20 +301,36 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     // Set cache as dirty to ensure it's saved after reindexing
     this.cacheDirty = true;
 
-    // Perform full initialization
+    // Perform full initialization with more frequent yielding to main thread
     await this.buildVocabularyAndVectors((processed, total) => {
+      // More frequent yielding to main thread during this CPU-intensive operation
+      if (processed % Math.max(1, Math.floor(total / 100)) === 0) {
+        this.yieldToMain(0, 1, true); // Force yield to main thread
+      }
       onProgress?.(Math.floor(processed / total * 25), 100);
     });
 
     await this.generateHashFunctions((processed, total) => {
+      // Yield to main thread more frequently
+      if (processed % Math.max(1, Math.floor(total / 50)) === 0) {
+        this.yieldToMain(0, 1, true); // Force yield to main thread
+      }
       onProgress?.(25 + Math.floor(processed / total * 25), 100);
     });
 
     await this.createSignatures((processed, total) => {
+      // Yield to main thread more frequently
+      if (processed % Math.max(1, Math.floor(total / 50)) === 0) {
+        this.yieldToMain(0, 1, true); // Force yield to main thread
+      }
       onProgress?.(50 + Math.floor(processed / total * 25), 100);
     });
 
     await this.processCandidatePairs((processed, total) => {
+      // Yield to main thread more frequently
+      if (processed % Math.max(1, Math.floor(total / 50)) === 0) {
+        this.yieldToMain(0, 1, true); // Force yield to main thread
+      }
       onProgress?.(75 + Math.floor(processed / total * 25), 100);
     });
 
@@ -859,13 +885,14 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
       count++;
       onProgress?.(count, totalFiles);
-      // await this.yieldToMain(count, this.config.batchSize);
+      await this.yieldToMain(count, this.config.batchSize);
     }
   }
 
   private async createSignature(shingles: Set<string>): Promise<number[]> {
     const signature: number[] = [];
 
+    let count = 0;
     for (const hashFunc of this.minhashFunctions) {
       for (let i = 1; i <= this.vocabulary.length; i++) {
         const idx = hashFunc.indexOf(i);
@@ -875,6 +902,8 @@ export class SimilarityProviderV2 implements SimilarityProvider {
           break;
         }
       }
+      count++;
+      await this.yieldToMain(count, this.config.batchSize);
     }
     return signature;
   }
@@ -899,7 +928,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
       count++;
       onProgress?.(count, total);
-      // await this.yieldToMain(count, this.config.batchSize);
+      await this.yieldToMain(count, this.config.batchSize);
     }
   }
 

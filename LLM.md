@@ -201,6 +201,14 @@ The plugin now implements adaptive similarity detection for large note collectio
    - Updated the type declaration to use the `RelatedNote` interface which properly handles optional properties
    - These fixes improve type safety and prevent potential runtime errors
 
+3. **Fixed Indexing Cancellation Error**
+   - Fixed an uncaught error during indexing cancellation: `Uncaught Error: Indexing cancelled`
+   - The issue was in the promise handling in the `yieldToMainAndCheckCancellation` function
+   - Modified the function to properly reject the promise when cancellation is detected
+   - Updated both `main.ts` and `core.ts` to ensure consistent error handling
+   - This fix ensures that cancellation errors are properly caught and handled
+   - Improves the user experience when cancelling a re-indexing operation
+
 ## Development Tools
 
 This plugin's UI improvements were developed with the assistance of:
@@ -379,19 +387,114 @@ The plugin now includes a dedicated settings tab with reindexing functionality a
    - Maintained all the detailed statistics when enabled
    - Created a cleaner, more focused settings interface
 
-3. **Added Re-indexing Progress Indicator**
-   - Added a visual progress bar below the re-index button
-   - Shows real-time progress during re-indexing operations
-   - Displays the current phase of the re-indexing process
-   - Provides percentage completion feedback
-   - Automatically hides when re-indexing is complete
-   - Improves user experience by providing visual feedback during long operations
+3. **Improved Re-indexing Experience**
+   - Added a note that re-indexing may take a while
+   - Added a cancel button to allow users to stop re-indexing
+   - Implemented cancellation functionality in the core plugin
+   - Shows progress in the status bar instead of in the settings UI
+   - Provides clear feedback when re-indexing is cancelled
+   - Improves user experience during long operations
+   - Added a subheading under the Indexing section to clearly indicate long wait times
+   - Fixed issue with cancel button not responding during CPU-intensive operations
 
 4. **Fixed Show Stats Toggle**
    - Fixed the show stats toggle to refresh the display immediately after toggling
    - Added proper UI update to show/hide stats in real-time
    - Maintained all the detailed statistics when enabled
    - Improved user experience with immediate visual feedback
+
+## Performance Improvements
+
+1. **Improved Main Thread Responsiveness**
+   ```mermaid
+   graph TD
+      A[CPU-Intensive Operations] --> B[Periodic Yielding to Main Thread]
+      B --> C[UI Remains Responsive]
+      C --> D[Cancel Button Works During Indexing]
+      B --> E[Progress Updates Continue]
+      E --> F[User Gets Visual Feedback]
+      B --> G[requestAnimationFrame]
+      G --> H[Better UI Responsiveness]
+   ```
+
+2. **Enhanced Cancellation Mechanism**
+   - Added periodic yielding to main thread during CPU-intensive operations
+   - Implemented more frequent checks for cancellation signals
+   - Ensured UI remains responsive even during heavy indexing
+   - Fixed issue where cancel button clicks weren't detected during indexing
+   - Maintained accurate progress reporting while improving responsiveness
+   - Optimized yielding frequency based on operation type and workload
+
+3. **Improved Yielding Mechanism**
+   - Enhanced `yieldToMain` function with better browser compatibility
+   - Added support for `requestAnimationFrame` for smoother UI updates
+   - Implemented fallback to `setTimeout` for non-browser environments
+   - Added `forceYield` parameter to allow immediate yielding when needed
+   - Improved yielding in CPU-intensive operations like indexing and signature creation
+   - Consistent yielding approach across all long-running operations
+   - Better responsiveness during heavy computational tasks
+
+## Main Thread Optimization
+
+The plugin should implement strategies to optimize long tasks and improve main thread responsiveness:
+
+1. **Understanding Long Tasks**
+   - A task is any discrete piece of work the browser does (rendering, parsing, JavaScript execution)
+   - The main thread can only process one task at a time
+   - Tasks exceeding 50ms are considered "long tasks" with a blocking period
+   - Long tasks block user interactions, making the UI feel unresponsive
+
+2. **Task Management Strategies**
+   ```mermaid
+   graph TD
+      A[Long Task] --> B[Break Into Smaller Tasks]
+      B --> C[Yield to Main Thread]
+      C --> D[UI Remains Responsive]
+      C --> E[Higher Priority Work Runs Sooner]
+      C --> F[User Interactions Handled Promptly]
+   ```
+
+3. **Yielding Implementation Options**
+   - Use `scheduler.yield()` (with fallback) to yield to the main thread
+   - Prioritize user-facing work before yielding
+   - Batch operations and only yield periodically (e.g., every 50ms)
+   - Implement a cross-browser compatible yielding function:
+   ```javascript
+   function yieldToMain() {
+     if (globalThis.scheduler?.yield) {
+       return scheduler.yield();
+     }
+     // Fall back to yielding with setTimeout
+     return new Promise(resolve => {
+       setTimeout(resolve, 0);
+     });
+   }
+   ```
+
+4. **Breaking Up Long-Running Work**
+   - For iterative operations, yield periodically:
+   ```javascript
+   async function processItems(items) {
+     let lastYield = performance.now();
+     for (const item of items) {
+       // Process the item
+       processItem(item);
+       
+       // Yield every 50ms
+       if (performance.now() - lastYield > 50) {
+         await yieldToMain();
+         lastYield = performance.now();
+       }
+     }
+   }
+   ```
+
+5. **Application to Plugin Operations**
+   - Apply yielding to indexing operations
+   - Break up signature generation into smaller tasks
+   - Ensure UI updates and animations remain smooth
+   - Allow user interactions to be processed promptly
+   - Maintain progress reporting during long operations
 
 ## Future Considerations
 

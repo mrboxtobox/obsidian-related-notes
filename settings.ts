@@ -66,93 +66,74 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
     // Reindexing Section
     containerEl.createEl('h3', { text: 'Indexing' });
+    containerEl.createEl('h4', { text: 'This process may take a long time for large vaults' });
 
     const reindexSetting = new Setting(containerEl)
       .setName('Force Re-indexing')
-      .setDesc('Force a complete re-indexing of all notes. This is useful when you want to ensure the most accurate related notes suggestions.');
+      .setDesc('Force a complete re-indexing of all notes. Re-indexing may take a while depending on the size of your vault.');
+
+    // Create button container for reindex and cancel buttons
+    const buttonContainer = reindexSetting.controlEl.createDiv({ cls: 'related-notes-button-container' });
+    buttonContainer.style.display = 'flex';
+    buttonContainer.style.gap = '8px';
 
     // Add the reindex button
-    this.reindexButton = reindexSetting.controlEl.createEl('button', {
+    this.reindexButton = buttonContainer.createEl('button', {
       text: 'Re-index All Notes',
       cls: 'mod-cta'
     });
 
-    // Create container for progress indicator below the button
-    const progressContainer = reindexSetting.controlEl.createDiv({ cls: 'related-notes-progress-container' });
-    progressContainer.style.display = 'none';
-    progressContainer.style.marginTop = '8px';
-    progressContainer.style.width = '100%';
-    progressContainer.style.height = '10px';
-    progressContainer.style.backgroundColor = 'var(--background-modifier-border)';
-    progressContainer.style.borderRadius = '5px';
-    progressContainer.style.overflow = 'hidden';
-
-    const progressIndicator = progressContainer.createDiv({ cls: 'related-notes-progress-indicator' });
-    progressIndicator.style.width = '0%';
-    progressIndicator.style.height = '100%';
-    progressIndicator.style.backgroundColor = 'var(--interactive-accent)';
-    progressIndicator.style.transition = 'width 0.5s ease';
-
-    const progressText = reindexSetting.controlEl.createDiv({ cls: 'related-notes-progress-text' });
-    progressText.style.display = 'none';
-    progressText.style.fontSize = '12px';
-    progressText.style.color = 'var(--text-muted)';
-    progressText.style.marginTop = '4px';
-    progressText.setText('0%');
+    // Add cancel button (initially hidden)
+    const cancelButton = buttonContainer.createEl('button', {
+      text: 'Cancel',
+      cls: 'mod-warning'
+    });
+    cancelButton.style.display = 'none';
 
     // Add click handler for reindex button
     this.reindexButton.addEventListener('click', async () => {
-      // Disable button during re-indexing
+      // Disable reindex button and show cancel button
       this.reindexButton!.disabled = true;
       this.reindexButton!.setText('Re-indexing...');
+      cancelButton.style.display = 'inline-block';
 
-      // Show progress indicator
-      progressContainer.style.display = 'block';
-      progressText.style.display = 'inline';
-      progressIndicator.style.width = '0%';
-      progressText.setText('0%');
+      // Variable to track if indexing was cancelled
+      let cancelled = false;
 
-      // Simulate progress with a timer
-      let progress = 0;
-      const phases = ["Reading notes", "Analyzing patterns", "Finding connections", "Building relationships"];
-      const interval = window.setInterval(() => {
-        // Increment progress
-        progress += 1;
-        if (progress > 100) {
-          clearInterval(interval);
-          return;
-        }
+      // Add click handler for cancel button
+      const cancelHandler = () => {
+        cancelled = true;
+        // We'll handle the actual cancellation in the main plugin
+        this.plugin.cancelReindex();
 
-        // Update progress indicator
-        progressIndicator.style.width = `${progress}%`;
-
-        // Determine the current phase based on progress
-        const phaseIndex = Math.floor(progress / 25);
-        const phase = phases[Math.min(phaseIndex, phases.length - 1)];
-
-        // Update progress text
-        progressText.setText(`${phase}... ${progress}%`);
-      }, 100); // Update every 100ms
-
-      // Start actual re-indexing
-      await this.plugin.forceReindex();
-
-      // Clear the interval if it's still running
-      clearInterval(interval);
-
-      // Set progress to 100%
-      progressIndicator.style.width = '100%';
-      progressText.setText('Complete! 100%');
-
-      // Hide progress indicator after a delay
-      setTimeout(() => {
-        progressContainer.style.display = 'none';
-        progressText.style.display = 'none';
-
-        // Re-enable button after re-indexing
+        // Reset UI
         this.reindexButton!.disabled = false;
         this.reindexButton!.setText('Re-index All Notes');
-      }, 1000);
+        cancelButton.style.display = 'none';
+      };
+
+      // Add the cancel handler
+      cancelButton.addEventListener('click', cancelHandler);
+
+      try {
+        // Start actual re-indexing
+        await this.plugin.forceReindex();
+      } catch (error: unknown) {
+        // Only log errors that aren't cancellation
+        if (!(error instanceof Error && error.message === 'Indexing cancelled')) {
+          console.error('Error during re-indexing:', error);
+        }
+      } finally {
+        // Clean up
+        cancelButton.removeEventListener('click', cancelHandler);
+        cancelButton.style.display = 'none';
+
+        // Only reset the button if indexing wasn't cancelled (it's already reset in the cancel handler)
+        if (!cancelled) {
+          this.reindexButton!.disabled = false;
+          this.reindexButton!.setText('Re-index All Notes');
+        }
+      }
     });
 
     // Show Stats Toggle
