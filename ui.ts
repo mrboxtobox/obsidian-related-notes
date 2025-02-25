@@ -40,33 +40,9 @@ export class RelatedNotesView extends ItemView {
     container.empty();
     this.containerEl.addClass('related-notes-container');
 
-    // Create header with title and re-index button
+    // Create header with title
     const headerEl = container.createEl('div', { cls: 'related-notes-header' });
     headerEl.createEl('h4', { text: 'Related Notes' });
-
-    // Add re-index button
-    const reindexButton = headerEl.createEl('button', {
-      cls: 'related-notes-reindex-button',
-      attr: {
-        'aria-label': 'Force re-indexing of all notes',
-        'title': 'Force re-indexing of all notes'
-      }
-    });
-    reindexButton.innerHTML = '↻'; // Refresh icon
-
-    // Add click handler for re-index button
-    reindexButton.addEventListener('click', async () => {
-      // Disable button during re-indexing
-      reindexButton.disabled = true;
-      reindexButton.addClass('reindexing');
-
-      // Force re-indexing
-      await this.plugin.forceReindex();
-
-      // Re-enable button after re-indexing
-      reindexButton.disabled = false;
-      reindexButton.removeClass('reindexing');
-    });
 
     container.createDiv({ cls: 'related-notes-content' });
   }
@@ -80,33 +56,9 @@ export class RelatedNotesView extends ItemView {
   async reset() {
     const fragment = document.createDocumentFragment();
 
-    // Create header with title and re-index button
+    // Create header with title
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
     headerEl.createEl('h4', { text: 'Related Notes' });
-
-    // Add re-index button
-    const reindexButton = headerEl.createEl('button', {
-      cls: 'related-notes-reindex-button',
-      attr: {
-        'aria-label': 'Force re-indexing of all notes',
-        'title': 'Force re-indexing of all notes'
-      }
-    });
-    reindexButton.innerHTML = '↻'; // Refresh icon
-
-    // Add click handler for re-index button
-    reindexButton.addEventListener('click', async () => {
-      // Disable button during re-indexing
-      reindexButton.disabled = true;
-      reindexButton.addClass('reindexing');
-
-      // Force re-indexing
-      await this.plugin.forceReindex();
-
-      // Re-enable button after re-indexing
-      reindexButton.disabled = false;
-      reindexButton.removeClass('reindexing');
-    });
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
@@ -178,33 +130,9 @@ export class RelatedNotesView extends ItemView {
   async updateForFile(file: TFile, notes: RelatedNote[]) {
     const fragment = document.createDocumentFragment();
 
-    // Create header with title and re-index button
+    // Create header with title
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
     headerEl.createEl('h4', { text: 'Related Notes' });
-
-    // Add re-index button
-    const reindexButton = headerEl.createEl('button', {
-      cls: 'related-notes-reindex-button',
-      attr: {
-        'aria-label': 'Force re-indexing of all notes',
-        'title': 'Force re-indexing of all notes'
-      }
-    });
-    reindexButton.innerHTML = '↻'; // Refresh icon
-
-    // Add click handler for re-index button
-    reindexButton.addEventListener('click', async () => {
-      // Disable button during re-indexing
-      reindexButton.disabled = true;
-      reindexButton.addClass('reindexing');
-
-      // Force re-indexing
-      await this.plugin.forceReindex();
-
-      // Re-enable button after re-indexing
-      reindexButton.disabled = false;
-      reindexButton.removeClass('reindexing');
-    });
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;

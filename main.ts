@@ -1,24 +1,62 @@
 import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian';
 import { RelatedNote, SimilarityProvider, SimilarityProviderV2 } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
+import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
 
 'use strict';
 
+export interface MemoryStats {
+  vocabularySize: number;
+  fileVectorsCount: number;
+  signaturesCount: number;
+  relatedNotesCount: number;
+  onDemandCacheCount: number;
+  estimatedMemoryUsage: number;
+}
+
+export interface NLPStats {
+  averageShingleSize: number;
+  averageDocLength: number;
+  similarityProvider: string;
+  lshBands: number;
+  lshRowsPerBand: number;
+  averageSimilarityScore: number;
+  isCorpusSampled: boolean;
+  totalFiles: number;
+  indexedFiles: number;
+  onDemandComputations: number;
+}
+
 export default class RelatedNotesPlugin extends Plugin {
-  private similarityProvider!: SimilarityProvider;
+  settings!: RelatedNotesSettings;
+  similarityProvider!: SimilarityProvider;
   private statusBarItem!: HTMLElement;
   private isInitialized = false;
 
   async onload() {
+    // Load settings
+    await this.loadSettings();
+
     // Register essential components immediately
     this.registerCommands();
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.setText("Initializing...");
 
+    // Add settings tab
+    this.addSettingTab(new RelatedNotesSettingTab(this.app, this));
+
     // Defer heavy initialization until layout is ready
     this.app.workspace.onLayoutReady(async () => {
       await this.initializePlugin();
     });
+  }
+
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
   }
 
   private async initializePlugin() {
@@ -36,7 +74,22 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Initialize similarity provider with caching, but don't block the UI
     this.isInitialized = false;
-    this.similarityProvider = new SimilarityProviderV2(this.app.vault);
+    this.similarityProvider = new SimilarityProviderV2(this.app.vault, {
+      numBands: 5,
+      rowsPerBand: 2,
+      shingleSize: 2,
+      batchSize: this.settings.batchSize,
+      priorityIndexSize: this.settings.priorityIndexSize,
+      cacheFilePath: '.obsidian/plugins/obsidian-related-notes/similarity-cache.json',
+      // Adaptive parameters for large corpora
+      largeBands: 8,       // More bands for large corpora = more candidates
+      largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
+      largeCorpusThreshold: 1000, // When to consider a corpus "large"
+      minSimilarityThreshold: this.settings.similarityThreshold / 2, // Lower threshold for large corpora
+      onDemandCacheSize: 1000, // Number of on-demand computations to cache
+      onDemandComputationEnabled: this.settings.onDemandComputationEnabled,
+      disableIncrementalUpdates: this.settings.disableIncrementalUpdates
+    });
 
     // Show initial status
     this.statusBarItem.setText("Ready (indexing in background)");
@@ -210,6 +263,110 @@ export default class RelatedNotesPlugin extends Plugin {
     return this.isInitialized;
   }
 
+  /**
+   * Gets memory usage statistics from the similarity provider
+   */
+  public getMemoryStats(): MemoryStats {
+    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
+      return {
+        vocabularySize: 0,
+        fileVectorsCount: 0,
+        signaturesCount: 0,
+        relatedNotesCount: 0,
+        onDemandCacheCount: 0,
+        estimatedMemoryUsage: 0
+      };
+    }
+
+    const provider = this.similarityProvider as SimilarityProviderV2;
+
+    // Get stats from the provider
+    const vocabularySize = provider.getVocabularySize();
+    const fileVectorsCount = provider.getFileVectorsCount();
+    const signaturesCount = provider.getSignaturesCount();
+    const relatedNotesCount = provider.getRelatedNotesCount();
+    const onDemandCacheCount = provider.getOnDemandCacheCount();
+
+    // Estimate memory usage (very rough estimate)
+    // Vocabulary: ~50 bytes per term
+    // File vectors: ~100 bytes per file
+    // Signatures: ~100 bytes per signature
+    // Related notes: ~50 bytes per entry
+    // On-demand cache: ~200 bytes per entry
+    const estimatedMemoryUsage = Math.round(
+      (vocabularySize * 50 +
+        fileVectorsCount * 100 +
+        signaturesCount * 100 +
+        relatedNotesCount * 50 +
+        onDemandCacheCount * 200) / 1024
+    );
+
+    return {
+      vocabularySize,
+      fileVectorsCount,
+      signaturesCount,
+      relatedNotesCount,
+      onDemandCacheCount,
+      estimatedMemoryUsage
+    };
+  }
+
+  /**
+   * Gets NLP-related statistics from the similarity provider
+   */
+  public getNLPStats(): NLPStats {
+    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
+      return {
+        averageShingleSize: 0,
+        averageDocLength: 0,
+        similarityProvider: 'unknown',
+        lshBands: 0,
+        lshRowsPerBand: 0,
+        averageSimilarityScore: 0,
+        isCorpusSampled: false,
+        totalFiles: 0,
+        indexedFiles: 0,
+        onDemandComputations: 0
+      };
+    }
+
+    const provider = this.similarityProvider as SimilarityProviderV2;
+
+    // Get stats from the provider
+    const averageShingleSize = provider.getAverageShingleSize();
+    const averageDocLength = provider.getAverageDocLength();
+    const lshBands = provider.getLSHBands();
+    const lshRowsPerBand = provider.getLSHRowsPerBand();
+    const averageSimilarityScore = provider.getAverageSimilarityScore();
+    const isCorpusSampled = provider.isCorpusSampled();
+    const totalFiles = this.app.vault.getMarkdownFiles().length;
+    const indexedFiles = provider.getFileVectorsCount();
+    const onDemandComputations = provider.getOnDemandComputationsCount();
+
+    // Determine similarity provider type
+    let similarityProviderType = 'auto';
+    if (this.settings.similarityProvider !== 'auto') {
+      similarityProviderType = this.settings.similarityProvider;
+    } else if (isCorpusSampled) {
+      similarityProviderType = 'minhash';
+    } else {
+      similarityProviderType = 'bm25';
+    }
+
+    return {
+      averageShingleSize,
+      averageDocLength,
+      similarityProvider: similarityProviderType,
+      lshBands,
+      lshRowsPerBand,
+      averageSimilarityScore,
+      isCorpusSampled,
+      totalFiles,
+      indexedFiles,
+      onDemandComputations
+    };
+  }
+
   private async showRelatedNotes(workspace: Workspace, file: TFile | null) {
     if (!(file instanceof TFile)) return;
 
@@ -275,14 +432,14 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // For large corpora, return more results but with a minimum similarity threshold
     if (isLargeCorpus) {
-      // Return up to 10 notes for large corpora, but ensure they have some relevance
-      const minSimilarity = 0.15; // Minimum similarity threshold
+      // Return up to maxSuggestions*2 notes for large corpora, but ensure they have some relevance
+      const minSimilarity = this.settings.similarityThreshold / 2; // Lower threshold for large corpora
       return sortedNotes
         .filter(note => note.similarity >= minSimilarity)
-        .slice(0, 10);
+        .slice(0, this.settings.maxSuggestions * 2);
     }
 
-    // For normal corpora, take top 5 with standard threshold
-    return sortedNotes.slice(0, 5);
+    // For normal corpora, take top N with standard threshold
+    return sortedNotes.slice(0, this.settings.maxSuggestions);
   }
 }
