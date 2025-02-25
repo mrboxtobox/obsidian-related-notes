@@ -6,6 +6,8 @@ Uncover connections between notes in your vault using this plugin.
 
 - 🔍 Automatically analyzes note content using proven similarity algorithms
 - 📊 MinHash LSH + BM25 (Best Matching 25) for fast term-frequency based matching
+- 🔄 Adaptive similarity detection for large note collections
+- 📈 Visual quality indicators for similarity matches
 - ⚡ Fully local processing with complete data privacy
 
 ## Installation
@@ -65,6 +67,19 @@ The plugin automatically selects the optimal similarity provider based on your v
 - Advanced configuration available in settings
 - No external dependencies or setup required
 
+### Adaptive Similarity for Large Corpora
+
+For users with large note collections, the plugin now features an adaptive similarity system:
+
+- **Automatic Detection**: Identifies when you're working with a large corpus
+- **Expanded Results**: Shows up to 10 related notes (instead of 5) for large collections
+- **Quality Indicators**: Visual percentage indicators show the estimated relevance of each match
+- **Lenient Matching**: Adjusts LSH parameters to find more potential matches in large collections
+- **Similarity Boosting**: Applies a small boost to similarity scores to ensure you see relevant connections
+- **Transparent UI**: Clear indication when approximate matches are being shown
+
+This feature helps ensure you can still discover meaningful connections even when working with thousands of notes, where traditional exact matching might miss important relationships due to the scale and diversity of content.
+
 ### File Type Support
 
 The plugin currently processes Markdown (.md) files only, as these are the primary content files in Obsidian. Other file types are automatically skipped to optimize performance and maintain focus on note relationships.
@@ -78,6 +93,7 @@ The plugin uses an intelligent caching system to improve performance:
 - Indexes and scores are only recomputed when content changes
 - Smart cache management to prevent unnecessary recomputation
 - Progress bar shows indexing status for better user feedback
+- Drift tolerance allows approximate results with configurable threshold
 
 ### Debug Logging
 

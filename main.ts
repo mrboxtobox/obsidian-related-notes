@@ -34,22 +34,32 @@ export default class RelatedNotesPlugin extends Plugin {
     // Register event handlers
     this.registerEventHandlers();
 
-    // Initialize similarity provider
+    // Initialize similarity provider with caching
     this.isInitialized = false;
     this.similarityProvider = new SimilarityProviderV2(this.app.vault);
+
+    // Show initial status
+    this.statusBarItem.setText("Loading related notes...");
+
+    // Initialize with progress reporting and smooth transitions
     await this.similarityProvider.initialize((processed, total) => {
       const percentage = processed;
       let message = "";
+      let phase = "";
 
+      // Determine the current phase based on percentage
       if (percentage <= 25) {
-        message = `Reading your notes... ${percentage}%`;
+        phase = "Reading your notes";
       } else if (percentage <= 50) {
-        message = `Analyzing patterns... ${percentage}%`;
+        phase = "Analyzing patterns";
       } else if (percentage <= 75) {
-        message = `Finding connections... ${percentage}%`;
+        phase = "Finding connections";
       } else {
-        message = `Building relationships... ${percentage}%`;
+        phase = "Building relationships";
       }
+
+      // Simple progress message with percentage
+      message = `${phase}... ${percentage}%`;
 
       this.statusBarItem.setText(message);
     });
@@ -155,9 +165,23 @@ export default class RelatedNotesPlugin extends Plugin {
 
     const relatedNotes = await Promise.all(similarityPromises);
 
-    // Sort by similarity (highest first) and take top 5
-    return relatedNotes
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, 5);
+    // Sort by similarity (highest first)
+    const sortedNotes = relatedNotes.sort((a, b) => b.similarity - a.similarity);
+
+    // Determine if we're dealing with a large corpus
+    const isLargeCorpus = this.similarityProvider instanceof SimilarityProviderV2 &&
+      this.similarityProvider.isCorpusSampled();
+
+    // For large corpora, return more results but with a minimum similarity threshold
+    if (isLargeCorpus) {
+      // Return up to 10 notes for large corpora, but ensure they have some relevance
+      const minSimilarity = 0.15; // Minimum similarity threshold
+      return sortedNotes
+        .filter(note => note.similarity >= minSimilarity)
+        .slice(0, 10);
+    }
+
+    // For normal corpora, take top 5 with standard threshold
+    return sortedNotes.slice(0, 5);
   }
 }
