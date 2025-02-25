@@ -15,6 +15,8 @@ export interface RelatedNote {
   file: TFile;
   similarity: number;
   commonTerms?: string[]; // Common terms between the notes
+  isPreIndexed?: boolean; // Whether this note was pre-indexed or computed on-demand
+  computedOnDemand?: boolean; // Legacy field for backward compatibility
 }
 
 export interface SimilarityInfo {
@@ -189,6 +191,13 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   private readonly driftThreshold = 0.1; // 10% drift allowed
   private readonly similarityThreshold = 0.3; // Default similarity threshold
 
+  // Track file access and creation times
+  private readonly fileAccessTimes = new Map<string, number>();
+  private readonly onDemandCache = new Map<string, Map<string, SimilarityInfo>>();
+  private readonly priorityIndexSize: number;
+  private readonly onDemandCacheSize: number;
+  public readonly onDemandComputationEnabled: boolean;
+
   constructor(
     private readonly vault: Vault,
     private readonly config = {
@@ -196,13 +205,15 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       rowsPerBand: 2,
       shingleSize: 2,
       batchSize: 1,
-      maxFiles: 5000,
+      priorityIndexSize: 10000, // Number of files to pre-index (increased from 5000)
       cacheFilePath: '.obsidian/plugins/obsidian-related-notes/similarity-cache.json',
       // Adaptive parameters for large corpora
       largeBands: 8,       // More bands for large corpora = more candidates
       largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
       largeCorpusThreshold: 1000, // When to consider a corpus "large"
-      minSimilarityThreshold: 0.15 // Lower threshold for large corpora
+      minSimilarityThreshold: 0.15, // Lower threshold for large corpora
+      onDemandCacheSize: 1000, // Number of on-demand computations to cache
+      onDemandComputationEnabled: true // Enable on-demand computation
     }
   ) {
     // Dynamically adjust LSH parameters based on corpus size
@@ -210,17 +221,51 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     if (signatureSize % config.numBands !== 0) {
       throw new Error('Signature size must be divisible by number of bands');
     }
+
+    // Initialize priority index size and on-demand cache size
+    this.priorityIndexSize = config.priorityIndexSize;
+    this.onDemandCacheSize = config.onDemandCacheSize;
+    this.onDemandComputationEnabled = config.onDemandComputationEnabled;
   }
 
   getCandidateFiles(file: TFile): TFile[] {
-    return this.relatedNotes.get(file.name) || [];
+    // Update access time for this file
+    this.fileAccessTimes.set(file.name, Date.now());
+
+    // Get pre-indexed candidates
+    const preIndexedCandidates = this.relatedNotes.get(file.name) || [];
+
+    // If on-demand computation is disabled, return only pre-indexed candidates
+    if (!this.onDemandComputationEnabled) {
+      return preIndexedCandidates;
+    }
+
+    // For files that aren't in the priority index, we'll need to compute candidates on-the-fly
+    // This is handled in the main plugin's getRelatedNotes method
+    return preIndexedCandidates;
+  }
+
+  /**
+   * Checks if a file is in the priority index
+   */
+  isFileIndexed(file: TFile): boolean {
+    return this.fileVectors.has(file.name);
+  }
+
+  /**
+   * Updates the access time for a file
+   */
+  updateFileAccessTime(file: TFile): void {
+    this.fileAccessTimes.set(file.name, Date.now());
   }
 
   isCorpusSampled(): boolean {
     return this.isCorpusTruncated;
   }
 
-  private shuffleArray(array: number[]): void {
+  private shuffleArray<T>(array: T[]): void {
+    if (!array) return;
+
     for (let i = array.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [array[i], array[j]] = [array[j], array[i]];
@@ -580,16 +625,48 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     return Array.from(candidates);
   }
 
+  /**
+   * Prioritizes files for indexing based on access time and creation time
+   */
+  private prioritizeFiles(files: TFile[]): TFile[] {
+    // Create a copy of the files array to avoid modifying the original
+    const filesCopy = [...files];
+
+    // Sort files by access time (most recently accessed first)
+    filesCopy.sort((a, b) => {
+      const accessTimeA = this.fileAccessTimes.get(a.name) || 0;
+      const accessTimeB = this.fileAccessTimes.get(b.name) || 0;
+
+      // If access times are the same, sort by creation time (most recent first)
+      if (accessTimeA === accessTimeB) {
+        return b.stat.ctime - a.stat.ctime;
+      }
+
+      return accessTimeB - accessTimeA;
+    });
+
+    return filesCopy;
+  }
+
   private async buildVocabularyAndVectors(onProgress?: (processed: number, total: number) => void): Promise<void> {
     const allFiles = this.vault.getMarkdownFiles();
     for (const file of allFiles) {
       this.nameToTFile.set(file.name, file);
+
+      // Initialize access times based on file stats
+      // Use mtime (modification time) as a proxy for access time initially
+      if (!this.fileAccessTimes.has(file.name)) {
+        this.fileAccessTimes.set(file.name, file.stat.mtime);
+      }
     }
 
+    // Prioritize files for indexing
+    const prioritizedFiles = this.prioritizeFiles(allFiles);
+
     let processedCount = 0;
-    const filesToProcess = allFiles.slice(0, this.config.maxFiles);
+    const filesToProcess = prioritizedFiles.slice(0, this.priorityIndexSize);
     const totalFiles = filesToProcess.length;
-    this.isCorpusTruncated = allFiles.length > this.config.maxFiles;
+    this.isCorpusTruncated = allFiles.length > this.priorityIndexSize;
 
     for (const file of filesToProcess) {
       try {
@@ -748,10 +825,28 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     return shingles;
   }
 
+  /**
+   * Computes similarity between two files, with caching for on-demand computations
+   */
   async computeCappedCosineSimilarity(
     file1: TFile,
     file2: TFile
   ): Promise<SimilarityInfo> {
+    // Check if we have a cached result for this file pair
+    const cacheKey1 = `${file1.name}:${file2.name}`;
+    const cacheKey2 = `${file2.name}:${file1.name}`;
+
+    // Check on-demand cache first
+    const file1Cache = this.onDemandCache.get(file1.name);
+    if (file1Cache && file1Cache.has(file2.name)) {
+      return file1Cache.get(file2.name)!;
+    }
+
+    const file2Cache = this.onDemandCache.get(file2.name);
+    if (file2Cache && file2Cache.has(file1.name)) {
+      return file2Cache.get(file1.name)!;
+    }
+
     // Determine if we're dealing with a large corpus
     const isLargeCorpus = this.fileVectors.size >= this.config.largeCorpusThreshold;
 
@@ -800,14 +895,115 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       // Extract common terms from the actual words (not shingles)
       const commonTerms = this.extractCommonTerms(freqMap1, freqMap2);
 
-      return {
+      const result = {
         similarity,
         commonTerms
       };
+
+      // Cache the result for future use
+      this.cacheOnDemandComputation(file1.name, file2.name, result);
+
+      return result;
     } catch (error) {
       console.error('Error computing similarity:', error);
       return { similarity: 0, commonTerms: [] };
     }
+  }
+
+  /**
+   * Caches the result of an on-demand computation
+   */
+  private cacheOnDemandComputation(
+    fileName1: string,
+    fileName2: string,
+    result: SimilarityInfo
+  ): void {
+    // Get or create cache for file1
+    let file1Cache = this.onDemandCache.get(fileName1);
+    if (!file1Cache) {
+      file1Cache = new Map<string, SimilarityInfo>();
+      this.onDemandCache.set(fileName1, file1Cache);
+    }
+
+    // Store the result
+    file1Cache.set(fileName2, result);
+
+    // Limit cache size by removing oldest entries if needed
+    if (file1Cache.size > this.onDemandCacheSize) {
+      const oldestKey = file1Cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        file1Cache.delete(oldestKey);
+      }
+    }
+
+    // Limit overall cache size by removing oldest file caches if needed
+    if (this.onDemandCache.size > this.onDemandCacheSize) {
+      const oldestKey = this.onDemandCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.onDemandCache.delete(oldestKey);
+      }
+    }
+  }
+
+  /**
+   * Computes related notes on-the-fly for a file that isn't in the priority index
+   */
+  async computeRelatedNotesOnDemand(file: TFile, limit: number = 10): Promise<RelatedNote[]> {
+    // Update access time for this file
+    this.updateFileAccessTime(file);
+
+    // Get all markdown files
+    const allFiles = this.vault.getMarkdownFiles();
+
+    // Prioritize files for comparison
+    const prioritizedFiles = this.prioritizeFiles(allFiles);
+
+    // Take a sample of files to compare against (for performance)
+    // Use files from the priority index first, then add some random files
+    const filesToCompare: TFile[] = [];
+
+    // Add files from the priority index first
+    for (const candidateFile of prioritizedFiles) {
+      if (candidateFile.path === file.path) continue;
+
+      if (this.isFileIndexed(candidateFile)) {
+        filesToCompare.push(candidateFile);
+
+        // Limit to 100 indexed files for performance
+        if (filesToCompare.length >= 100) break;
+      }
+    }
+
+    // Add some random files that aren't in the priority index
+    const nonIndexedFiles = allFiles.filter(f =>
+      f.path !== file.path && !this.isFileIndexed(f)
+    );
+
+    // Shuffle and take a sample
+    this.shuffleArray(nonIndexedFiles);
+    filesToCompare.push(...nonIndexedFiles.slice(0, 50));
+
+    // Calculate similarities
+    const similarityPromises = filesToCompare.map(async (candidateFile) => {
+      const similarity = await this.computeCappedCosineSimilarity(file, candidateFile);
+      return {
+        file: candidateFile,
+        similarity: similarity.similarity,
+        commonTerms: similarity.commonTerms || [],
+        computedOnDemand: true
+      };
+    });
+
+    const relatedNotes = await Promise.all(similarityPromises);
+
+    // Sort by similarity (highest first)
+    const sortedNotes = relatedNotes.sort((a, b) => b.similarity - a.similarity);
+
+    // Apply a minimum similarity threshold
+    const minSimilarity = 0.15;
+    return sortedNotes
+      .filter(note => note.similarity >= minSimilarity)
+      .slice(0, limit);
   }
 
   private extractCommonTerms(
@@ -826,10 +1022,12 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     }
 
     // Sort terms by their score (highest first) and take top 10
-    return termScores
+    const result = termScores
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
       .map(item => item.term);
+
+    return result || [];
   }
 
   private calculateJaccardSimilarity(
@@ -854,7 +1052,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
     return {
       similarity: intersection.length / union.size,
-      commonTerms: commonTerms
+      commonTerms: commonTerms || []
     };
   }
 
@@ -908,7 +1106,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
     return {
       similarity: dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2)),
-      commonTerms: topCommonTerms
+      commonTerms: topCommonTerms || []
     };
   }
 }
