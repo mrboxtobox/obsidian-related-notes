@@ -115,8 +115,19 @@ export class RelatedNotesView extends ItemView {
       return;
     }
 
+    // Check if we're showing approximate matches (more than 5 notes)
+    const isShowingApproximateMatches = notes.length > 5;
+
+    if (isShowingApproximateMatches) {
+      const infoEl = contentEl.createDiv({ cls: 'related-notes-info' });
+      infoEl.createEl('p', {
+        text: 'Showing approximate matches for your large note collection',
+        cls: 'related-notes-info-text'
+      });
+    }
+
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
-    const listItems = notes.map(({ file: relatedFile, similarity }) => {
+    const listItems = notes.map(({ file: relatedFile }) => {
       const listItemEl = document.createElement('li');
       listItemEl.className = 'related-note-item';
       listItemEl.style.cursor = 'pointer';
@@ -128,6 +139,8 @@ export class RelatedNotesView extends ItemView {
       nameEl.className = 'related-note-link';
       nameEl.textContent = relatedFile.basename;
       linkContainer.appendChild(nameEl);
+
+      // No similarity indicators shown
       listItemEl.appendChild(linkContainer);
 
       listItemEl.addEventListener('click', async () => {
@@ -144,6 +157,7 @@ export class RelatedNotesView extends ItemView {
     });
 
     listItems.forEach(item => listEl.appendChild(item));
+
     // Replace the old content with the new fragment in a single operation.
     const container = this.containerEl.children[1];
     container.empty();
