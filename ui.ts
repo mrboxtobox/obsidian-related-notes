@@ -39,7 +39,35 @@ export class RelatedNotesView extends ItemView {
     const container = this.containerEl.children[1];
     container.empty();
     this.containerEl.addClass('related-notes-container');
-    container.createEl('h4', { text: 'Related Notes' });
+
+    // Create header with title and re-index button
+    const headerEl = container.createEl('div', { cls: 'related-notes-header' });
+    headerEl.createEl('h4', { text: 'Related Notes' });
+
+    // Add re-index button
+    const reindexButton = headerEl.createEl('button', {
+      cls: 'related-notes-reindex-button',
+      attr: {
+        'aria-label': 'Force re-indexing of all notes',
+        'title': 'Force re-indexing of all notes'
+      }
+    });
+    reindexButton.innerHTML = '↻'; // Refresh icon
+
+    // Add click handler for re-index button
+    reindexButton.addEventListener('click', async () => {
+      // Disable button during re-indexing
+      reindexButton.disabled = true;
+      reindexButton.addClass('reindexing');
+
+      // Force re-indexing
+      await this.plugin.forceReindex();
+
+      // Re-enable button after re-indexing
+      reindexButton.disabled = false;
+      reindexButton.removeClass('reindexing');
+    });
+
     container.createDiv({ cls: 'related-notes-content' });
   }
 
@@ -51,7 +79,35 @@ export class RelatedNotesView extends ItemView {
 
   async reset() {
     const fragment = document.createDocumentFragment();
-    fragment.createEl('h4', { text: 'Related Notes' });
+
+    // Create header with title and re-index button
+    const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
+    headerEl.createEl('h4', { text: 'Related Notes' });
+
+    // Add re-index button
+    const reindexButton = headerEl.createEl('button', {
+      cls: 'related-notes-reindex-button',
+      attr: {
+        'aria-label': 'Force re-indexing of all notes',
+        'title': 'Force re-indexing of all notes'
+      }
+    });
+    reindexButton.innerHTML = '↻'; // Refresh icon
+
+    // Add click handler for re-index button
+    reindexButton.addEventListener('click', async () => {
+      // Disable button during re-indexing
+      reindexButton.disabled = true;
+      reindexButton.addClass('reindexing');
+
+      // Force re-indexing
+      await this.plugin.forceReindex();
+
+      // Re-enable button after re-indexing
+      reindexButton.disabled = false;
+      reindexButton.removeClass('reindexing');
+    });
+
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
     messageEl.createEl('p', {
@@ -121,7 +177,35 @@ export class RelatedNotesView extends ItemView {
 
   async updateForFile(file: TFile, notes: RelatedNote[]) {
     const fragment = document.createDocumentFragment();
-    fragment.createEl('h4', { text: 'Related Notes' });
+
+    // Create header with title and re-index button
+    const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
+    headerEl.createEl('h4', { text: 'Related Notes' });
+
+    // Add re-index button
+    const reindexButton = headerEl.createEl('button', {
+      cls: 'related-notes-reindex-button',
+      attr: {
+        'aria-label': 'Force re-indexing of all notes',
+        'title': 'Force re-indexing of all notes'
+      }
+    });
+    reindexButton.innerHTML = '↻'; // Refresh icon
+
+    // Add click handler for re-index button
+    reindexButton.addEventListener('click', async () => {
+      // Disable button during re-indexing
+      reindexButton.disabled = true;
+      reindexButton.addClass('reindexing');
+
+      // Force re-indexing
+      await this.plugin.forceReindex();
+
+      // Re-enable button after re-indexing
+      reindexButton.disabled = false;
+      reindexButton.removeClass('reindexing');
+    });
+
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;
 
@@ -180,6 +264,17 @@ export class RelatedNotesView extends ItemView {
       });
     }
 
+    // Check if we have any on-demand computed notes
+    const hasOnDemandNotes = notes.some(note => note.isPreIndexed === false || note.computedOnDemand);
+
+    if (hasOnDemandNotes) {
+      const infoEl = contentEl.createDiv({ cls: 'related-notes-info' });
+      infoEl.createEl('p', {
+        text: 'Some notes were computed on-the-fly for better relevance',
+        cls: 'related-notes-info-text'
+      });
+    }
+
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
 
     // Create list items for each related note
@@ -202,6 +297,15 @@ export class RelatedNotesView extends ItemView {
       nameEl.className = 'related-note-link';
       nameEl.textContent = relatedFile.basename;
       linkContainer.appendChild(nameEl);
+
+      // Add indicator for on-demand computed notes
+      if (note.isPreIndexed === false || note.computedOnDemand) {
+        const indicatorEl = document.createElement('span');
+        indicatorEl.className = 'related-note-indicator';
+        indicatorEl.textContent = '(on-demand)';
+        indicatorEl.title = 'This note was computed on-the-fly';
+        linkContainer.appendChild(indicatorEl);
+      }
 
       // Add click handler to open the related file
       linkContainer.addEventListener('click', async () => {

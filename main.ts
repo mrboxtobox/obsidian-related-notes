@@ -34,10 +34,21 @@ export default class RelatedNotesPlugin extends Plugin {
     // Register event handlers
     this.registerEventHandlers();
 
-    // Initialize similarity provider with caching
+    // Initialize similarity provider with caching, but don't block the UI
     this.isInitialized = false;
     this.similarityProvider = new SimilarityProviderV2(this.app.vault);
 
+    // Show initial status
+    this.statusBarItem.setText("Ready (indexing in background)");
+
+    // Use setTimeout to defer heavy initialization to the next event loop
+    // This prevents UI blocking during startup
+    setTimeout(() => {
+      this.initializeSimilarityProvider();
+    }, 1000);
+  }
+
+  private async initializeSimilarityProvider() {
     // Show initial status
     this.statusBarItem.setText("Loading related notes...");
 
@@ -66,14 +77,75 @@ export default class RelatedNotesPlugin extends Plugin {
 
     if (this.similarityProvider instanceof SimilarityProviderV2 && this.similarityProvider.isCorpusSampled()) {
       this.statusBarItem.setText("⚠️ Using a sample of your notes");
-      this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 5000 notes');
-      this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 5000 notes');
+      this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
+      this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
     } else {
       this.statusBarItem.setText("Ready to find related notes");
       this.statusBarItem.removeAttribute('aria-label');
       this.statusBarItem.removeAttribute('title');
     }
     this.isInitialized = true;
+  }
+
+  /**
+   * Forces a complete re-indexing of all notes
+   * This is useful when the user wants to ensure the index is up-to-date
+   */
+  public async forceReindex(): Promise<void> {
+    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
+      return;
+    }
+
+    // Update status bar
+    this.isInitialized = false;
+    this.statusBarItem.setText("Re-indexing notes...");
+
+    // Force re-indexing with progress reporting
+    await this.similarityProvider.forceReindex((processed, total) => {
+      const percentage = processed;
+      let message = "";
+      let phase = "";
+
+      // Determine the current phase based on percentage
+      if (percentage <= 25) {
+        phase = "Reading your notes";
+      } else if (percentage <= 50) {
+        phase = "Analyzing patterns";
+      } else if (percentage <= 75) {
+        phase = "Finding connections";
+      } else {
+        phase = "Building relationships";
+      }
+
+      // Simple progress message with percentage
+      message = `Re-indexing: ${phase}... ${percentage}%`;
+
+      this.statusBarItem.setText(message);
+    });
+
+    // Update status bar after re-indexing
+    if (this.similarityProvider.isCorpusSampled()) {
+      this.statusBarItem.setText("⚠️ Using a sample of your notes");
+      this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
+      this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
+    } else {
+      this.statusBarItem.setText("Ready to find related notes");
+      this.statusBarItem.removeAttribute('aria-label');
+      this.statusBarItem.removeAttribute('title');
+    }
+    this.isInitialized = true;
+
+    // Refresh the view if it's open
+    const leaves = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+    if (leaves.length > 0) {
+      const view = leaves[0].view;
+      if (view instanceof RelatedNotesView) {
+        const activeView = this.app.workspace.getMostRecentLeaf()?.view;
+        if (activeView instanceof MarkdownView && activeView.file) {
+          await this.showRelatedNotes(this.app.workspace, activeView.file);
+        }
+      }
+    }
   }
 
   private registerEventHandlers() {

@@ -297,6 +297,46 @@ The plugin now implements a hybrid approach to handle large note collections mor
    - Smart shuffling of non-indexed files for better sampling
    - Type-safe implementations for better reliability
 
+## Force Re-indexing Feature
+
+The plugin now includes a button to force re-indexing of all notes:
+
+1. **UI Implementation**
+   ```mermaid
+   graph TD
+      A[Related Notes View] --> B[Header with Title]
+      A --> C[Re-index Button]
+      C --> D[Click Handler]
+      D --> E[Disable Button]
+      E --> F[Call forceReindex]
+      F --> G[Update Status Bar]
+      G --> H[Re-enable Button]
+   ```
+
+2. **Core Implementation**
+   - Added `forceReindex` method to SimilarityProviderV2 class
+   - Method clears all existing data and performs a full re-indexing
+   - Progress reporting with percentage updates
+   - Cache is saved after re-indexing completes
+
+3. **Plugin Integration**
+   - Added `forceReindex` method to RelatedNotesPlugin class
+   - Method updates status bar with progress information
+   - Refreshes the view after re-indexing completes
+   - Handles edge cases and error conditions
+
+4. **UI Enhancements**
+   - Added refresh button to the header of the Related Notes view
+   - Button shows a spinning animation during re-indexing
+   - Button is disabled during re-indexing to prevent multiple clicks
+   - Consistent styling with the rest of the plugin UI
+
+5. **User Experience Benefits**
+   - Allows users to manually trigger a complete re-indexing
+   - Useful after making significant changes to many notes
+   - Ensures the most accurate related notes suggestions
+   - Provides visual feedback during the re-indexing process
+
 ## Future Considerations
 
 1. Consider implementing:
@@ -312,6 +352,8 @@ The plugin now implements a hybrid approach to handle large note collections mor
    - Custom link text options
    - Link visualization in the graph view
    - User-configurable priority index size
+   - Keyboard shortcut for force re-indexing
+   - Option to schedule automatic re-indexing at specific intervals
 
 2. Monitor:
    - Cache hit/miss rates
