@@ -194,6 +194,13 @@ The plugin now implements adaptive similarity detection for large note collectio
    - Added a check to ensure the band exists before trying to hash it, preventing the error when signatures have different lengths
    - This improves stability when comparing notes with varying signature lengths
 
+2. **Fixed TypeScript Type Errors**
+   - Fixed a type error where `oldestKey` (of type `string | undefined`) was being used without checking if it's undefined
+   - Added null checks before using `oldestKey` in the `cacheOnDemandComputation` method to prevent potential runtime errors
+   - Fixed a type mismatch in the `getRelatedNotes` method where the `relatedNotes` variable was incorrectly typed
+   - Updated the type declaration to use the `RelatedNote` interface which properly handles optional properties
+   - These fixes improve type safety and prevent potential runtime errors
+
 ## Development Tools
 
 This plugin's UI improvements were developed with the assistance of:
@@ -246,6 +253,50 @@ The combination of these tools helped streamline the development process and ens
    - Enhances the knowledge graph with meaningful connections
    - Improves navigation between conceptually related content
 
+## Hybrid Indexing Implementation
+
+The plugin now implements a hybrid approach to handle large note collections more efficiently:
+
+1. **Priority-Based Indexing**
+   ```mermaid
+   graph TD
+      A[All Notes] --> B[Sort by Access Time]
+      B --> C[Sort by Creation Time]
+      C --> D[Take Top N Notes]
+      D --> E[Pre-Index Priority Notes]
+      A --> F[Remaining Notes]
+      F --> G[Available for On-Demand Processing]
+   ```
+
+2. **Access Time Tracking**
+   - The plugin now tracks when files are accessed
+   - Recently accessed files are prioritized for pre-indexing
+   - This ensures your most frequently used notes have fast related note lookups
+
+3. **On-Demand Computation**
+   - Notes outside the priority index are processed on-the-fly when needed
+   - Results are cached to improve subsequent lookups
+   - UI indicators show which notes were computed on-demand
+   - This approach balances performance with comprehensive coverage
+
+4. **Adaptive Parameters**
+   - The priority index size has been increased from 5,000 to 10,000 files
+   - On-demand computation is configurable and can be disabled if needed
+   - Cache sizes are optimized for both pre-indexed and on-demand results
+
+## UI Enhancements
+
+1. **On-Demand Indicators**
+   - Added visual indicators for notes computed on-the-fly
+   - Information message explains when on-demand computation is being used
+   - Styling is consistent with the existing UI design
+   - Helps users understand which results came from different processing methods
+
+2. **Performance Optimizations**
+   - Improved caching for on-demand computations
+   - Smart shuffling of non-indexed files for better sampling
+   - Type-safe implementations for better reliability
+
 ## Future Considerations
 
 1. Consider implementing:
@@ -260,6 +311,7 @@ The combination of these tools helped streamline the development process and ens
    - Bidirectional linking option (add links to both notes)
    - Custom link text options
    - Link visualization in the graph view
+   - User-configurable priority index size
 
 2. Monitor:
    - Cache hit/miss rates
@@ -268,3 +320,5 @@ The combination of these tools helped streamline the development process and ens
    - Impact on Obsidian startup time
    - Quality of approximate matches
    - User feedback on the new similarity visualization
+   - Performance of on-demand computation
+   - Effectiveness of the priority-based indexing approach

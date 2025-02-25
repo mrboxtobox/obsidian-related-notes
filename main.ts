@@ -152,19 +152,47 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async getRelatedNotes(file: TFile): Promise<Array<RelatedNote>> {
+    // Get pre-indexed candidates
     const candidates = this.similarityProvider.getCandidateFiles(file);
 
-    // Calculate similarities for all candidates.
+    // Calculate similarities for all pre-indexed candidates
     const similarityPromises = candidates.map(async (candidate) => {
       const similarity = await this.similarityProvider.computeCappedCosineSimilarity(file, candidate);
       return {
         file: candidate,
         similarity: similarity.similarity,
-        commonTerms: similarity.commonTerms || [] // Pass common terms to UI
+        commonTerms: similarity.commonTerms || [], // Pass common terms to UI
+        isPreIndexed: true // Mark as pre-indexed
       };
     });
 
-    const relatedNotes = await Promise.all(similarityPromises);
+    let relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
+
+    // Check if we should compute on-demand suggestions
+    if (this.similarityProvider instanceof SimilarityProviderV2 &&
+      this.similarityProvider.isCorpusSampled() &&
+      this.similarityProvider.onDemandComputationEnabled) {
+
+      // Compute on-demand suggestions if the file isn't in the priority index
+      // or if we have fewer than 5 pre-indexed candidates
+      const shouldComputeOnDemand =
+        !this.similarityProvider.isFileIndexed(file) ||
+        candidates.length < 5;
+
+      if (shouldComputeOnDemand) {
+        // Compute related notes on-demand
+        const onDemandNotes = await this.similarityProvider.computeRelatedNotesOnDemand(file);
+
+        // Add on-demand notes to the results
+        relatedNotes = [
+          ...relatedNotes,
+          ...onDemandNotes.map(note => ({
+            ...note,
+            isPreIndexed: false // Mark as computed on-demand
+          }))
+        ];
+      }
+    }
 
     // Sort by similarity (highest first)
     const sortedNotes = relatedNotes.sort((a, b) => b.similarity - a.similarity);
