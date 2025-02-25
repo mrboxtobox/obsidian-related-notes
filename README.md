@@ -35,11 +35,12 @@ Uncover connections between notes in your vault using this plugin.
 
 The plugin automatically indexes your notes and updates the index when notes are modified. However, if you want to force a complete re-indexing of all notes:
 
-1. Open the Related Notes pane
-2. Click the refresh (↻) button in the top-right corner of the pane
-3. Wait for the re-indexing to complete (progress will be shown in the status bar)
+1. Open Obsidian Settings
+2. Navigate to the Related Notes plugin settings
+3. In the "Indexing" section, click the "Re-index All Notes" button
+4. Wait for the re-indexing to complete (progress will be shown in the status bar)
 
-This is useful when:
+Force re-indexing is useful when:
 - You've made significant changes to many notes
 - You suspect the index might be out of date
 - You want to ensure the most accurate related notes suggestions
@@ -58,19 +59,19 @@ The plugin now makes it easy to create links between related notes:
 
 ## Configuration
 
-The plugin features a streamlined settings interface with both basic and advanced options:
+The plugin features a streamlined settings interface:
 
 ### Basic Settings
 - **Maximum Suggestions**: Control how many related notes are displayed (1-20)
+- **Force Re-indexing**: Button to trigger a complete re-indexing of all notes
 
-### Advanced Settings
-Toggle advanced settings to access detailed configuration options:
+### Stats Toggle
+Enable to view detailed statistics about the plugin's operation:
 
-- **Similarity Provider**: Automatically switches between BM25 and MinHash LSH based on vault size (>10,000 notes), but can be manually overridden
-- **Debug Mode**: Enable detailed logging for troubleshooting
-- **Similarity Threshold**: Fine-tune the minimum similarity score (0-1)
-- **Processing Settings**: Configure batch sizes and delays
-- **Algorithm Parameters**: Detailed settings for BM25 and MinHash LSH
+- **Memory Usage**: See how much memory the plugin is using (vocabulary size, file vectors, signatures, cache sizes, etc.)
+- **NLP Metrics**: View natural language processing statistics (shingle size, document length, similarity provider, etc.)
+
+The re-indexing process now includes a visual progress indicator showing the current phase and completion percentage.
 
 ### Similarity Providers
 

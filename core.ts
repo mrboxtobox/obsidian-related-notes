@@ -177,6 +177,104 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   }
 
   /**
+   * Gets the size of the vocabulary
+   */
+  public getVocabularySize(): number {
+    return this.vocabulary.length;
+  }
+
+  /**
+   * Gets the number of file vectors
+   */
+  public getFileVectorsCount(): number {
+    return this.fileVectors.size;
+  }
+
+  /**
+   * Gets the number of signatures
+   */
+  public getSignaturesCount(): number {
+    return this.signatures.size;
+  }
+
+  /**
+   * Gets the number of related notes entries
+   */
+  public getRelatedNotesCount(): number {
+    return this.relatedNotes.size;
+  }
+
+  /**
+   * Gets the number of on-demand cache entries
+   */
+  public getOnDemandCacheCount(): number {
+    return this.onDemandCache.size;
+  }
+
+  /**
+   * Gets the average shingle size
+   */
+  public getAverageShingleSize(): number {
+    if (this.fileVectors.size === 0) return 0;
+
+    let totalSize = 0;
+    let count = 0;
+
+    for (const shingles of this.fileVectors.values()) {
+      totalSize += shingles.size;
+      count++;
+    }
+
+    return totalSize / count;
+  }
+
+  /**
+   * Gets the average document length
+   */
+  public getAverageDocLength(): number {
+    return this.getAverageShingleSize() * this.config.shingleSize;
+  }
+
+  /**
+   * Gets the number of LSH bands
+   */
+  public getLSHBands(): number {
+    return this.isCorpusSampled() ? this.config.largeBands : this.config.numBands;
+  }
+
+  /**
+   * Gets the number of rows per LSH band
+   */
+  public getLSHRowsPerBand(): number {
+    return this.isCorpusSampled() ? this.config.largeRowsPerBand : this.config.rowsPerBand;
+  }
+
+  /**
+   * Gets the average similarity score
+   */
+  public getAverageSimilarityScore(): number {
+    if (this.relatedNotes.size === 0) return 0;
+
+    // This is an approximation since we don't store the actual similarity scores
+    // in the relatedNotes map. We'll use a fixed value based on the threshold.
+    return this.isCorpusSampled() ?
+      this.config.minSimilarityThreshold * 1.5 :
+      this.similarityThreshold * 1.5;
+  }
+
+  /**
+   * Gets the number of on-demand computations performed
+   */
+  public getOnDemandComputationsCount(): number {
+    // This is an approximation since we don't track the actual count
+    let total = 0;
+    for (const cache of this.onDemandCache.values()) {
+      total += cache.size;
+    }
+    return total;
+  }
+
+  /**
    * Forces a complete re-indexing of all notes
    * This is useful when the user wants to ensure the index is up-to-date
    * @param onProgress Optional callback for progress reporting

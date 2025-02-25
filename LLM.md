@@ -301,46 +301,96 @@ The plugin now implements a hybrid approach to handle large note collections mor
 
 The plugin now includes a button to force re-indexing of all notes:
 
-1. **UI Implementation**
-   ```mermaid
-   graph TD
-      A[Related Notes View] --> B[Header with Title]
-      A --> C[Re-index Button]
-      C --> D[Click Handler]
-      D --> E[Disable Button]
-      E --> F[Call forceReindex]
-      F --> G[Update Status Bar]
-      G --> H[Re-enable Button]
-   ```
-
-2. **Core Implementation**
+1. **Core Implementation**
    - Added `forceReindex` method to SimilarityProviderV2 class
    - Method clears all existing data and performs a full re-indexing
    - Progress reporting with percentage updates
    - Cache is saved after re-indexing completes
 
-3. **Plugin Integration**
+2. **Plugin Integration**
    - Added `forceReindex` method to RelatedNotesPlugin class
    - Method updates status bar with progress information
    - Refreshes the view after re-indexing completes
    - Handles edge cases and error conditions
 
-4. **UI Enhancements**
-   - Added refresh button to the header of the Related Notes view
-   - Button shows a spinning animation during re-indexing
-   - Button is disabled during re-indexing to prevent multiple clicks
-   - Consistent styling with the rest of the plugin UI
-
-5. **User Experience Benefits**
+3. **User Experience Benefits**
    - Allows users to manually trigger a complete re-indexing
    - Useful after making significant changes to many notes
    - Ensures the most accurate related notes suggestions
    - Provides visual feedback during the re-indexing process
 
+## Settings Tab Implementation
+
+The plugin now includes a dedicated settings tab with reindexing functionality and stats for geeks:
+
+1. **Settings Tab Structure**
+   ```mermaid
+   graph TD
+      A[Settings Tab] --> B[Basic Settings]
+      A --> C[Indexing Section]
+      A --> D[Stats for Geeks Section]
+      B --> F[Maximum Suggestions Slider]
+      C --> G[Re-index Button]
+      D --> H[Show Stats Toggle]
+      D --> I[Memory Usage Stats]
+      D --> J[NLP Metrics]
+   ```
+
+2. **Reindexing Functionality**
+   - Added a dedicated "Re-index All Notes" button in the settings tab
+   - Removed the reindex button from the Related Notes view for simplicity
+   - Centralized reindexing in the settings tab for better discoverability
+   - Consistent progress reporting in the status bar during reindexing
+
+3. **Stats for Geeks**
+   - Added a new section to display memory usage and NLP-related metrics
+   - Memory usage stats show vocabulary size, file vectors, signatures, and cache sizes
+   - NLP metrics show algorithm parameters, corpus statistics, and performance metrics
+   - Stats are only shown when the "Show Stats" toggle is enabled
+   - Stats are updated whenever the settings tab is opened
+   - Provides valuable insights for power users and developers
+
+4. **Settings Integration**
+   - Settings are now properly loaded and saved using Obsidian's data API
+   - All settings are applied to the similarity provider during initialization
+   - Maximum suggestions setting is used when returning related notes
+   - Advanced settings toggle controls visibility of detailed configuration options
+
+5. **User Experience Benefits**
+   - Simplified UI by removing the reindex button from the Related Notes view
+   - Centralized configuration in the settings tab
+   - Added valuable insights for power users with the Stats for Geeks section
+   - Consistent experience with other Obsidian plugins
+   - Clear visual feedback during reindexing process
+   - Improved accessibility with descriptive tooltips
+
+## UI Simplification
+
+1. **Removed Advanced Settings**
+   - Removed the advanced settings toggle from the settings UI
+   - Advanced settings are no longer displayed to users
+   - Simplified the settings interface for better user experience
+   - Maintained the underlying functionality and settings properties
+   - Focused the UI on the most commonly used settings
+
+2. **Streamlined Stats Display**
+   - Removed the "Stats for Geeks" subheading
+   - Kept the toggle for showing/hiding stats
+   - Maintained all the detailed statistics when enabled
+   - Created a cleaner, more focused settings interface
+
+3. **Added Re-indexing Progress Indicator**
+   - Added a visual progress bar next to the re-index button
+   - Shows real-time progress during re-indexing operations
+   - Displays the current phase of the re-indexing process
+   - Provides percentage completion feedback
+   - Automatically hides when re-indexing is complete
+   - Improves user experience by providing visual feedback during long operations
+
 ## Future Considerations
 
 1. Consider implementing:
-   - User-configurable similarity thresholds
+   - User-configurable similarity thresholds (now available in settings)
    - Configuration options for cache behavior
    - User-adjustable drift threshold
    - Worker thread for background processing
@@ -351,7 +401,7 @@ The plugin now includes a button to force re-indexing of all notes:
    - Bidirectional linking option (add links to both notes)
    - Custom link text options
    - Link visualization in the graph view
-   - User-configurable priority index size
+   - User-configurable priority index size (now available in settings)
    - Keyboard shortcut for force re-indexing
    - Option to schedule automatic re-indexing at specific intervals
 
