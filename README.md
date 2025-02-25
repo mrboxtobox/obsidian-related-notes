@@ -10,6 +10,9 @@ Uncover connections between notes in your vault using this plugin.
 - 🔗 One-click linking between related notes
 - 📈 Visual quality indicators for similarity matches
 - ⚡ Fully local processing with complete data privacy
+- 🚀 Hybrid indexing for handling large vaults with tens of thousands of notes
+- 🧠 Smart prioritization of frequently accessed and recently created notes
+- ⏱️ On-demand computation for comprehensive coverage of your entire vault
 
 ## Installation
 
@@ -27,6 +30,19 @@ Uncover connections between notes in your vault using this plugin.
 2. The plugin will automatically show related notes for your currently active note
 3. Click the "Link" button to create a link to a related note
 4. You can also use the command palette and search for "Toggle related notes"
+
+### Force Re-indexing
+
+The plugin automatically indexes your notes and updates the index when notes are modified. However, if you want to force a complete re-indexing of all notes:
+
+1. Open the Related Notes pane
+2. Click the refresh (↻) button in the top-right corner of the pane
+3. Wait for the re-indexing to complete (progress will be shown in the status bar)
+
+This is useful when:
+- You've made significant changes to many notes
+- You suspect the index might be out of date
+- You want to ensure the most accurate related notes suggestions
 
 ### Creating Links Between Related Notes
 
@@ -81,9 +97,26 @@ The plugin automatically selects the optimal similarity provider based on your v
 - Advanced configuration available in settings
 - No external dependencies or setup required
 
+### Hybrid Indexing for Large Vaults
+
+For users with extensive note collections (tens of thousands of notes), the plugin now implements a hybrid indexing approach:
+
+- **Priority-Based Indexing**: The plugin intelligently prioritizes which notes to pre-index based on:
+  - **Access Frequency**: Notes you open frequently are prioritized
+  - **Creation Time**: Recently created notes are given higher priority
+  - **Configurable Limit**: Up to 10,000 notes are pre-indexed (increased from previous 5,000 limit)
+
+- **On-Demand Computation**: For notes outside the priority index:
+  - **Real-Time Processing**: Similarity is computed when you view the note
+  - **Smart Caching**: Results are cached to improve performance on subsequent views
+  - **Visual Indicators**: UI shows which notes were computed on-demand
+  - **Balanced Approach**: Combines performance with comprehensive coverage
+
+This hybrid approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
+
 ### Adaptive Similarity for Large Corpora
 
-For users with large note collections, the plugin now features an adaptive similarity system:
+For users with large note collections, the plugin also features an adaptive similarity system:
 
 - **Automatic Detection**: Identifies when you're working with a large corpus
 - **Expanded Results**: Shows up to 10 related notes (instead of 5) for large collections

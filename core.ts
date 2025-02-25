@@ -176,6 +176,44 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     }
   }
 
+  /**
+   * Forces a complete re-indexing of all notes
+   * This is useful when the user wants to ensure the index is up-to-date
+   * @param onProgress Optional callback for progress reporting
+   */
+  public async forceReindex(onProgress?: (processed: number, total: number) => void): Promise<void> {
+    // Clear existing data
+    this.vocabulary.length = 0;
+    this.fileVectors.clear();
+    this.signatures.clear();
+    this.relatedNotes.clear();
+    this.fileMetadata.clear();
+    this.onDemandCache.clear();
+
+    // Set cache as dirty to ensure it's saved after reindexing
+    this.cacheDirty = true;
+
+    // Perform full initialization
+    await this.buildVocabularyAndVectors((processed, total) => {
+      onProgress?.(Math.floor(processed / total * 25), 100);
+    });
+
+    await this.generateHashFunctions((processed, total) => {
+      onProgress?.(25 + Math.floor(processed / total * 25), 100);
+    });
+
+    await this.createSignatures((processed, total) => {
+      onProgress?.(50 + Math.floor(processed / total * 25), 100);
+    });
+
+    await this.processCandidatePairs((processed, total) => {
+      onProgress?.(75 + Math.floor(processed / total * 25), 100);
+    });
+
+    // Save to cache
+    await this.saveToCache();
+  }
+
   private readonly vocabulary: string[] = [];
   private readonly fileVectors = new Map<string, Set<string>>();
   private readonly signatures = new Map<string, number[]>();
@@ -197,6 +235,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
   private readonly priorityIndexSize: number;
   private readonly onDemandCacheSize: number;
   public readonly onDemandComputationEnabled: boolean;
+  private readonly disableIncrementalUpdates: boolean;
 
   constructor(
     private readonly vault: Vault,
@@ -213,7 +252,8 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       largeCorpusThreshold: 1000, // When to consider a corpus "large"
       minSimilarityThreshold: 0.15, // Lower threshold for large corpora
       onDemandCacheSize: 1000, // Number of on-demand computations to cache
-      onDemandComputationEnabled: true // Enable on-demand computation
+      onDemandComputationEnabled: true, // Enable on-demand computation
+      disableIncrementalUpdates: false // When true, only reindex on application restart
     }
   ) {
     // Dynamically adjust LSH parameters based on corpus size
@@ -226,6 +266,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     this.priorityIndexSize = config.priorityIndexSize;
     this.onDemandCacheSize = config.onDemandCacheSize;
     this.onDemandComputationEnabled = config.onDemandComputationEnabled;
+    this.disableIncrementalUpdates = config.disableIncrementalUpdates;
   }
 
   getCandidateFiles(file: TFile): TFile[] {
@@ -302,7 +343,10 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       const totalFiles = this.vault.getMarkdownFiles().length;
       const changedPercentage = changedFiles.length / totalFiles;
 
-      if (changedFiles.length === 0 || (changedPercentage < this.driftThreshold && Date.now() - this.lastCacheUpdate < this.cacheUpdateInterval)) {
+      // Skip incremental updates if disabled or if no changes/within drift threshold
+      if (this.disableIncrementalUpdates ||
+        changedFiles.length === 0 ||
+        (changedPercentage < this.driftThreshold && Date.now() - this.lastCacheUpdate < this.cacheUpdateInterval)) {
         // No changes or within drift threshold and update interval - use cache as is
         // Smoothly progress from 25% to 100%
         for (let i = 26; i <= 100; i += 1) {
