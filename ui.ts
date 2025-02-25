@@ -181,17 +181,6 @@ export class RelatedNotesView extends ItemView {
       return;
     }
 
-    // Check if we're showing approximate matches (more than 5 notes)
-    const isShowingApproximateMatches = notes.length > 5;
-
-    if (isShowingApproximateMatches) {
-      const infoEl = contentEl.createDiv({ cls: 'related-notes-info' });
-      infoEl.createEl('p', {
-        text: 'Showing approximate matches for your large note collection',
-        cls: 'related-notes-info-text'
-      });
-    }
-
     // Check if we have any on-demand computed notes
     const hasOnDemandNotes = notes.some(note => note.isPreIndexed === false || note.computedOnDemand);
 

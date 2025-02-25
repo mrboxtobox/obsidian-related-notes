@@ -65,6 +65,12 @@
   cursor: wait;
 }
 
+/* Disabled button styles */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 @keyframes spin {
   0% {
     transform: rotate(0deg);
