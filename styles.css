@@ -124,3 +124,40 @@
   font-size: 14px;
   font-style: italic;
 }
+
+/* Item container styles */
+.related-note-item-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+/* Actions container styles */
+.related-note-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+/* Link button styles */
+.related-note-link-button {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.related-note-link-button:hover {
+  background-color: var(--interactive-accent-hover);
+}
+
+.related-note-link-button.linked {
+  background-color: var(--background-modifier-border);
+  color: var(--text-muted);
+  cursor: default;
+}

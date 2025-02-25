@@ -128,12 +128,13 @@ The plugin now implements adaptive similarity detection for large note collectio
 
 ## UI Improvements
 
-1. **Simplified Related Notes View**
-   - Removed all similarity indicators for a cleaner interface
-   - Focused on presenting just the note names without distractions
-   - Created a minimalist design that prioritizes content over metadata
-   - Improved visual clarity by eliminating visual noise
-   - Enhanced the user experience with a streamlined presentation
+1. **Enhanced Related Notes View with Common Terms**
+   - Added common terms display to show why notes are related
+   - Each related note now shows up to 5 common terms as tags
+   - Implemented a clean, tag-based design for common terms
+   - Maintained a minimalist design while adding valuable context
+   - Enhanced user understanding of similarity relationships
+   - Improved visual clarity with subtle tag styling
 
 2. **Improved Status Bar Progress Indicator**
    - Simplified progress reporting with clean text-based format
@@ -147,6 +148,10 @@ The plugin now implements adaptive similarity detection for large note collectio
    graph TD
       A[Related Note Item] --> B[Link Container]
       B --> C[Note Name]
+      A --> D[Terms Container]
+      D --> E[Terms Label]
+      D --> F[Terms List]
+      F --> G[Term Tags]
    ```
 
 4. **Status Bar Progress Components**
@@ -189,6 +194,58 @@ The plugin now implements adaptive similarity detection for large note collectio
    - Added a check to ensure the band exists before trying to hash it, preventing the error when signatures have different lengths
    - This improves stability when comparing notes with varying signature lengths
 
+## Development Tools
+
+This plugin's UI improvements were developed with the assistance of:
+
+- **Cline**: AI-powered coding assistant
+- **Claude**: Anthropic's AI assistant
+
+The combination of these tools helped streamline the development process and ensure consistent UI styling across the plugin.
+
+## Link Creation Feature
+
+1. **Link Button Implementation**
+   - Added a "Link" button for each related note
+   - Implemented functionality to check if links already exist between notes
+   - Created a system to add wiki-style links to notes
+   - Added visual feedback when links are created
+   - Disabled button for already linked notes
+
+2. **Enhanced Tokenization**
+   - Implemented a sophisticated tokenization system
+   - Expanded stop words list with comprehensive categorization
+   - Added special handling for code blocks and technical terms
+   - Preserved URLs and file paths in their original form
+   - Implemented simple stemming to group related word forms
+   - Better handling of contractions and possessives
+   - Improved special character handling for compound words
+
+3. **Link Management**
+   ```mermaid
+   graph TD
+      A[Check Existing Links] -->|No Link| B[Show Link Button]
+      A -->|Link Exists| C[Show Linked Status]
+      B --> D[User Clicks Button]
+      D --> E[Add Link to Note]
+      E --> F[Update Button State]
+   ```
+
+4. **Link Creation Logic**
+   - Checks for existing links in both directions
+   - Creates a "Related Notes" section if it doesn't exist
+   - Adds links to existing "Related Notes" section if present
+   - Uses Obsidian's wiki-link format: [[Note Name]]
+   - Preserves existing content and structure
+
+5. **User Experience Benefits**
+   - Users can quickly create links between related notes
+   - Reduces manual work of creating connections
+   - Maintains a clean interface with clear visual feedback
+   - Preserves existing note structure
+   - Enhances the knowledge graph with meaningful connections
+   - Improves navigation between conceptually related content
+
 ## Future Considerations
 
 1. Consider implementing:
@@ -200,6 +257,9 @@ The plugin now implements adaptive similarity detection for large note collectio
    - UI indicator for approximate matches
    - Custom CSS classes instead of inline styles for better theme compatibility
    - Accessibility settings for color blind users
+   - Bidirectional linking option (add links to both notes)
+   - Custom link text options
+   - Link visualization in the graph view
 
 2. Monitor:
    - Cache hit/miss rates

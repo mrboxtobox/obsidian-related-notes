@@ -159,7 +159,8 @@ export default class RelatedNotesPlugin extends Plugin {
       const similarity = await this.similarityProvider.computeCappedCosineSimilarity(file, candidate);
       return {
         file: candidate,
-        similarity: similarity.similarity
+        similarity: similarity.similarity,
+        commonTerms: similarity.commonTerms || [] // Pass common terms to UI
       };
     });
 
