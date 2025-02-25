@@ -209,6 +209,40 @@ The plugin now implements adaptive similarity detection for large note collectio
    - This fix ensures that cancellation errors are properly caught and handled
    - Improves the user experience when cancelling a re-indexing operation
 
+4. **Fixed Duplicate Related Notes Issue**
+   - Fixed an issue where duplicate notes were appearing in the related notes list
+   - The problem occurred when the same notes were returned from both pre-indexed candidates and on-demand computation
+   - Implemented a tracking system using a Set to keep track of already processed file paths
+   - Modified the `getRelatedNotes` method in `main.ts` to filter out duplicates
+   - Enhanced the `computeRelatedNotesOnDemand` method in `core.ts` to accept a set of file paths to exclude
+   - This ensures each related note only appears once in the results, improving the user experience
+   ```mermaid
+   graph TD
+      A[Get Pre-indexed Candidates] --> B[Track Processed File Paths]
+      B --> C[Compute On-demand Notes]
+      C --> D[Pass Exclusion Set to On-demand Computation]
+      D --> E[Filter Out Already Processed Files]
+      E --> F[Combine Results]
+      F --> G[Sort and Return Unique Results]
+   ```
+
+5. **Fixed Cancel Button Disappearing When Toggling Stats**
+   - Fixed an issue where the cancel button would disappear when toggling the "Show Stats" option during re-indexing
+   - The problem occurred because the settings tab's display method recreated all UI elements, including the cancel button which was initially hidden
+   - Modified the settings tab to check if re-indexing is in progress when refreshing the display
+   - If re-indexing is in progress, the cancel button is now shown and properly configured
+   - Added a click handler to the cancel button when the display is refreshed during re-indexing
+   - This ensures the cancel button remains visible and functional even if the user toggles stats during re-indexing
+   ```mermaid
+   graph TD
+      A[Toggle Show Stats] --> B[Refresh Display]
+      B --> C{Is Re-indexing in Progress?}
+      C -->|Yes| D[Show Cancel Button]
+      C -->|No| E[Hide Cancel Button]
+      D --> F[Add Click Handler to Cancel Button]
+      F --> G[Ensure Button Cancels Re-indexing]
+   ```
+
 ## Development Tools
 
 This plugin's UI improvements were developed with the assistance of:
@@ -495,6 +529,42 @@ The plugin should implement strategies to optimize long tasks and improve main t
    - Ensure UI updates and animations remain smooth
    - Allow user interactions to be processed promptly
    - Maintain progress reporting during long operations
+
+## Re-indexing Protection
+
+The plugin now prevents multiple re-indexing operations from running simultaneously:
+
+1. **Comprehensive Indexing Protection**
+   - Added checks to prevent starting a new re-indexing operation when:
+     - Another re-indexing operation is already in progress
+     - Initial indexing is still in progress
+   - Status bar shows clear, context-specific messages for each scenario
+   - Prevents potential data corruption or inconsistent states from concurrent indexing operations
+   - Improves user experience by providing clear feedback about the current operation status
+
+2. **User Experience Benefits**
+   - Prevents accidental double-clicking of the re-index button
+   - Provides clear feedback when re-indexing is already in progress
+   - Maintains system stability during long-running operations
+   - Ensures the re-indexing process completes properly before starting a new one
+   - Disables the re-index button in settings when indexing is in progress
+   - Disables the re-index button when on-demand computation is turned off
+   - Shows helpful tooltips explaining why the button is disabled
+
+3. **Implementation Details**
+   ```mermaid
+   graph TD
+      A[User Clicks Re-index] --> B{Already Re-indexing?}
+      B -->|Yes| C[Show Already Re-indexing Message]
+      B -->|No| D{Initial Indexing in Progress?}
+      D -->|Yes| E[Show Initial Indexing Message]
+      D -->|No| F{On-demand Computation Enabled?}
+      F -->|No| G[Show Disabled Message]
+      F -->|Yes| H[Start Re-indexing Process]
+      H --> I[Set isReindexing Flag]
+      I --> J[Perform Re-indexing]
+      J --> K[Reset isReindexing Flag]
+   ```
 
 ## Future Considerations
 

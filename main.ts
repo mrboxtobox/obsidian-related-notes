@@ -130,6 +130,17 @@ export default class RelatedNotesPlugin extends Plugin {
       this.statusBarItem.setText(message);
     });
 
+    // Clear on-demand cache after initialization to ensure fresh data
+    if (this.similarityProvider instanceof SimilarityProviderV2) {
+      const provider = this.similarityProvider as SimilarityProviderV2;
+      // The on-demand cache is already cleared during initialization, but we'll ensure it's clean
+      // by updating file access times for all files to prioritize them correctly
+      const allFiles = this.app.vault.getMarkdownFiles();
+      for (const file of allFiles) {
+        provider.updateFileAccessTime(file);
+      }
+    }
+
     if (this.similarityProvider instanceof SimilarityProviderV2 && this.similarityProvider.isCorpusSampled()) {
       this.statusBarItem.setText("⚠️ Using a sample of your notes");
       this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
@@ -149,6 +160,24 @@ export default class RelatedNotesPlugin extends Plugin {
    */
   public async forceReindex(): Promise<void> {
     if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
+      return;
+    }
+
+    // Check if already reindexing or initial indexing is still in progress
+    if (this.isReindexing) {
+      this.statusBarItem.setText("Already re-indexing, please wait...");
+      setTimeout(() => {
+        this.statusBarItem.setText("Re-indexing in progress...");
+      }, 2000);
+      return;
+    }
+
+    // Check if initial indexing is still in progress
+    if (!this.isInitialized) {
+      this.statusBarItem.setText("Initial indexing in progress, please wait...");
+      setTimeout(() => {
+        this.statusBarItem.setText("Indexing in progress...");
+      }, 2000);
       return;
     }
 
@@ -322,6 +351,13 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   /**
+   * Checks if re-indexing is currently in progress
+   */
+  public isReindexingInProgress(): boolean {
+    return this.isReindexing;
+  }
+
+  /**
    * Gets memory usage statistics from the similarity provider
    */
   public getMemoryStats(): MemoryStats {
@@ -455,6 +491,11 @@ export default class RelatedNotesPlugin extends Plugin {
 
     let relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
 
+    // Track files we've already processed to prevent duplicates
+    const processedFilePaths = new Set<string>(
+      relatedNotes.map(note => note.file.path)
+    );
+
     // Check if we should compute on-demand suggestions
     if (this.similarityProvider instanceof SimilarityProviderV2 &&
       this.similarityProvider.isCorpusSampled() &&
@@ -467,10 +508,14 @@ export default class RelatedNotesPlugin extends Plugin {
         candidates.length < 5;
 
       if (shouldComputeOnDemand) {
-        // Compute related notes on-demand
-        const onDemandNotes = await this.similarityProvider.computeRelatedNotesOnDemand(file);
+        // Compute related notes on-demand, passing the set of already processed file paths
+        // to avoid computing similarity for files we've already processed
+        const onDemandNotes = await this.similarityProvider.computeRelatedNotesOnDemand(
+          file,
+          10, // Default limit
+          processedFilePaths // Pass the set of already processed file paths
+        );
 
-        // Add on-demand notes to the results
         relatedNotes = [
           ...relatedNotes,
           ...onDemandNotes.map(note => ({

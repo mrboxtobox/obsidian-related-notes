@@ -83,12 +83,46 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
       cls: 'mod-cta'
     });
 
-    // Add cancel button (initially hidden)
+    // Disable the button if indexing is already in progress, initialization is not complete,
+    // or on-demand computation is disabled
+    if (this.plugin.isReindexingInProgress() || !this.plugin.isInitializationComplete() || !this.plugin.settings.onDemandComputationEnabled) {
+      this.reindexButton.disabled = true;
+
+      // Set appropriate tooltip based on the reason for disabling
+      if (this.plugin.isReindexingInProgress()) {
+        this.reindexButton.title = "Re-indexing is already in progress";
+      } else if (!this.plugin.isInitializationComplete()) {
+        this.reindexButton.title = "Initial indexing is still in progress";
+      } else if (!this.plugin.settings.onDemandComputationEnabled) {
+        this.reindexButton.title = "Re-indexing is disabled when on-demand computation is turned off";
+      }
+    }
+
+    // Add cancel button (initially hidden unless re-indexing is in progress)
     const cancelButton = buttonContainer.createEl('button', {
       text: 'Cancel',
       cls: 'mod-warning'
     });
-    cancelButton.style.display = 'none';
+
+    // Show cancel button if re-indexing is in progress
+    if (this.plugin.isReindexingInProgress()) {
+      cancelButton.style.display = 'inline-block';
+      this.reindexButton!.disabled = true;
+      this.reindexButton!.setText('Re-indexing...');
+
+      // Add click handler for cancel button when display is refreshed during re-indexing
+      cancelButton.addEventListener('click', () => {
+        // Handle the actual cancellation in the main plugin
+        this.plugin.cancelReindex();
+
+        // Reset UI
+        this.reindexButton!.disabled = false;
+        this.reindexButton!.setText('Re-index All Notes');
+        cancelButton.style.display = 'none';
+      });
+    } else {
+      cancelButton.style.display = 'none';
+    }
 
     // Add click handler for reindex button
     this.reindexButton.addEventListener('click', async () => {

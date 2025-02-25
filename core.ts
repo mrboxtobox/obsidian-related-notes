@@ -297,6 +297,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     this.relatedNotes.clear();
     this.fileMetadata.clear();
     this.onDemandCache.clear();
+    this.fileAccessTimes.clear(); // Clear file access times to reset priority
 
     // Set cache as dirty to ensure it's saved after reindexing
     this.cacheDirty = true;
@@ -1118,8 +1119,15 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
   /**
    * Computes related notes on-the-fly for a file that isn't in the priority index
+   * @param file The file to find related notes for
+   * @param limit Maximum number of notes to return
+   * @param excludeFilePaths Optional set of file paths to exclude from results
    */
-  async computeRelatedNotesOnDemand(file: TFile, limit: number = 10): Promise<RelatedNote[]> {
+  async computeRelatedNotesOnDemand(
+    file: TFile,
+    limit: number = 10,
+    excludeFilePaths: Set<string> = new Set()
+  ): Promise<RelatedNote[]> {
     // Update access time for this file
     this.updateFileAccessTime(file);
 
@@ -1135,7 +1143,8 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
     // Add files from the priority index first
     for (const candidateFile of prioritizedFiles) {
-      if (candidateFile.path === file.path) continue;
+      // Skip the current file and any excluded files
+      if (candidateFile.path === file.path || excludeFilePaths.has(candidateFile.path)) continue;
 
       if (this.isFileIndexed(candidateFile)) {
         filesToCompare.push(candidateFile);
@@ -1147,7 +1156,9 @@ export class SimilarityProviderV2 implements SimilarityProvider {
 
     // Add some random files that aren't in the priority index
     const nonIndexedFiles = allFiles.filter(f =>
-      f.path !== file.path && !this.isFileIndexed(f)
+      f.path !== file.path &&
+      !this.isFileIndexed(f) &&
+      !excludeFilePaths.has(f.path)
     );
 
     // Shuffle and take a sample
