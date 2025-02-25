@@ -14,10 +14,12 @@ const CACHE_VERSION = 1;
 export interface RelatedNote {
   file: TFile;
   similarity: number;
+  commonTerms?: string[]; // Common terms between the notes
 }
 
 export interface SimilarityInfo {
   similarity: number;
+  commonTerms?: string[]; // Add common terms to the similarity info
 }
 
 export interface SimilarityProvider {
@@ -35,35 +37,130 @@ export interface CacheData {
   fileMetadata: Record<string, { mtime: number; size: number }>;
 }
 
+/**
+ * Enhanced tokenization function that processes text into meaningful terms
+ * Handles contractions, possessives, stop words, and special characters
+ * Preserves technical terms, code identifiers, and domain-specific vocabulary
+ */
 export function tokenize(text: string): string {
   if (!text) return '';
 
+  // Expanded stop words list
   const stopWords = new Set([
-    'a', 'an', 'the', 'in', 'on', 'at', 'with', 'by', 'from', 'up', 'about',
-    'into', 'over', 'after', 'and', 'but', 'or', 'so', 'am', 'is', 'are',
-    'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did'
+    // Articles
+    'a', 'an', 'the',
+    // Prepositions
+    'in', 'on', 'at', 'with', 'by', 'from', 'to', 'for', 'of', 'about', 'as',
+    'into', 'over', 'under', 'above', 'below', 'between', 'among', 'through',
+    // Conjunctions
+    'and', 'but', 'or', 'nor', 'so', 'yet', 'after', 'although', 'because',
+    // Common verbs
+    'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'shall', 'should',
+    'can', 'could', 'may', 'might', 'must',
+    // Pronouns
+    'i', 'me', 'my', 'mine', 'myself',
+    'you', 'your', 'yours', 'yourself',
+    'he', 'him', 'his', 'himself',
+    'she', 'her', 'hers', 'herself',
+    'it', 'its', 'itself',
+    'we', 'us', 'our', 'ours', 'ourselves',
+    'they', 'them', 'their', 'theirs', 'themselves',
+    'this', 'that', 'these', 'those',
+    // Other common words
+    'what', 'which', 'who', 'whom', 'whose',
+    'when', 'where', 'why', 'how',
+    'all', 'any', 'both', 'each', 'few', 'more', 'most', 'some',
+    'no', 'not', 'only', 'than', 'too', 'very'
   ]);
 
+  // More comprehensive contractions handling
   const contractions = new Map([
-    ["n't", " not"], ["'re", " are"], ["'s", " is"],
-    ["'d", " would"], ["'ll", " will"], ["'ve", " have"]
+    // Negations
+    ["n't", " not"],
+    // Verb forms
+    ["'re", " are"], ["'m", " am"], ["'s", " is"], ["'ve", " have"],
+    ["'d", " would"], ["'ll", " will"],
+    // Special cases
+    ["'clock", " oclock"], ["o'clock", "oclock"],
+    ["'cause", " because"], ["'n'", " and "],
+    // Possessives - preserve the base word
+    ["s'", "s"], ["s's", "s"]
   ]);
 
   try {
-    // Replace contractions
-    let processed = text.replace(
+    // Step 1: Preserve code identifiers and technical terms
+    // Replace code blocks with placeholders
+    const codeBlocks: string[] = [];
+    let codeBlockCounter = 0;
+
+    // Replace inline code and code blocks with placeholders
+    let processed = text.replace(/`([^`]+)`|```[\s\S]+?```/g, (match) => {
+      const placeholder = `__CODE_BLOCK_${codeBlockCounter}__`;
+      codeBlocks.push(match);
+      codeBlockCounter++;
+      return placeholder;
+    });
+
+    // Step 2: Handle URLs and file paths - preserve them
+    const urls: string[] = [];
+    let urlCounter = 0;
+    processed = processed.replace(/https?:\/\/[^\s]+|file:\/\/[^\s]+|[\w\/\.-]+\.(md|txt|js|ts|html|css|json|py|java|rb|c|cpp|h|go|rs|php)/g, (match) => {
+      const placeholder = `__URL_${urlCounter}__`;
+      urls.push(match);
+      urlCounter++;
+      return placeholder;
+    });
+
+    // Step 3: Handle contractions
+    processed = processed.replace(
       new RegExp(Object.keys(contractions).join('|'), 'g'),
       match => contractions.get(match) || match
     );
 
-    return processed
-      .toLowerCase()
-      // Remove special characters and extra spaces
-      .replace(/[^\w\s-]/g, ' ')
-      .split(/\s+/)
-      // Filter stop words and short terms
-      .filter(word => word.length > 2 && !stopWords.has(word))
-      .join(' ');
+    // Step 4: Handle special characters and convert to lowercase
+    processed = processed.toLowerCase()
+      // Keep hyphens and underscores for compound words and code identifiers
+      .replace(/[^\w\s\-_]/g, ' ')
+      // Convert multiple spaces to single space
+      .replace(/\s+/g, ' ');
+
+    // Step 5: Split into words, filter stop words and short terms
+    let tokens = processed.split(/\s+/)
+      .filter(word => word.length > 2 && !stopWords.has(word));
+
+    // Step 6: Restore code blocks and URLs
+    tokens = tokens.map(token => {
+      if (token.startsWith('__CODE_BLOCK_')) {
+        const index = parseInt(token.replace('__CODE_BLOCK_', '').replace('__', ''));
+        return codeBlocks[index].replace(/`|```/g, '').trim();
+      }
+      if (token.startsWith('__URL_')) {
+        const index = parseInt(token.replace('__URL_', '').replace('__', ''));
+        return urls[index];
+      }
+      return token;
+    });
+
+    // Step 7: Simple stemming for common suffixes
+    tokens = tokens.map(word => {
+      // Skip URLs, code blocks, and technical terms
+      if (word.includes('/') || word.includes('.') ||
+        word.includes('_') || word.includes('-')) {
+        return word;
+      }
+
+      // Simple stemming rules
+      if (word.endsWith('ing') && word.length > 5) return word.slice(0, -3);
+      if (word.endsWith('ed') && word.length > 4) return word.slice(0, -2);
+      if (word.endsWith('s') && !word.endsWith('ss') && word.length > 3) return word.slice(0, -1);
+      if (word.endsWith('es') && word.length > 4) return word.slice(0, -2);
+      if (word.endsWith('ies') && word.length > 5) return word.slice(0, -3) + 'y';
+      if (word.endsWith('ly') && word.length > 4) return word.slice(0, -2);
+      return word;
+    });
+
+    return tokens.join(' ');
   } catch (error) {
     console.error('Error during tokenization:', error);
     return '';
@@ -663,53 +760,76 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       ? this.config.minSimilarityThreshold
       : this.similarityThreshold;
 
-    // Check if we have cached vectors for both files
-    const vector1 = this.fileVectors.get(file1.name);
-    const vector2 = this.fileVectors.get(file2.name);
-
-    if (vector1 && vector2) {
-      // Use cached vectors for faster similarity computation
-      const result = this.calculateJaccardSimilarity(vector1, vector2);
-
-      // Apply adaptive threshold for large corpora
-      if (isLargeCorpus && result.similarity > 0) {
-        // Boost similarity for large corpora to ensure we get results
-        // This helps show approximate matches that would otherwise be filtered out
-        const boostedSimilarity = Math.min(1, result.similarity * 1.2);
-        return { similarity: boostedSimilarity };
-      }
-
-      return result;
-    }
-
-    // Fall back to full computation if vectors not cached
     try {
+      // Always read the file contents to extract common words
       const [content1, content2] = await Promise.all([
         this.vault.cachedRead(file1),
         this.vault.cachedRead(file2)
       ]);
 
-      // Use more efficient tokenization with fewer tokens
+      // Tokenize the content to get actual words
       const tokens1 = tokenize(content1).split(' ');
       const tokens2 = tokenize(content2).split(' ');
 
+      // Build frequency maps for the tokens
       const freqMap1 = this.buildFrequencyMap(tokens1);
       const freqMap2 = this.buildFrequencyMap(tokens2);
 
-      const result = this.calculateCosineSimilarity(freqMap1, freqMap2);
+      // Check if we have cached vectors for both files (for faster similarity calculation)
+      const vector1 = this.fileVectors.get(file1.name);
+      const vector2 = this.fileVectors.get(file2.name);
 
-      // Apply adaptive threshold for large corpora
-      if (isLargeCorpus && result.similarity > 0) {
-        // Boost similarity for large corpora
-        const boostedSimilarity = Math.min(1, result.similarity * 1.2);
-        return { similarity: boostedSimilarity };
+      let similarity = 0;
+
+      if (vector1 && vector2) {
+        // Use cached vectors for faster similarity computation
+        const jaccardResult = this.calculateJaccardSimilarity(vector1, vector2);
+        similarity = jaccardResult.similarity;
+      } else {
+        // Fall back to cosine similarity if vectors aren't cached
+        const cosineResult = this.calculateCosineSimilarity(freqMap1, freqMap2);
+        similarity = cosineResult.similarity;
       }
 
-      return result;
+      // Apply adaptive threshold for large corpora
+      if (isLargeCorpus && similarity > 0) {
+        // Boost similarity for large corpora
+        similarity = Math.min(1, similarity * 1.2);
+      }
+
+      // Extract common terms from the actual words (not shingles)
+      const commonTerms = this.extractCommonTerms(freqMap1, freqMap2);
+
+      return {
+        similarity,
+        commonTerms
+      };
     } catch (error) {
       console.error('Error computing similarity:', error);
-      return { similarity: 0 };
+      return { similarity: 0, commonTerms: [] };
     }
+  }
+
+  private extractCommonTerms(
+    freqMap1: Map<string, number>,
+    freqMap2: Map<string, number>
+  ): string[] {
+    // Find terms that appear in both documents
+    const termScores: { term: string, score: number }[] = [];
+
+    for (const [term, freq1] of freqMap1.entries()) {
+      const freq2 = freqMap2.get(term) || 0;
+      if (freq2 > 0) {
+        // Score is the product of frequencies
+        termScores.push({ term, score: freq1 * freq2 });
+      }
+    }
+
+    // Sort terms by their score (highest first) and take top 10
+    return termScores
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map(item => item.term);
   }
 
   private calculateJaccardSimilarity(
@@ -726,11 +846,15 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     const union = new Set([...set1Array, ...set2Array]);
 
     if (union.size === 0) {
-      return { similarity: 0 };
+      return { similarity: 0, commonTerms: [] };
     }
 
+    // Extract common terms (up to 10 most significant)
+    const commonTerms = intersection.slice(0, 10);
+
     return {
-      similarity: intersection.length / union.size
+      similarity: intersection.length / union.size,
+      commonTerms: commonTerms
     };
   }
 
@@ -754,6 +878,9 @@ export class SimilarityProviderV2 implements SimilarityProvider {
     let norm1 = 0;
     let norm2 = 0;
 
+    // Track common terms and their combined frequency
+    const termScores: { term: string, score: number }[] = [];
+
     for (const term of uniqueTerms) {
       const freq1 = freqMap1.get(term) || 0;
       const freq2 = freqMap2.get(term) || 0;
@@ -761,14 +888,27 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       dotProduct += freq1 * freq2;
       norm1 += freq1 * freq1;
       norm2 += freq2 * freq2;
+
+      // If term appears in both documents, add to common terms
+      if (freq1 > 0 && freq2 > 0) {
+        // Score is the product of frequencies (same as contribution to dot product)
+        termScores.push({ term, score: freq1 * freq2 });
+      }
     }
 
     if (norm1 === 0 || norm2 === 0) {
-      return { similarity: 0 };
+      return { similarity: 0, commonTerms: [] };
     }
 
+    // Sort terms by their score (highest first) and take top 10
+    const topCommonTerms = termScores
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10)
+      .map(item => item.term);
+
     return {
-      similarity: dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2))
+      similarity: dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2)),
+      commonTerms: topCommonTerms
     };
   }
 }

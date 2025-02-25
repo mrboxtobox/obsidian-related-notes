@@ -7,6 +7,7 @@ Uncover connections between notes in your vault using this plugin.
 - 🔍 Automatically analyzes note content using proven similarity algorithms
 - 📊 MinHash LSH + BM25 (Best Matching 25) for fast term-frequency based matching
 - 🔄 Adaptive similarity detection for large note collections
+- 🔗 One-click linking between related notes
 - 📈 Visual quality indicators for similarity matches
 - ⚡ Fully local processing with complete data privacy
 
@@ -24,7 +25,20 @@ Uncover connections between notes in your vault using this plugin.
 
 1. Click the lightning (⚡️) icon in the ribbon to open the Related Notes pane
 2. The plugin will automatically show related notes for your currently active note
-3. You can also use the command palette and search for "Toggle related notes"
+3. Click the "Link" button to create a link to a related note
+4. You can also use the command palette and search for "Toggle related notes"
+
+### Creating Links Between Related Notes
+
+The plugin now makes it easy to create links between related notes:
+
+- **One-Click Linking**: Add a link to a related note with a single click
+- **Smart Link Detection**: The plugin checks if links already exist
+- **Visual Feedback**: Clear indication of linked and unlinked notes
+- **Structured Organization**: Links are added to a "Related Notes" section
+- **Preserves Note Structure**: Adds to existing sections or creates new ones as needed
+- **Enhances Knowledge Graph**: Strengthens connections between related concepts
+- **Improves Navigation**: Makes it easier to move between conceptually related content
 
 ## Configuration
 

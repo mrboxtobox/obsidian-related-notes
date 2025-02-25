@@ -65,6 +65,60 @@ export class RelatedNotesView extends ItemView {
     container.appendChild(fragment);
   }
 
+  /**
+   * Checks if a link to the target file exists in the source file content
+   */
+  private async hasLink(sourceFile: TFile, targetFile: TFile): Promise<boolean> {
+    try {
+      const content = await this.app.vault.cachedRead(sourceFile);
+
+      // Check for various link formats
+      const wikiLinkPattern = new RegExp(`\\[\\[${targetFile.basename}(\\|[^\\]]*)?\\]\\]`, 'i');
+      const markdownLinkPattern = new RegExp(`\\[.*?\\]\\(${targetFile.basename}\\.md\\)`, 'i');
+      const fullPathPattern = new RegExp(`\\[\\[${targetFile.path.replace(/\./g, '\\.')}(\\|[^\\]]*)?\\]\\]`, 'i');
+
+      return wikiLinkPattern.test(content) ||
+        markdownLinkPattern.test(content) ||
+        fullPathPattern.test(content);
+    } catch (error) {
+      console.error(`Error checking for links in ${sourceFile.path}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Adds a link to the target file at the end of the source file
+   */
+  private async addLink(sourceFile: TFile, targetFile: TFile): Promise<void> {
+    try {
+      // Get current content
+      const content = await this.app.vault.cachedRead(sourceFile);
+
+      // Create a wiki link to the target file
+      const linkText = `\n\n## Related Notes\n- [[${targetFile.basename}]]\n`;
+
+      // Check if the file already has a Related Notes section
+      const relatedSectionRegex = /\n## Related Notes\n/;
+      let newContent: string;
+
+      if (relatedSectionRegex.test(content)) {
+        // Add to existing Related Notes section
+        newContent = content.replace(
+          /\n## Related Notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
+          (match, p1) => `\n## Related Notes\n${p1}- [[${targetFile.basename}]]\n`
+        );
+      } else {
+        // Add new Related Notes section at the end
+        newContent = content + linkText;
+      }
+
+      // Write the updated content back to the file
+      await this.app.vault.modify(sourceFile, newContent);
+    } catch (error) {
+      console.error(`Error adding link to ${sourceFile.path}:`, error);
+    }
+  }
+
   async updateForFile(file: TFile, notes: RelatedNote[]) {
     const fragment = document.createDocumentFragment();
     fragment.createEl('h4', { text: 'Related Notes' });
@@ -127,23 +181,30 @@ export class RelatedNotesView extends ItemView {
     }
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
-    const listItems = notes.map(({ file: relatedFile }) => {
+
+    // Create list items for each related note
+    const listItemPromises = notes.map(async (note) => {
+      const { file: relatedFile } = note;
       const listItemEl = document.createElement('li');
       listItemEl.className = 'related-note-item';
-      listItemEl.style.cursor = 'pointer';
 
+      // Create the main container for the note info and actions
+      const itemContainer = document.createElement('div');
+      itemContainer.className = 'related-note-item-container';
+
+      // Create the link container for the note name
       const linkContainer = document.createElement('div');
       linkContainer.className = 'related-note-link-container';
+      linkContainer.style.cursor = 'pointer';
 
+      // Create the note name element
       const nameEl = document.createElement('span');
       nameEl.className = 'related-note-link';
       nameEl.textContent = relatedFile.basename;
       linkContainer.appendChild(nameEl);
 
-      // No similarity indicators shown
-      listItemEl.appendChild(linkContainer);
-
-      listItemEl.addEventListener('click', async () => {
+      // Add click handler to open the related file
+      linkContainer.addEventListener('click', async () => {
         try {
           const leaf = this.app.workspace.getLeaf();
           if (!leaf) return;
@@ -153,9 +214,55 @@ export class RelatedNotesView extends ItemView {
         }
       });
 
+      // Add the link container to the item container
+      itemContainer.appendChild(linkContainer);
+
+      // Check if a link already exists between the current file and the related file
+      const hasLinkToRelated = await this.hasLink(file, relatedFile);
+      const hasLinkFromRelated = await this.hasLink(relatedFile, file);
+
+      // Create the action buttons container
+      const actionsContainer = document.createElement('div');
+      actionsContainer.className = 'related-note-actions';
+
+      // Create the "Link" button if no link exists
+      if (!hasLinkToRelated) {
+        const linkButton = document.createElement('button');
+        linkButton.className = 'related-note-link-button';
+        linkButton.textContent = 'Link';
+        linkButton.title = 'Add a link to this note';
+        linkButton.addEventListener('click', async (e) => {
+          e.stopPropagation(); // Prevent opening the file
+          await this.addLink(file, relatedFile);
+          // Update button state after adding the link
+          linkButton.textContent = 'Linked';
+          linkButton.disabled = true;
+          linkButton.classList.add('linked');
+        });
+        actionsContainer.appendChild(linkButton);
+      } else {
+        // Show a disabled "Linked" button if a link already exists
+        const linkedButton = document.createElement('button');
+        linkedButton.className = 'related-note-link-button linked';
+        linkedButton.textContent = 'Linked';
+        linkedButton.disabled = true;
+        linkedButton.title = 'This note is already linked';
+        actionsContainer.appendChild(linkedButton);
+      }
+
+      // Add the actions container to the item container
+      itemContainer.appendChild(actionsContainer);
+
+      // Add the item container to the list item
+      listItemEl.appendChild(itemContainer);
+
       return listItemEl;
     });
 
+    // Wait for all list items to be created (with link checking)
+    const listItems = await Promise.all(listItemPromises);
+
+    // Add all list items to the list
     listItems.forEach(item => listEl.appendChild(item));
 
     // Replace the old content with the new fragment in a single operation.
