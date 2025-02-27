@@ -245,3 +245,17 @@ button:disabled {
   margin-top: 4px;
   display: block;
 }
+
+/* Settings tab styles */
+.related-notes-button-container {
+  display: flex;
+  gap: 8px;
+}
+
+.related-notes-cancel-button-visible {
+  display: inline-block;
+}
+
+.related-notes-cancel-button-hidden {
+  display: none;
+}

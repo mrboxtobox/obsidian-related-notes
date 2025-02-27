@@ -74,8 +74,6 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
     // Create button container for reindex and cancel buttons
     const buttonContainer = reindexSetting.controlEl.createDiv({ cls: 'related-notes-button-container' });
-    buttonContainer.style.display = 'flex';
-    buttonContainer.style.gap = '8px';
 
     // Add the reindex button
     this.reindexButton = buttonContainer.createEl('button', {
@@ -106,7 +104,8 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
     // Show cancel button if re-indexing is in progress
     if (this.plugin.isReindexingInProgress()) {
-      cancelButton.style.display = 'inline-block';
+      cancelButton.addClass('related-notes-cancel-button-visible');
+      cancelButton.removeClass('related-notes-cancel-button-hidden');
       this.reindexButton!.disabled = true;
       this.reindexButton!.setText('Re-indexing...');
 
@@ -118,10 +117,12 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         // Reset UI
         this.reindexButton!.disabled = false;
         this.reindexButton!.setText('Re-index All Notes');
-        cancelButton.style.display = 'none';
+        cancelButton.removeClass('related-notes-cancel-button-visible');
+        cancelButton.addClass('related-notes-cancel-button-hidden');
       });
     } else {
-      cancelButton.style.display = 'none';
+      cancelButton.addClass('related-notes-cancel-button-hidden');
+      cancelButton.removeClass('related-notes-cancel-button-visible');
     }
 
     // Add click handler for reindex button
@@ -129,7 +130,8 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
       // Disable reindex button and show cancel button
       this.reindexButton!.disabled = true;
       this.reindexButton!.setText('Re-indexing...');
-      cancelButton.style.display = 'inline-block';
+      cancelButton.removeClass('related-notes-cancel-button-hidden');
+      cancelButton.addClass('related-notes-cancel-button-visible');
 
       // Variable to track if indexing was cancelled
       let cancelled = false;
@@ -143,7 +145,8 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         // Reset UI
         this.reindexButton!.disabled = false;
         this.reindexButton!.setText('Re-index All Notes');
-        cancelButton.style.display = 'none';
+        cancelButton.removeClass('related-notes-cancel-button-visible');
+        cancelButton.addClass('related-notes-cancel-button-hidden');
       };
 
       // Add the cancel handler
@@ -160,7 +163,8 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
       } finally {
         // Clean up
         cancelButton.removeEventListener('click', cancelHandler);
-        cancelButton.style.display = 'none';
+        cancelButton.removeClass('related-notes-cancel-button-visible');
+        cancelButton.addClass('related-notes-cancel-button-hidden');
 
         // Only reset the button if indexing wasn't cancelled (it's already reset in the cancel handler)
         if (!cancelled) {
