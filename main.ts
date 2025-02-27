@@ -76,13 +76,15 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Initialize similarity provider with caching, but don't block the UI
     this.isInitialized = false;
+    const configDir = this.app.vault.configDir;
+
     this.similarityProvider = new SimilarityProviderV2(this.app.vault, {
       numBands: 5,
       rowsPerBand: 2,
       shingleSize: 2,
       batchSize: this.settings.batchSize,
       priorityIndexSize: this.settings.priorityIndexSize,
-      cacheFilePath: '.obsidian/plugins/obsidian-related-notes/similarity-cache.json',
+      cacheFilePath: `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
       // Adaptive parameters for large corpora
       largeBands: 8,       // More bands for large corpora = more candidates
       largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
@@ -309,7 +311,8 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   async onunload() {
-    this.app.workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
+    // Obsidian automatically detaches leaves when a plugin is unloaded
+    // No need to manually detach leaves here
   }
 
   private async toggleRelatedNotes(workspace: Workspace) {

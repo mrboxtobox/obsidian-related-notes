@@ -48,6 +48,7 @@ We're excited to announce the first stable release of the Related Notes plugin f
 - Resolved indexing cancellation error handling
 - Fixed TypeScript type errors for improved stability
 - Corrected hash band method to prevent errors with different signature lengths
+- Fixed hardcoded configuration directory path to respect user's custom Obsidian configuration directory
 
 ## Getting Started
 

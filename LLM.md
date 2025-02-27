@@ -1,5 +1,50 @@
 # Related Notes Plugin Development Notes
 
+## Fixed Antipattern: Detaching Leaves in onunload
+
+The plugin was using an antipattern by manually detaching leaves in the `onunload` method:
+
+1. **Issue Identified**
+   - Detaching leaves in `onunload` is considered an antipattern according to Obsidian plugin guidelines
+   - Obsidian already handles the cleanup of plugin views when a plugin is unloaded
+   - Manual detachment can cause issues with Obsidian's internal state management
+
+2. **Implementation**
+   ```mermaid
+   graph TD
+      A[Identify Antipattern] --> B[Remove detachLeavesOfType Call]
+      B --> C[Add Comment Explaining Why]
+      C --> D[Rely on Obsidian's Built-in Cleanup]
+   ```
+
+3. **Benefits**
+   - Follows Obsidian's recommended plugin guidelines
+   - Prevents potential issues with Obsidian's view management
+   - Simplifies plugin cleanup code
+   - Ensures proper cleanup when the plugin is unloaded
+
+## Configuration Directory Fix
+
+The plugin was hardcoding the Obsidian configuration directory as `.obsidian`, but this directory can be configured by the user. The fix involves:
+
+1. **Using Vault.configDir**
+   - Replace hardcoded `.obsidian` with `vault.configDir` to respect user configuration
+   - Update cache file path in SimilarityProviderV2 constructor
+   - Ensure proper path normalization
+
+2. **Implementation**
+   ```mermaid
+   graph TD
+      A[Identify Hardcoded Paths] --> B[Update Constructor in main.ts]
+      B --> C[Pass vault.configDir to SimilarityProviderV2]
+      C --> D[Use configDir for Cache File Path]
+   ```
+
+3. **Benefits**
+   - Respects user's custom Obsidian configuration directory
+   - Ensures cache files are stored in the correct location
+   - Maintains compatibility with non-standard Obsidian setups
+
 ## Load Time Optimization
 
 The plugin has been optimized for faster load times by implementing the following strategies:
@@ -566,6 +611,30 @@ The plugin now prevents multiple re-indexing operations from running simultaneou
       J --> K[Reset isReindexing Flag]
    ```
 
+## CSS Refactoring: Moving Inline Styles to CSS
+
+The plugin was using inline styles in JavaScript, which is considered a poor practice as it makes styles harder to maintain and less adaptable by themes and snippets. The refactoring involves:
+
+1. **Identified Inline Styles**
+   - Button container styling in settings.ts
+   - Cancel button display styling in multiple places
+   - Other UI element styling applied directly via JavaScript
+
+2. **Implementation**
+   ```mermaid
+   graph TD
+      A[Identify Inline Styles] --> B[Create CSS Classes]
+      B --> C[Update JavaScript to Use Classes]
+      C --> D[Remove Inline Style Assignments]
+   ```
+
+3. **Benefits**
+   - Improved theme compatibility
+   - Better separation of concerns (HTML/CSS/JS)
+   - Easier maintenance and updates
+   - Support for user CSS snippets and customization
+   - More consistent styling across the plugin
+
 ## Future Considerations
 
 1. Consider implementing:
@@ -575,7 +644,7 @@ The plugin now prevents multiple re-indexing operations from running simultaneou
    - Worker thread for background processing
    - Progressive loading of related notes
    - UI indicator for approximate matches
-   - Custom CSS classes instead of inline styles for better theme compatibility
+   - ✓ Custom CSS classes instead of inline styles for better theme compatibility
    - Accessibility settings for color blind users
    - Bidirectional linking option (add links to both notes)
    - Custom link text options
