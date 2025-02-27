@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-related-notes",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "An Obsidian plugin that suggests related notes using NLP and TF-IDF similarity",
 	"main": "main.js",
 	"scripts": {
