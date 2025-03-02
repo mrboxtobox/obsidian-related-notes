@@ -127,6 +127,7 @@ button:disabled {
   min-width: 0;
   /* Prevent text overflow from causing layout shifts */
   overflow: hidden;
+  cursor: pointer;
 }
 
 .related-note-link {
