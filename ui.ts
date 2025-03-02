@@ -207,7 +207,6 @@ export class RelatedNotesView extends ItemView {
       // Create the link container for the note name
       const linkContainer = document.createElement('div');
       linkContainer.className = 'related-note-link-container';
-      linkContainer.style.cursor = 'pointer';
 
       // Create the note name element
       const nameEl = document.createElement('span');
