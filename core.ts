@@ -370,7 +370,7 @@ export class SimilarityProviderV2 implements SimilarityProvider {
       shingleSize: 2,
       batchSize: 1,
       priorityIndexSize: 10000, // Number of files to pre-index (increased from 5000)
-      cacheFilePath: 'plugins/obsidian-related-notes/similarity-cache.json', // Path will be prefixed with vault.configDir
+      cacheFilePath: 'similarity-cache.json', // Will be prefixed with manifest.dir
       // Adaptive parameters for large corpora
       largeBands: 8,       // More bands for large corpora = more candidates
       largeRowsPerBand: 1, // Fewer rows per band = more lenient matching

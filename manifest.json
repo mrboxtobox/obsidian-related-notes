@@ -9,9 +9,5 @@
 	"fundingUrl": {
 		"Buy Me a Coffee": "https://buymeacoffee.com/mrboxtobox"
 	},
-	"isDesktopOnly": false,
-	"files": [
-		"main.js",
-		"styles.css"
-	]
+	"isDesktopOnly": false
 }

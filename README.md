@@ -2,17 +2,17 @@
 
 Uncover connections between notes in your vault using this plugin.
 
+![Preview of the Related Notes plugin on the right pane](<screenshot.png>)
+
+![alt text](<settings_screenshot.png>)
+
+![alt text](<non_readme_screenshot.png>)
+
 ## Features
 
 - 🔍 Automatically analyzes note content using proven similarity algorithms
-- 📊 MinHash LSH + BM25 (Best Matching 25) for fast term-frequency based matching
-- 🔄 Adaptive similarity detection for large note collections
 - 🔗 One-click linking between related notes
-- 📈 Visual quality indicators for similarity matches
 - ⚡ Fully local processing with complete data privacy
-- 🚀 Hybrid indexing for handling large vaults with tens of thousands of notes
-- 🧠 Smart prioritization of frequently accessed and recently created notes
-- ⏱️ On-demand computation for comprehensive coverage of your entire vault
 
 ## Installation
 

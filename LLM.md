@@ -23,27 +23,27 @@ The plugin was using an antipattern by manually detaching leaves in the `onunloa
    - Simplifies plugin cleanup code
    - Ensures proper cleanup when the plugin is unloaded
 
-## Configuration Directory Fix
+## Cache File Path Fix
 
-The plugin was hardcoding the Obsidian configuration directory as `.obsidian`, but this directory can be configured by the user. The fix involves:
+The plugin was incorrectly using configDir for the cache file path, but this should be using the plugin's manifest directory. The fix involves:
 
-1. **Using Vault.configDir**
-   - Replace hardcoded `.obsidian` with `vault.configDir` to respect user configuration
+1. **Using Plugin Manifest Directory**
+   - Replace `configDir/plugins/obsidian-related-notes/similarity-cache.json` with `this.manifest.dir/similarity-cache.json`
    - Update cache file path in SimilarityProviderV2 constructor
    - Ensure proper path normalization
 
 2. **Implementation**
    ```mermaid
    graph TD
-      A[Identify Hardcoded Paths] --> B[Update Constructor in main.ts]
-      B --> C[Pass vault.configDir to SimilarityProviderV2]
-      C --> D[Use configDir for Cache File Path]
+      A[Identify Incorrect Path] --> B[Update Constructor in main.ts]
+      B --> C[Use this.manifest.dir]
+      C --> D[Store Cache in Plugin Directory]
    ```
 
 3. **Benefits**
-   - Respects user's custom Obsidian configuration directory
-   - Ensures cache files are stored in the correct location
-   - Maintains compatibility with non-standard Obsidian setups
+   - Stores cache files in the correct plugin directory
+   - Follows Obsidian plugin best practices
+   - Maintains proper file organization
 
 ## Load Time Optimization
 
@@ -634,6 +634,28 @@ The plugin was using inline styles in JavaScript, which is considered a poor pra
    - Easier maintenance and updates
    - Support for user CSS snippets and customization
    - More consistent styling across the plugin
+
+## Settings Tab Heading Style Update
+
+1. **Standardized Heading Style**
+   - Updated section headings in settings tab to use Obsidian's recommended style
+   - Replaced `containerEl.createEl('h3')` with `new Setting().setName().setHeading()`
+   - Ensures consistent appearance with Obsidian's native settings
+   - Better integration with Obsidian's theme system
+
+2. **Implementation**
+   ```mermaid
+   graph TD
+      A[Identify Old Heading Style] --> B[Replace with Setting Component]
+      B --> C[Use setName and setHeading]
+      C --> D[Maintain Section Organization]
+   ```
+
+3. **Benefits**
+   - Consistent with Obsidian's design patterns
+   - Better theme compatibility
+   - Improved visual hierarchy
+   - Follows plugin development best practices
 
 ## Future Considerations
 

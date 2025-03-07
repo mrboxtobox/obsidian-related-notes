@@ -47,11 +47,6 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'Related Notes Settings' });
-
-    // Basic Settings Section
-    containerEl.createEl('h3', { text: 'Basic Settings' });
-
     new Setting(containerEl)
       .setName('Maximum suggestions')
       .setDesc('Maximum number of related notes to display (1-20)')
@@ -65,11 +60,11 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         }));
 
     // Reindexing Section
-    containerEl.createEl('h3', { text: 'Indexing' });
+    new Setting(containerEl).setName('Indexing').setHeading();
     containerEl.createEl('h4', { text: 'This process may take a long time for large vaults' });
 
     const reindexSetting = new Setting(containerEl)
-      .setName('Force Re-indexing')
+      .setName('Force re-indexing')
       .setDesc('Force a complete re-indexing of all notes. Re-indexing may take a while depending on the size of your vault.');
 
     // Create button container for reindex and cancel buttons
@@ -77,7 +72,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
     // Add the reindex button
     this.reindexButton = buttonContainer.createEl('button', {
-      text: 'Re-index All Notes',
+      text: 'Re-index all notes',
       cls: 'mod-cta'
     });
 
@@ -116,7 +111,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
         // Reset UI
         this.reindexButton!.disabled = false;
-        this.reindexButton!.setText('Re-index All Notes');
+        this.reindexButton!.setText('Re-index all notes');
         cancelButton.removeClass('related-notes-cancel-button-visible');
         cancelButton.addClass('related-notes-cancel-button-hidden');
       });
@@ -144,7 +139,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
         // Reset UI
         this.reindexButton!.disabled = false;
-        this.reindexButton!.setText('Re-index All Notes');
+        this.reindexButton!.setText('Re-index all notes');
         cancelButton.removeClass('related-notes-cancel-button-visible');
         cancelButton.addClass('related-notes-cancel-button-hidden');
       };
@@ -169,14 +164,14 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         // Only reset the button if indexing wasn't cancelled (it's already reset in the cancel handler)
         if (!cancelled) {
           this.reindexButton!.disabled = false;
-          this.reindexButton!.setText('Re-index All Notes');
+          this.reindexButton!.setText('Re-index all notes');
         }
       }
     });
 
     // Show Stats Toggle
     new Setting(containerEl)
-      .setName('Show Stats')
+      .setName('Show stats')
       .setDesc('Show memory usage and NLP-related metrics in the Related Notes view')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.showStats)
@@ -193,7 +188,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
       // Memory usage stats
       const memoryStatsEl = statsContainer.createEl('div', { cls: 'related-notes-stats-section' });
-      memoryStatsEl.createEl('h4', { text: 'Memory Usage' });
+      memoryStatsEl.createEl('h4', { text: 'Memory usage' });
 
       const memoryList = memoryStatsEl.createEl('ul', { cls: 'related-notes-stats-list' });
 
@@ -227,7 +222,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
       // NLP stats
       const nlpStatsEl = statsContainer.createEl('div', { cls: 'related-notes-stats-section' });
-      nlpStatsEl.createEl('h4', { text: 'NLP Metrics' });
+      nlpStatsEl.createEl('h4', { text: 'NLP metrics' });
 
       const nlpList = nlpStatsEl.createEl('ul', { cls: 'related-notes-stats-list' });
 
