@@ -657,6 +657,64 @@ The plugin was using inline styles in JavaScript, which is considered a poor pra
    - Improved visual hierarchy
    - Follows plugin development best practices
 
+## Source Code Organization
+
+The plugin's TypeScript source files have been moved to a dedicated src/ directory for better organization:
+
+1. **Implementation**
+   ```mermaid
+   graph TD
+      A[Root Directory] --> B[src/]
+      B --> C[main.ts]
+      B --> D[core.ts]
+      B --> E[ui.ts]
+      B --> F[settings.ts]
+   ```
+
+2. **Benefits**
+   - Cleaner project root directory
+   - Better separation of source code from configuration files
+   - Follows standard TypeScript project structure
+   - Improved code organization and maintainability
+
+## Settings Tab Text Standardization
+
+The plugin's settings tab text has been standardized to use sentence case consistently:
+
+1. **Updated Text Cases**
+   - "Maximum suggestions" -> "Maximum Suggestions"
+   - "Force re-indexing" -> "Force Re-indexing"
+   - "Show stats" -> "Show Stats"
+   - "Memory usage" -> "Memory Usage"
+   - "NLP metrics" -> "NLP Metrics"
+
+2. **Benefits**
+   - Consistent text styling across the settings interface
+   - Improved readability and professionalism
+   - Better alignment with UI design principles
+   - Enhanced visual hierarchy in settings
+
+## Leaf Focus Enhancement
+
+The plugin now focuses on existing leaves instead of creating new ones when showing related notes:
+
+1. **Implementation**
+   ```mermaid
+   graph TD
+      A[Click Related Note] --> B{File Already Open?}
+      B -->|Yes| C[Focus Existing Leaf]
+      B -->|No| D[Create New Leaf]
+      C --> E[Show File]
+      D --> E
+   ```
+
+2. **Benefits**
+   - Prevents duplicate leaves of the same file
+   - Maintains cleaner workspace organization
+   - Improves navigation efficiency
+   - Better tab management
+   - More intuitive user experience
+
 ## Future Considerations
 
 1. Consider implementing:
