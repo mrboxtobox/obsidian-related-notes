@@ -25,7 +25,7 @@ export class RelatedNotesView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Related Notes';
+    return 'Related notes';
   }
 
   getIcon(): string {
@@ -42,7 +42,7 @@ export class RelatedNotesView extends ItemView {
 
     // Create header with title
     const headerEl = container.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related Notes' });
+    headerEl.createEl('h4', { text: 'Related notes' });
 
     container.createDiv({ cls: 'related-notes-content' });
   }
@@ -58,7 +58,7 @@ export class RelatedNotesView extends ItemView {
 
     // Create header with title
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related Notes' });
+    headerEl.createEl('h4', { text: 'Related notes' });
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
@@ -99,29 +99,24 @@ export class RelatedNotesView extends ItemView {
    */
   private async addLink(sourceFile: TFile, targetFile: TFile): Promise<void> {
     try {
-      // Get current content
-      const content = await this.app.vault.cachedRead(sourceFile);
+      await this.app.vault.process(sourceFile, (content) => {
+        // Create a wiki link to the target file
+        const linkText = `\n\n## Related notes\n- [[${targetFile.basename}]]\n`;
 
-      // Create a wiki link to the target file
-      const linkText = `\n\n## Related Notes\n- [[${targetFile.basename}]]\n`;
+        // Check if the file already has a Related Notes section
+        const relatedSectionRegex = /\n## Related notes\n/;
 
-      // Check if the file already has a Related Notes section
-      const relatedSectionRegex = /\n## Related Notes\n/;
-      let newContent: string;
-
-      if (relatedSectionRegex.test(content)) {
-        // Add to existing Related Notes section
-        newContent = content.replace(
-          /\n## Related Notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
-          (match, p1) => `\n## Related Notes\n${p1}- [[${targetFile.basename}]]\n`
-        );
-      } else {
-        // Add new Related Notes section at the end
-        newContent = content + linkText;
-      }
-
-      // Write the updated content back to the file
-      await this.app.vault.modify(sourceFile, newContent);
+        if (relatedSectionRegex.test(content)) {
+          // Add to existing Related Notes section
+          return content.replace(
+            /\n## Related notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
+            (match, p1) => `\n## Related Notes\n${p1}- [[${targetFile.basename}]]\n`
+          );
+        } else {
+          // Add new Related Notes section at the end
+          return content + linkText;
+        }
+      });
     } catch (error) {
       console.error(`Error adding link to ${sourceFile.path}:`, error);
     }
@@ -132,7 +127,7 @@ export class RelatedNotesView extends ItemView {
 
     // Create header with title
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related Notes' });
+    headerEl.createEl('h4', { text: 'Related notes' });
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;

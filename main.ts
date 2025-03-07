@@ -68,8 +68,8 @@ export default class RelatedNotesPlugin extends Plugin {
       (leaf: WorkspaceLeaf) => new RelatedNotesView(leaf, this)
     );
 
-    this.addRibbonIcon('zap', 'Toggle related notes',
-      () => this.toggleRelatedNotes(this.app.workspace));
+    this.addRibbonIcon('zap', 'Open related notes',
+      () => this.createAndInitializeView());
 
     // Register event handlers
     this.registerEventHandlers();
@@ -84,7 +84,7 @@ export default class RelatedNotesPlugin extends Plugin {
       shingleSize: 2,
       batchSize: this.settings.batchSize,
       priorityIndexSize: this.settings.priorityIndexSize,
-      cacheFilePath: `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
+      cacheFilePath: `${this.manifest.dir}/similarity-cache.json`,
       // Adaptive parameters for large corpora
       largeBands: 8,       // More bands for large corpora = more candidates
       largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
@@ -299,11 +299,11 @@ export default class RelatedNotesPlugin extends Plugin {
 
   private registerCommands() {
     this.addCommand({
-      id: 'toggle-related-notes',
-      name: 'Toggle related notes',
+      id: 'open-related-notes',
+      name: 'Open related notes',
       checkCallback: (checking: boolean) => {
         if (!checking) {
-          this.toggleRelatedNotes(this.app.workspace);
+          this.createAndInitializeView();
         }
         return true;
       }
@@ -313,17 +313,6 @@ export default class RelatedNotesPlugin extends Plugin {
   async onunload() {
     // Obsidian automatically detaches leaves when a plugin is unloaded
     // No need to manually detach leaves here
-  }
-
-  private async toggleRelatedNotes(workspace: Workspace) {
-    const leaves = workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
-
-    if (leaves.length > 0) {
-      workspace.detachLeavesOfType(RELATED_NOTES_VIEW_TYPE);
-      return;
-    }
-
-    await this.createAndInitializeView();
   }
 
   private async createAndInitializeView() {
