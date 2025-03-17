@@ -110,7 +110,7 @@ export class RelatedNotesView extends ItemView {
           // Add to existing Related Notes section
           return content.replace(
             /\n## Related notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
-            (match, p1) => `\n## Related Notes\n${p1}- [[${targetFile.basename}]]\n`
+            (match, p1) => `\n## Related notes\n${p1}- [[${targetFile.basename}]]\n`
           );
         } else {
           // Add new Related Notes section at the end
@@ -176,16 +176,7 @@ export class RelatedNotesView extends ItemView {
       return;
     }
 
-    // Check if we have any on-demand computed notes
-    const hasOnDemandNotes = notes.some(note => note.isPreIndexed === false || note.computedOnDemand);
-
-    if (hasOnDemandNotes) {
-      const infoEl = contentEl.createDiv({ cls: 'related-notes-info' });
-      infoEl.createEl('p', {
-        text: 'Some notes were computed on-the-fly for better relevance',
-        cls: 'related-notes-info-text'
-      });
-    }
+    // No on-demand info message needed
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
 
@@ -209,14 +200,7 @@ export class RelatedNotesView extends ItemView {
       nameEl.textContent = relatedFile.basename;
       linkContainer.appendChild(nameEl);
 
-      // Add indicator for on-demand computed notes
-      if (note.isPreIndexed === false || note.computedOnDemand) {
-        const indicatorEl = document.createElement('span');
-        indicatorEl.className = 'related-note-indicator';
-        indicatorEl.textContent = '(on-demand)';
-        indicatorEl.title = 'This note was computed on-the-fly';
-        linkContainer.appendChild(indicatorEl);
-      }
+      // No on-demand indicators needed
 
       // Add click handler to open the related file
       linkContainer.addEventListener('click', async () => {
