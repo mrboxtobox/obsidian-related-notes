@@ -26,4 +26,9 @@
     "**/*.ts",
     "**/*.d.ts"
   ],
+  "exclude": [
+    "src/benchmarks/**/*.ts",
+    "src/tests/**/*.ts",
+    "vitest.config.ts"
+  ]
 }

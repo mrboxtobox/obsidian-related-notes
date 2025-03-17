@@ -1,26 +1,27 @@
 import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian';
-import { RelatedNote, SimilarityProvider, SimilarityProviderV2 } from './core';
+import { RelatedNote, SimilarityProvider, OptimizedSimilarityProvider } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
+import { Logger } from './logger';
 
 'use strict';
 
 export interface MemoryStats {
-  vocabularySize: number;
-  fileVectorsCount: number;
-  signaturesCount: number;
-  relatedNotesCount: number;
-  onDemandCacheCount: number;
+  numDocuments: number;
+  numBands: number;
+  rowsPerBand: number;
+  totalBuckets: number;
+  maxBucketSize: number;
+  avgBucketSize: number;
+  cacheSize: number;
   estimatedMemoryUsage: number;
 }
 
 export interface NLPStats {
-  averageShingleSize: number;
-  averageDocLength: number;
   similarityProvider: string;
-  lshBands: number;
-  lshRowsPerBand: number;
-  averageSimilarityScore: number;
+  shingleSize: number;
+  useWordShingles: boolean;
+  numHashes: number;
   isCorpusSampled: boolean;
   totalFiles: number;
   indexedFiles: number;
@@ -36,15 +37,12 @@ export default class RelatedNotesPlugin extends Plugin {
   private reindexCancelled = false;
 
   async onload() {
-    // Load settings
     await this.loadSettings();
 
-    // Register essential components immediately
     this.registerCommands();
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.setText("Initializing...");
 
-    // Add settings tab
     this.addSettingTab(new RelatedNotesSettingTab(this.app, this));
 
     // Defer heavy initialization until layout is ready
@@ -62,7 +60,6 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async initializePlugin() {
-    // Initialize UI components
     this.registerView(
       RELATED_NOTES_VIEW_TYPE,
       (leaf: WorkspaceLeaf) => new RelatedNotesView(leaf, this)
@@ -71,79 +68,62 @@ export default class RelatedNotesPlugin extends Plugin {
     this.addRibbonIcon('zap', 'Show related notes',
       () => this.createAndInitializeView());
 
-    // Register event handlers
     this.registerEventHandlers();
-
-    // Initialize similarity provider with caching, but don't block the UI
     this.isInitialized = false;
-    const configDir = this.app.vault.configDir;
 
-    this.similarityProvider = new SimilarityProviderV2(this.app.vault, {
-      numBands: 5,
-      rowsPerBand: 2,
-      shingleSize: 2,
-      batchSize: this.settings.batchSize,
-      priorityIndexSize: this.settings.priorityIndexSize,
+    this.similarityProvider = new OptimizedSimilarityProvider(this.app.vault, {
+      minhash: {
+        numHashes: 100,
+        numBands: 20,
+        rowsPerBand: 5,
+        shingleSize: 3,
+        useWordShingles: true,
+        maxFiles: this.settings.priorityIndexSize
+      },
+      similarityThreshold: this.settings.similarityThreshold,
+      maxRelatedNotes: this.settings.maxSuggestions,
       cacheFilePath: `${this.manifest.dir}/similarity-cache.json`,
-      // Adaptive parameters for large corpora
-      largeBands: 8,       // More bands for large corpora = more candidates
-      largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
-      largeCorpusThreshold: 1000, // When to consider a corpus "large"
-      minSimilarityThreshold: this.settings.similarityThreshold / 2, // Lower threshold for large corpora
-      onDemandCacheSize: 1000, // Number of on-demand computations to cache
-      onDemandComputationEnabled: this.settings.onDemandComputationEnabled,
-      disableIncrementalUpdates: this.settings.disableIncrementalUpdates
+      largeCorpusThreshold: 1000
     });
 
-    // Show initial status
     this.statusBarItem.setText("Ready (indexing in background)");
 
-    // Use setTimeout to defer heavy initialization to the next event loop
-    // This prevents UI blocking during startup
+    // Defer initialization to prevent UI blocking during startup
     setTimeout(() => {
       this.initializeSimilarityProvider();
     }, 1000);
   }
 
   private async initializeSimilarityProvider() {
-    // Show initial status
     this.statusBarItem.setText("Loading related notes...");
-
-    // Initialize with progress reporting and smooth transitions
-    await this.similarityProvider.initialize((processed, total) => {
-      const percentage = processed;
+    await this.similarityProvider.initialize((percent) => {
       let message = "";
       let phase = "";
 
-      // Determine the current phase based on percentage
-      if (percentage <= 25) {
+      if (percent <= 25) {
         phase = "Reading your notes";
-      } else if (percentage <= 50) {
+      } else if (percent <= 50) {
         phase = "Analyzing patterns";
-      } else if (percentage <= 75) {
+      } else if (percent <= 75) {
         phase = "Finding connections";
       } else {
         phase = "Building relationships";
       }
-
-      // Simple progress message with percentage
-      message = `${phase}... ${percentage}%`;
+      message = `${phase}... ${percent}%`;
 
       this.statusBarItem.setText(message);
     });
 
-    // Clear on-demand cache after initialization to ensure fresh data
-    if (this.similarityProvider instanceof SimilarityProviderV2) {
-      const provider = this.similarityProvider as SimilarityProviderV2;
-      // The on-demand cache is already cleared during initialization, but we'll ensure it's clean
-      // by updating file access times for all files to prioritize them correctly
-      const allFiles = this.app.vault.getMarkdownFiles();
-      for (const file of allFiles) {
-        provider.updateFileAccessTime(file);
+    // Update file access times for all files to prioritize them correctly
+    const allFiles = this.app.vault.getMarkdownFiles();
+    for (const file of allFiles) {
+      if ('updateFileAccessTime' in this.similarityProvider) {
+        this.similarityProvider.updateFileAccessTime(file);
       }
     }
 
-    if (this.similarityProvider instanceof SimilarityProviderV2 && this.similarityProvider.isCorpusSampled()) {
+    // Check if corpus is sampled (using a subset of notes)
+    if (this.similarityProvider.isCorpusSampled()) {
       this.statusBarItem.setText("⚠️ Using a sample of your notes");
       this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
       this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
@@ -161,10 +141,6 @@ export default class RelatedNotesPlugin extends Plugin {
    * @throws Error if indexing is cancelled
    */
   public async forceReindex(): Promise<void> {
-    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
-      return;
-    }
-
     // Check if already reindexing or initial indexing is still in progress
     if (this.isReindexing) {
       this.statusBarItem.setText("Already re-indexing, please wait...");
@@ -174,7 +150,6 @@ export default class RelatedNotesPlugin extends Plugin {
       return;
     }
 
-    // Check if initial indexing is still in progress
     if (!this.isInitialized) {
       this.statusBarItem.setText("Initial indexing in progress, please wait...");
       setTimeout(() => {
@@ -183,25 +158,18 @@ export default class RelatedNotesPlugin extends Plugin {
       return;
     }
 
-    // Set reindexing state
     this.isReindexing = true;
     this.reindexCancelled = false;
 
     try {
-      // Update status bar
       this.isInitialized = false;
       this.statusBarItem.setText("Re-indexing notes...");
 
-      // Force re-indexing with progress reporting
-      await this.similarityProvider.forceReindex((processed, total) => {
+      await this.similarityProvider.forceReindex((percent) => {
         // Periodically yield to main thread to check for cancellation
-        // This ensures the UI remains responsive and can detect cancel button clicks
         const yieldToMainAndCheckCancellation = async () => {
-          // TODO(olu): Use requestAnimationFrame if available (better for UI responsiveness).
-          // Fallback to setTimeout with 0ms delay
           await new Promise<void>((resolve, reject) => {
             setTimeout(() => {
-              // Check if reindexing was cancelled
               if (this.reindexCancelled) {
                 reject(new Error('Indexing cancelled'));
               } else {
@@ -211,33 +179,27 @@ export default class RelatedNotesPlugin extends Plugin {
           });
         };
 
-        // Yield to main thread every 5% progress
-        if (processed % 5 === 0) {
+        if (percent % 5 === 0) {
           yieldToMainAndCheckCancellation();
         }
 
-        const percentage = processed;
         let message = "";
         let phase = "";
 
-        // Determine the current phase based on percentage
-        if (percentage <= 25) {
+        if (percent <= 25) {
           phase = "Reading your notes";
-        } else if (percentage <= 50) {
+        } else if (percent <= 50) {
           phase = "Analyzing patterns";
-        } else if (percentage <= 75) {
+        } else if (percent <= 75) {
           phase = "Finding connections";
         } else {
           phase = "Building relationships";
         }
-
-        // Simple progress message with percentage
-        message = `Re-indexing: ${phase}... ${percentage}%`;
+        message = `Re-indexing: ${phase}... ${percent}%`;
 
         this.statusBarItem.setText(message);
       });
 
-      // Update status bar after re-indexing
       if (this.similarityProvider.isCorpusSampled()) {
         this.statusBarItem.setText("⚠️ Using a sample of your notes");
         this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
@@ -249,7 +211,6 @@ export default class RelatedNotesPlugin extends Plugin {
       }
       this.isInitialized = true;
 
-      // Refresh the view if it's open
       const leaves = this.app.workspace.getLeavesOfType(RELATED_NOTES_VIEW_TYPE);
       if (leaves.length > 0) {
         const view = leaves[0].view;
@@ -261,7 +222,6 @@ export default class RelatedNotesPlugin extends Plugin {
         }
       }
     } catch (error) {
-      // If indexing was cancelled, update the status bar
       if (error instanceof Error && error.message === 'Indexing cancelled') {
         this.statusBarItem.setText("Re-indexing cancelled");
         setTimeout(() => {
@@ -269,14 +229,12 @@ export default class RelatedNotesPlugin extends Plugin {
         }, 2000);
         throw error; // Re-throw to be caught by the settings tab
       }
-      // For other errors, log and update status bar
       console.error("Error during re-indexing:", error);
       this.statusBarItem.setText("Error during re-indexing");
       setTimeout(() => {
         this.statusBarItem.setText("Ready to find related notes");
       }, 2000);
     } finally {
-      // Reset reindexing state
       this.isReindexing = false;
     }
   }
@@ -362,103 +320,21 @@ export default class RelatedNotesPlugin extends Plugin {
    * Gets memory usage statistics from the similarity provider
    */
   public getMemoryStats(): MemoryStats {
-    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
-      return {
-        vocabularySize: 0,
-        fileVectorsCount: 0,
-        signaturesCount: 0,
-        relatedNotesCount: 0,
-        onDemandCacheCount: 0,
-        estimatedMemoryUsage: 0
-      };
-    }
-
-    const provider = this.similarityProvider as SimilarityProviderV2;
-
-    // Get stats from the provider
-    const vocabularySize = provider.getVocabularySize();
-    const fileVectorsCount = provider.getFileVectorsCount();
-    const signaturesCount = provider.getSignaturesCount();
-    const relatedNotesCount = provider.getRelatedNotesCount();
-    const onDemandCacheCount = provider.getOnDemandCacheCount();
-
-    // Estimate memory usage (very rough estimate)
-    // Vocabulary: ~50 bytes per term
-    // File vectors: ~100 bytes per file
-    // Signatures: ~100 bytes per signature
-    // Related notes: ~50 bytes per entry
-    // On-demand cache: ~200 bytes per entry
-    const estimatedMemoryUsage = Math.round(
-      (vocabularySize * 50 +
-        fileVectorsCount * 100 +
-        signaturesCount * 100 +
-        relatedNotesCount * 50 +
-        onDemandCacheCount * 200) / 1024
-    );
+    const stats = this.similarityProvider.getStatistics();
 
     return {
-      vocabularySize,
-      fileVectorsCount,
-      signaturesCount,
-      relatedNotesCount,
-      onDemandCacheCount,
-      estimatedMemoryUsage
-    };
-  }
-
-  /**
-   * Gets NLP-related statistics from the similarity provider
-   */
-  public getNLPStats(): NLPStats {
-    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
-      return {
-        averageShingleSize: 0,
-        averageDocLength: 0,
-        similarityProvider: 'unknown',
-        lshBands: 0,
-        lshRowsPerBand: 0,
-        averageSimilarityScore: 0,
-        isCorpusSampled: false,
-        totalFiles: 0,
-        indexedFiles: 0,
-        onDemandComputations: 0
-      };
-    }
-
-    const provider = this.similarityProvider as SimilarityProviderV2;
-
-    // Get stats from the provider
-    const averageShingleSize = provider.getAverageShingleSize();
-    const averageDocLength = provider.getAverageDocLength();
-    const lshBands = provider.getLSHBands();
-    const lshRowsPerBand = provider.getLSHRowsPerBand();
-    const averageSimilarityScore = provider.getAverageSimilarityScore();
-    const isCorpusSampled = provider.isCorpusSampled();
-    const totalFiles = this.app.vault.getMarkdownFiles().length;
-    const indexedFiles = provider.getFileVectorsCount();
-    const onDemandComputations = provider.getOnDemandComputationsCount();
-
-    // Determine similarity provider type
-    let similarityProviderType = 'auto';
-    if (this.settings.similarityProvider !== 'auto') {
-      similarityProviderType = this.settings.similarityProvider;
-    } else if (isCorpusSampled) {
-      similarityProviderType = 'minhash';
-    } else {
-      similarityProviderType = 'bm25';
-    }
-
-    return {
-      averageShingleSize,
-      averageDocLength,
-      similarityProvider: similarityProviderType,
-      lshBands,
-      lshRowsPerBand,
-      averageSimilarityScore,
-      isCorpusSampled,
-      totalFiles,
-      indexedFiles,
-      onDemandComputations
+      numDocuments: stats.numDocuments || 0,
+      numBands: stats.numBands || 0,
+      rowsPerBand: stats.rowsPerBand || 0,
+      totalBuckets: stats.totalBuckets || 0,
+      maxBucketSize: stats.maxBucketSize || 0,
+      avgBucketSize: stats.avgBucketSize || 0,
+      cacheSize: stats.commonTermsCacheSize || 0,
+      // Rough estimate of memory usage
+      estimatedMemoryUsage: Math.round(
+        (stats.numDocuments || 0) * 500 + // 500 bytes per document signature
+        (stats.commonTermsCacheSize || 0) * 200 / 1024 // 200 bytes per cache entry
+      )
     };
   }
 
@@ -479,63 +355,23 @@ export default class RelatedNotesPlugin extends Plugin {
     // Get pre-indexed candidates
     const candidates = this.similarityProvider.getCandidateFiles(file);
 
-    // Calculate similarities for all pre-indexed candidates
+    // Calculate similarities for all candidates
     const similarityPromises = candidates.map(async (candidate) => {
       const similarity = await this.similarityProvider.computeCappedCosineSimilarity(file, candidate);
       return {
         file: candidate,
         similarity: similarity.similarity,
-        commonTerms: similarity.commonTerms || [], // Pass common terms to UI
-        isPreIndexed: true // Mark as pre-indexed
+        commonTerms: similarity.commonTerms || [] // Pass common terms to UI
       };
     });
 
-    let relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
-
-    // Track files we've already processed to prevent duplicates
-    const processedFilePaths = new Set<string>(
-      relatedNotes.map(note => note.file.path)
-    );
-
-    // Check if we should compute on-demand suggestions
-    if (this.similarityProvider instanceof SimilarityProviderV2 &&
-      this.similarityProvider.isCorpusSampled() &&
-      this.similarityProvider.onDemandComputationEnabled) {
-
-      // Compute on-demand suggestions if the file isn't in the priority index
-      // or if we have fewer than 5 pre-indexed candidates
-      const shouldComputeOnDemand =
-        !this.similarityProvider.isFileIndexed(file) ||
-        candidates.length < 5;
-
-      if (shouldComputeOnDemand) {
-        // Compute related notes on-demand, passing the set of already processed file paths
-        // to avoid computing similarity for files we've already processed
-        const onDemandNotes = await this.similarityProvider.computeRelatedNotesOnDemand(
-          file,
-          10, // Default limit
-          processedFilePaths // Pass the set of already processed file paths
-        );
-
-        relatedNotes = [
-          ...relatedNotes,
-          ...onDemandNotes.map(note => ({
-            ...note,
-            isPreIndexed: false // Mark as computed on-demand
-          }))
-        ];
-      }
-    }
+    const relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
 
     // Sort by similarity (highest first)
     const sortedNotes = relatedNotes.sort((a, b) => b.similarity - a.similarity);
 
-    // Determine if we're dealing with a large corpus
-    const isLargeCorpus = this.similarityProvider instanceof SimilarityProviderV2 &&
-      this.similarityProvider.isCorpusSampled();
-
     // For large corpora, return more results but with a minimum similarity threshold
-    if (isLargeCorpus) {
+    if (this.similarityProvider.isCorpusSampled()) {
       // Return up to maxSuggestions*2 notes for large corpora, but ensure they have some relevance
       const minSimilarity = this.settings.similarityThreshold / 2; // Lower threshold for large corpora
       return sortedNotes
@@ -544,6 +380,8 @@ export default class RelatedNotesPlugin extends Plugin {
     }
 
     // For normal corpora, take top N with standard threshold
-    return sortedNotes.slice(0, this.settings.maxSuggestions);
+    return sortedNotes
+      .filter(note => note.similarity >= this.settings.similarityThreshold)
+      .slice(0, this.settings.maxSuggestions);
   }
 }
