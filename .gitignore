@@ -21,3 +21,6 @@ similarity-cache.json
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
+
+# Ignore test vault by default
+test-vault/
