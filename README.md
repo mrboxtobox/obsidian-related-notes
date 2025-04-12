@@ -208,7 +208,6 @@ npm run build
 - `main.ts` - Main plugin file with core functionality and event handling
 - `core.ts` - Core similarity algorithms and providers
 - `minhash.ts` - Optimized MinHash-LSH implementation for large document collections
-- `optimized-similarity.ts` - Implementation of SimilarityProvider using optimized MinHash-LSH
 - `settings.ts` - Settings tab implementation
 - `ui.ts` - UI components and view implementations
 - `tests/` - Test suites for verifying algorithm correctness
@@ -216,6 +215,17 @@ npm run build
 - `styles.css` - Custom CSS styles
 - `manifest.json` - Plugin manifest
 - `package.json` - Project configuration and dependencies
+
+### Testing with Large Vaults
+
+For stress testing with large vaults, we've included a script to generate a test vault with 100,000 notes:
+
+```bash
+# Run the generation script (requires Python 3.6+)
+./generate-test-vault.sh
+```
+
+This creates a test vault using content from Project Gutenberg texts. The test vault is stored using Git LFS and is not cloned by default to keep repository size manageable.
 
 ### Key Dependencies
 
