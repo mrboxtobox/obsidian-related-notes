@@ -7,6 +7,8 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
     exclude: ['node_modules', '.obsidian'],
+    reporters: ['default', 'json'],
+    outputFile: 'vitest.results.json',
   },
   resolve: {
     alias: {
