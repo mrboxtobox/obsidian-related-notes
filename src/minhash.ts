@@ -83,32 +83,84 @@ function createHashCoefficients(numHashes: number, seed?: number): Array<[number
 }
 
 /**
- * Compute hash code for a string (djb2 algorithm)
- * This is a simple but effective hash function for strings
+ * Compute hash code for a string (FNV-1a algorithm)
+ * This is a fast, high-quality hash function with excellent distribution
  * @param str The string to hash
  * @returns 32-bit integer hash code
  */
 function hashString(str: string): number {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+  // FNV-1a constants (32-bit)
+  const FNV_PRIME = 16777619;
+  const FNV_OFFSET_BASIS = 2166136261;
+  
+  let hash = FNV_OFFSET_BASIS;
+  
+  // Process 4 characters at a time when possible (optimization)
+  const len = str.length;
+  let i = 0;
+  
+  // Fast path: process 4 characters at once
+  while (i + 4 <= len) {
+    // Use bit operations for faster computation
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    hash ^= str.charCodeAt(i + 1);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    hash ^= str.charCodeAt(i + 2);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    hash ^= str.charCodeAt(i + 3);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    i += 4;
   }
+  
+  // Handle remaining characters (1-3)
+  while (i < len) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME);
+    i++;
+  }
+  
   // Make sure we get a positive value
   return hash >>> 0;
 }
 
 /**
- * Generate k-shingles from a string
+ * Generate k-shingles from a string with optimized memory usage
+ * This implementation uses a Map for frequency counts to handle large documents better
  * @param text Input text
  * @param k Size of each shingle
  * @param wordLevel Whether to use word-level shingles
- * @returns Set of unique shingles
+ * @returns Set of unique shingles (with option to limit for very large documents)
  */
 function generateShingles(text: string, k: number, wordLevel: boolean = false): Set<string> {
-  const shingles = new Set<string>();
+  // Quick document size check to apply optimizations for large documents
+  const isLargeDocument = text.length > 100000;
+  
+  // For very large documents, we'll use frequency-based sampling
+  // to keep memory usage in check while maintaining quality
+  const MAX_SHINGLES = isLargeDocument ? 10000 : Number.MAX_SAFE_INTEGER;
+  
+  // Using a Map to track frequencies allows us to prioritize common shingles
+  // when we need to limit the total number
+  const shingleFreq = new Map<string, number>();
 
   // Normalize text by converting to lowercase and removing excess whitespace
-  const normalizedText = text.toLowerCase().trim().replace(/\s+/g, ' ');
+  // For very large documents, we use a more aggressive cleanup to reduce size
+  let normalizedText: string;
+  if (isLargeDocument) {
+    // More aggressive normalization for large docs
+    normalizedText = text.toLowerCase()
+      .replace(/[^\w\s]/g, ' ')  // Replace punctuation with spaces
+      .replace(/\s+/g, ' ')      // Collapse multiple spaces
+      .trim();
+  } else {
+    // Standard normalization
+    normalizedText = text.toLowerCase().trim().replace(/\s+/g, ' ');
+  }
   
   if (wordLevel) {
     // Word-level shingles
@@ -119,24 +171,54 @@ function generateShingles(text: string, k: number, wordLevel: boolean = false): 
       const effectiveK = Math.max(1, words.length);
       for (let i = 0; i <= words.length - effectiveK; i++) {
         const shingle = words.slice(i, i + effectiveK).join(' ');
-        shingles.add(shingle);
+        shingleFreq.set(shingle, (shingleFreq.get(shingle) || 0) + 1);
       }
-      return shingles;
-    }
-
-    for (let i = 0; i <= words.length - k; i++) {
-      const shingle = words.slice(i, i + k).join(' ');
-      shingles.add(shingle);
+    } else {
+      // Sampling optimization for large documents
+      const stride = isLargeDocument ? Math.max(1, Math.floor(words.length / 5000)) : 1;
+      
+      for (let i = 0; i <= words.length - k; i += stride) {
+        const shingle = words.slice(i, i + k).join(' ');
+        shingleFreq.set(shingle, (shingleFreq.get(shingle) || 0) + 1);
+        
+        // Early termination if we have too many shingles (memory optimization)
+        if (shingleFreq.size >= MAX_SHINGLES * 1.5) break;
+      }
     }
   } else {
     // Character-level shingles
     if (normalizedText.length < k) {
-      shingles.add(normalizedText);
-      return shingles;
+      shingleFreq.set(normalizedText, 1);
+    } else {
+      // Sampling optimization for large documents
+      const stride = isLargeDocument ? Math.max(1, Math.floor(normalizedText.length / 5000)) : 1;
+      
+      for (let i = 0; i <= normalizedText.length - k; i += stride) {
+        const shingle = normalizedText.slice(i, i + k);
+        shingleFreq.set(shingle, (shingleFreq.get(shingle) || 0) + 1);
+        
+        // Early termination if we have too many shingles (memory optimization)
+        if (shingleFreq.size >= MAX_SHINGLES * 1.5) break;
+      }
     }
+  }
 
-    for (let i = 0; i <= normalizedText.length - k; i++) {
-      const shingle = normalizedText.slice(i, i + k);
+  // Convert to Set, with optional limiting for large documents
+  const shingles = new Set<string>();
+  
+  if (shingleFreq.size <= MAX_SHINGLES) {
+    // Just add all shingles if we're under the limit
+    for (const shingle of shingleFreq.keys()) {
+      shingles.add(shingle);
+    }
+  } else {
+    // For very large documents, prioritize by frequency
+    const sortedShingles = Array.from(shingleFreq.entries())
+      .sort((a, b) => b[1] - a[1])  // Sort by frequency (descending)
+      .slice(0, MAX_SHINGLES)        // Take top MAX_SHINGLES
+      .map(entry => entry[0]);       // Extract just the shingle strings
+    
+    for (const shingle of sortedShingles) {
       shingles.add(shingle);
     }
   }
@@ -166,6 +248,10 @@ export class MinHashLSH implements SimilarityProvider {
 
   // Cache of already computed pair similarities
   private readonly similarityCache = new Map<string, number>();
+  
+  // Track on-demand indexing statistics
+  private _onDemandIndexedCount = 0;
+  private isInitialized = false;
 
   constructor(vault: Vault, config: Partial<MinHashConfig> = {}) {
     this.vault = vault;
@@ -261,39 +347,47 @@ export class MinHashLSH implements SimilarityProvider {
    */
   public async addDocument(file: TFile, content?: string): Promise<void> {
     try {
-      // Read and preprocess the document
-      if (!content) {
-        content = await this.vault.cachedRead(file);
-      }
-
-      // Generate shingles
-      const shingles = generateShingles(
-        content,
-        this.config.shingleSize,
-        this.config.useWordShingles
-      );
-
-      // Compute MinHash signature
-      const signature = this.computeSignature(shingles);
-
-      // Compute LSH buckets
-      const buckets = this.computeLSHBuckets(signature);
-
-      // Store the file reference
-      this.fileMap.set(file.path, file);
-
-      // Store the signature
-      this.signatures.set(file.path, signature);
-
-      // Add to LSH buckets
-      for (const [bandIdx, bucketValue] of buckets.entries()) {
-        const bandBuckets = this.lshBuckets.get(bandIdx)!;
-
-        if (!bandBuckets.has(bucketValue)) {
-          bandBuckets.set(bucketValue, new Set<string>());
+      // Check if the file is already indexed
+      if (!this.signatures.has(file.path)) {
+        // Count on-demand indexing if we're already initialized
+        if (this.isInitialized) {
+          this._onDemandIndexedCount++;
         }
-
-        bandBuckets.get(bucketValue)!.add(file.path);
+        
+        // Read and preprocess the document
+        if (!content) {
+          content = await this.vault.cachedRead(file);
+        }
+  
+        // Generate shingles
+        const shingles = generateShingles(
+          content,
+          this.config.shingleSize,
+          this.config.useWordShingles
+        );
+  
+        // Compute MinHash signature
+        const signature = this.computeSignature(shingles);
+  
+        // Compute LSH buckets
+        const buckets = this.computeLSHBuckets(signature);
+  
+        // Store the file reference
+        this.fileMap.set(file.path, file);
+  
+        // Store the signature
+        this.signatures.set(file.path, signature);
+  
+        // Add to LSH buckets
+        for (const [bandIdx, bucketValue] of buckets.entries()) {
+          const bandBuckets = this.lshBuckets.get(bandIdx)!;
+  
+          if (!bandBuckets.has(bucketValue)) {
+            bandBuckets.set(bucketValue, new Set<string>());
+          }
+  
+          bandBuckets.get(bucketValue)!.add(file.path);
+        }
       }
     } catch (error) {
       console.error(`Error processing ${file.path}:`, error);
@@ -379,36 +473,62 @@ export class MinHashLSH implements SimilarityProvider {
   }
 
   /**
-   * Initialize the LSH index with all documents in the vault
+   * Check if a file is indexed in the LSH index
+   * @param file The file to check
+   * @returns True if the file is indexed, false otherwise
+   */
+  public isFileIndexed(file: TFile): boolean {
+    return this.signatures.has(file.path);
+  }
+
+  /**
+   * Initialize the LSH index with all documents in the vault,
+   * prioritizing recently accessed files
    * @param progressCallback Optional callback for progress reporting
    */
   public async initialize(
     progressCallback?: (processed: number, total: number) => void
   ): Promise<void> {
     // Get all markdown files
-    let files = this.vault.getMarkdownFiles();
-
-    // Apply limit if configured
-    if (this.config.maxFiles && files.length > this.config.maxFiles) {
-      files = files.slice(0, this.config.maxFiles);
+    const allFiles = this.vault.getMarkdownFiles();
+    
+    // Determine if we need to prioritize files
+    const needsPrioritization = this.config.maxFiles && allFiles.length > this.config.maxFiles;
+    
+    let filesToProcess: TFile[] = allFiles;
+    
+    if (needsPrioritization) {
+      // Sort files by modification time (most recent first)
+      filesToProcess = [...allFiles].sort((a, b) => b.stat.mtime - a.stat.mtime);
+      
+      // Take a subset of prioritized files
+      // We'll get more files on-demand when they're accessed
+      filesToProcess = filesToProcess.slice(0, this.config.maxFiles);
     }
 
     // Process files in batches to avoid UI blocking
     const BATCH_SIZE = 5;
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
+      const batch = filesToProcess.slice(i, i + BATCH_SIZE);
 
       // Process batch in parallel
       await Promise.all(batch.map(file => this.addDocument(file)));
 
       // Report progress
       if (progressCallback) {
-        progressCallback(i + batch.length, files.length);
+        // Report progress against total files, not just the prioritized ones
+        // This gives a more accurate indication of completion
+        const processed = Math.min(i + batch.length, filesToProcess.length);
+        const percentage = Math.floor((processed / filesToProcess.length) * 100);
+        progressCallback(percentage, 100);
       }
 
       // Yield to main thread to avoid UI blocking
       await this.yieldToMain();
     }
+    
+    // Mark as initialized so we can track on-demand indexing
+    this.isInitialized = true;
   }
 
   /**
@@ -677,7 +797,9 @@ export class MinHashLSH implements SimilarityProvider {
       totalBuckets,
       maxBucketSize,
       avgBucketSize,
-      cacheSize: this.similarityCache.size
+      cacheSize: this.similarityCache.size,
+      onDemandIndexedCount: this._onDemandIndexedCount,
+      totalIndexedCount: this.signatures.size
     };
   }
   

@@ -45,6 +45,15 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    // Add version information at the top
+    containerEl.createEl('h2', { text: 'Related Notes' });
+    containerEl.createEl('p', { 
+      text: `Version: ${this.plugin.manifest.version}`,
+      cls: 'related-notes-version-info'
+    });
+    
+    containerEl.createEl('hr');
+
     new Setting(containerEl)
       .setName('Maximum Suggestions')
       .setDesc('Maximum number of related notes to display (1-20)')

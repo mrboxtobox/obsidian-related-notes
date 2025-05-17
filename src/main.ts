@@ -16,6 +16,8 @@ export interface MemoryStats {
   avgBucketSize: number;
   cacheSize: number;
   estimatedMemoryUsage: number;
+  onDemandIndexedCount: number;
+  totalIndexedCount: number;
 }
 
 export interface NLPStats {
@@ -72,12 +74,20 @@ export default class RelatedNotesPlugin extends Plugin {
     this.registerEventHandlers();
     this.isInitialized = false;
 
+    // Determine the best similarity provider based on vault size
+    const files = this.app.vault.getMarkdownFiles();
+    const isLargeVault = files.length > 10000;
+    
     // Always use SimHash for better similarity detection
+    // SimHash is faster and more memory-efficient for large vaults
     this.similarityProvider = new SimHashProvider(this.app.vault, {
       simhash: {
+        // For large vaults, use more aggressive chunking and larger shingles
         hashBits: 64,
-        shingleSize: 2,
-        useChunkIndex: true
+        shingleSize: isLargeVault ? 3 : 2, // Larger shingles for better quality in large vaults
+        useChunkIndex: true,
+        chunkCount: isLargeVault ? 8 : 4,  // More chunks for better indexing in large vaults
+        maxDistance: Math.floor((1 - this.settings.similarityThreshold) * 64) // Adaptive distance threshold
       },
       similarityThreshold: this.settings.similarityThreshold,
       maxRelatedNotes: this.settings.maxSuggestions
@@ -85,41 +95,83 @@ export default class RelatedNotesPlugin extends Plugin {
 
     this.statusBarItem.setText("Ready (indexing in background)");
 
-    // Defer initialization to prevent UI blocking during startup
-    setTimeout(() => {
+    // Use requestAnimationFrame for more responsive UI during initialization
+    // This helps prevent UI blocking better than setTimeout
+    requestAnimationFrame(() => {
       this.initializeSimilarityProvider();
-    }, 1000);
+    });
   }
 
+  /**
+   * Initialize the similarity provider with progress reporting
+   * This is optimized to minimize UI updates and be more efficient
+   */
   private async initializeSimilarityProvider() {
     this.statusBarItem.setText("Loading related notes...");
-    await this.similarityProvider.initialize((percent) => {
-      let message = "";
-      let phase = "";
-
-      if (percent <= 25) {
-        phase = "Reading your notes";
-      } else if (percent <= 50) {
-        phase = "Analyzing patterns";
-      } else if (percent <= 75) {
-        phase = "Finding connections";
-      } else {
-        phase = "Building relationships";
+    
+    // Track last update time to throttle UI updates
+    let lastUpdateTime = 0;
+    const MIN_UPDATE_INTERVAL = 100; // Update UI at most every 100ms
+    
+    // Define phases for better user experience
+    const phases = [
+      { threshold: 25, message: "Reading your notes" },
+      { threshold: 50, message: "Analyzing patterns" },
+      { threshold: 75, message: "Finding connections" },
+      { threshold: 100, message: "Building relationships" }
+    ];
+    
+    // Current phase to avoid redundant updates
+    let currentPhase = -1;
+    
+    await this.similarityProvider.initialize((percent, total) => {
+      const now = Date.now();
+      
+      // Skip updates that are too frequent (throttling)
+      if (now - lastUpdateTime < MIN_UPDATE_INTERVAL) {
+        return;
       }
-      message = `${phase}... ${percent}%`;
-
-      this.statusBarItem.setText(message);
+      
+      // Determine the current phase
+      let phaseIndex = 0;
+      for (let i = 0; i < phases.length; i++) {
+        if (percent <= phases[i].threshold) {
+          phaseIndex = i;
+          break;
+        }
+      }
+      
+      // Only update if phase changed or significant progress (5% increments)
+      if (phaseIndex !== currentPhase || Math.floor(percent / 5) !== Math.floor((percent - 1) / 5)) {
+        currentPhase = phaseIndex;
+        const phase = phases[phaseIndex].message;
+        const message = `${phase}... ${percent}%`;
+        this.statusBarItem.setText(message);
+        lastUpdateTime = now;
+      }
     });
 
-    // Update file access times for all files to prioritize them correctly
+    // Optimized file access time updates in batches
     const allFiles = this.app.vault.getMarkdownFiles();
-    for (const file of allFiles) {
-      if ('updateFileAccessTime' in this.similarityProvider) {
-        this.similarityProvider.updateFileAccessTime(file);
+    if ('updateFileAccessTime' in this.similarityProvider) {
+      // Process in batches to avoid UI blocking
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < allFiles.length; i += BATCH_SIZE) {
+        const batch = allFiles.slice(i, i + BATCH_SIZE);
+        
+        // Update access times for this batch
+        batch.forEach(file => {
+          this.similarityProvider.updateFileAccessTime(file);
+        });
+        
+        // Yield to main thread after each batch
+        if (i + BATCH_SIZE < allFiles.length) {
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+        }
       }
     }
 
-    // Check if corpus is sampled (using a subset of notes)
+    // Update UI based on corpus sampling status
     if (this.similarityProvider.isCorpusSampled()) {
       this.statusBarItem.setText("⚠️ Using a sample of your notes");
       this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
@@ -129,6 +181,7 @@ export default class RelatedNotesPlugin extends Plugin {
       this.statusBarItem.removeAttribute('aria-label');
       this.statusBarItem.removeAttribute('title');
     }
+    
     this.isInitialized = true;
   }
 
@@ -331,7 +384,10 @@ export default class RelatedNotesPlugin extends Plugin {
       estimatedMemoryUsage: Math.round(
         (stats.numDocuments || 0) * 500 + // 500 bytes per document signature
         (stats.commonTermsCacheSize || 0) * 200 / 1024 // 200 bytes per cache entry
-      )
+      ),
+      // On-demand indexing stats
+      onDemandIndexedCount: stats.onDemandIndexedCount || 0,
+      totalIndexedCount: stats.totalIndexedCount || 0
     };
   }
 
@@ -348,12 +404,50 @@ export default class RelatedNotesPlugin extends Plugin {
     await view.updateForFile(file, relatedNotes);
   }
 
+  /**
+   * Gets related notes for a file, ensuring the file is indexed first if needed
+   * @param file File to find related notes for
+   * @returns Array of related notes
+   */
   private async getRelatedNotes(file: TFile): Promise<Array<RelatedNote>> {
+    // First, ensure the current file is indexed
+    // This handles the case where the current file wasn't part of the initial indexing
+    await this.ensureFileIsIndexed(file);
+    
     // Get pre-indexed candidates
     const candidates = this.similarityProvider.getCandidateFiles(file);
-
+    
+    // Create a set of files to check for on-demand indexing
+    // This ensures we don't do duplicate work
+    const filesToEnsureIndexed = new Set<TFile>();
+    
+    // For each candidate, make sure it's indexed
+    for (const candidate of candidates) {
+      filesToEnsureIndexed.add(candidate);
+    }
+    
+    // If we're in a large vault and didn't find enough candidates,
+    // add a sample of other files that might not be indexed yet
+    if (this.similarityProvider.isCorpusSampled() && candidates.length < this.settings.maxSuggestions) {
+      // Get a small random sample of files that might not be indexed
+      const additionalCandidates = this.getAdditionalCandidates(file, 10);
+      for (const candidate of additionalCandidates) {
+        filesToEnsureIndexed.add(candidate);
+      }
+    }
+    
+    // Ensure all candidates are indexed (in parallel)
+    if (filesToEnsureIndexed.size > 0) {
+      await Promise.all(
+        Array.from(filesToEnsureIndexed).map(f => this.ensureFileIsIndexed(f))
+      );
+    }
+    
+    // Now get the updated list of candidates (should include newly indexed files)
+    const updatedCandidates = this.similarityProvider.getCandidateFiles(file);
+    
     // Calculate similarities for all candidates
-    const similarityPromises = candidates.map(async (candidate) => {
+    const similarityPromises = updatedCandidates.map(async (candidate) => {
       const similarity = await this.similarityProvider.computeCappedCosineSimilarity(file, candidate);
       return {
         file: candidate,
@@ -380,5 +474,80 @@ export default class RelatedNotesPlugin extends Plugin {
     return sortedNotes
       .filter(note => note.similarity >= this.settings.similarityThreshold)
       .slice(0, this.settings.maxSuggestions);
+  }
+  
+  /**
+   * Ensures a file is indexed in the similarity provider
+   * @param file The file to ensure is indexed
+   */
+  private async ensureFileIsIndexed(file: TFile): Promise<void> {
+    // Skip non-markdown files
+    if (!this.isMarkdownFile(file)) return;
+    
+    try {
+      // Check if the file is already indexed
+      // Using a method that uses type checking to see if the method exists
+      if ('isFileIndexed' in this.similarityProvider) {
+        const isIndexed = (this.similarityProvider as any).isFileIndexed(file);
+        if (isIndexed) return; // Already indexed, nothing to do
+      }
+      
+      // Update file access time to prioritize it in the future
+      if ('updateFileAccessTime' in this.similarityProvider) {
+        this.similarityProvider.updateFileAccessTime(file);
+      }
+      
+      // Add the document to the index
+      await this.similarityProvider.addDocument(file);
+    } catch (error) {
+      console.error(`Error ensuring file ${file.path} is indexed:`, error);
+    }
+  }
+  
+  /**
+   * Gets additional candidate files that might not be indexed yet
+   * This is used to expand search results in large vaults
+   * @param currentFile Current file to avoid including in results
+   * @param count Maximum number of additional files to include
+   * @returns Array of TFile objects
+   */
+  private getAdditionalCandidates(currentFile: TFile, count: number): TFile[] {
+    // Get all markdown files
+    const allFiles = this.app.vault.getMarkdownFiles();
+    
+    // Filter out the current file
+    const otherFiles = allFiles.filter(f => f.path !== currentFile.path);
+    
+    // If we have fewer files than requested, return all of them
+    if (otherFiles.length <= count) return otherFiles;
+    
+    // Create a prioritized list based on:
+    // 1. Recently accessed files (if we have access times)
+    // 2. Recently modified files
+    // 3. Files in the same folder as the current file
+    
+    // Sort by modification time (most recent first)
+    otherFiles.sort((a, b) => b.stat.mtime - a.stat.mtime);
+    
+    // Take a mix of:
+    // - Some recent files (60%)
+    // - Some random files from the rest (40%)
+    const recentCount = Math.ceil(count * 0.6);
+    const randomCount = count - recentCount;
+    
+    const result: TFile[] = [];
+    
+    // Add recent files
+    result.push(...otherFiles.slice(0, recentCount));
+    
+    // Add some random files from the remainder
+    const remainingFiles = otherFiles.slice(recentCount);
+    for (let i = 0; i < randomCount && remainingFiles.length > 0; i++) {
+      const randomIndex = Math.floor(Math.random() * remainingFiles.length);
+      result.push(remainingFiles[randomIndex]);
+      remainingFiles.splice(randomIndex, 1);
+    }
+    
+    return result;
   }
 }
