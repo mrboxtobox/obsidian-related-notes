@@ -16,7 +16,6 @@ export interface RelatedNotesSettings {
   similarityThreshold: number;
   batchSize: number;
   priorityIndexSize: number;
-  onDemandComputationEnabled: boolean;
   disableIncrementalUpdates: boolean;
   showStats: boolean;
 }
@@ -29,7 +28,6 @@ export const DEFAULT_SETTINGS: RelatedNotesSettings = {
   similarityThreshold: 0.3,
   batchSize: 1,
   priorityIndexSize: 10000,
-  onDemandComputationEnabled: true,
   disableIncrementalUpdates: false,
   showStats: false
 };
@@ -46,6 +44,15 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+
+    // Add version information at the top
+    containerEl.createEl('h2', { text: 'Related Notes' });
+    containerEl.createEl('p', { 
+      text: `Version: ${this.plugin.manifest.version}`,
+      cls: 'related-notes-version-info'
+    });
+    
+    containerEl.createEl('hr');
 
     new Setting(containerEl)
       .setName('Maximum Suggestions')
@@ -72,9 +79,8 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
       cls: 'mod-cta'
     });
 
-    // Disable the button if indexing is already in progress, initialization is not complete,
-    // or on-demand computation is disabled
-    if (this.plugin.isReindexingInProgress() || !this.plugin.isInitializationComplete() || !this.plugin.settings.onDemandComputationEnabled) {
+    // Disable the button if indexing is already in progress or initialization is not complete
+    if (this.plugin.isReindexingInProgress() || !this.plugin.isInitializationComplete()) {
       this.reindexButton.disabled = true;
 
       // Set appropriate tooltip based on the reason for disabling
@@ -82,8 +88,6 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         this.reindexButton.title = "Re-indexing is already in progress";
       } else if (!this.plugin.isInitializationComplete()) {
         this.reindexButton.title = "Initial indexing is still in progress";
-      } else if (!this.plugin.settings.onDemandComputationEnabled) {
-        this.reindexButton.title = "Re-indexing is disabled when on-demand computation is turned off";
       }
     }
 
