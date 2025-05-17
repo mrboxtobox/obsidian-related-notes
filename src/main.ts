@@ -2,7 +2,7 @@ import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian'
 import { RelatedNote, SimilarityProvider } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
-import { Logger } from './logger';
+import { getLogger, Logger } from './logger';
 import { SimHashProvider } from './similarity';
 
 'use strict';
@@ -31,6 +31,10 @@ export interface NLPStats {
   onDemandComputations: number;
 }
 
+// Global variables defined in esbuild config
+declare const PLUGIN_VERSION: string;
+declare const DEBUG_MODE: boolean;
+
 export default class RelatedNotesPlugin extends Plugin {
   settings!: RelatedNotesSettings;
   similarityProvider!: SimilarityProvider;
@@ -38,8 +42,13 @@ export default class RelatedNotesPlugin extends Plugin {
   private isInitialized = false;
   private isReindexing = false;
   private reindexCancelled = false;
+  private logger!: Logger;
 
   async onload() {
+    // Initialize logger
+    this.logger = getLogger('Plugin');
+    this.logger.info(`Related Notes Plugin v${PLUGIN_VERSION} loading...`);
+    
     await this.loadSettings();
 
     this.registerCommands();
@@ -50,6 +59,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Defer heavy initialization until layout is ready
     this.app.workspace.onLayoutReady(async () => {
+      this.logger.info("Layout ready, initializing plugin...");
       await this.initializePlugin();
     });
   }
@@ -63,6 +73,7 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async initializePlugin() {
+    this.logger.debug("Initializing plugin components...");
     this.registerView(
       RELATED_NOTES_VIEW_TYPE,
       (leaf: WorkspaceLeaf) => new RelatedNotesView(leaf, this)
@@ -72,14 +83,25 @@ export default class RelatedNotesPlugin extends Plugin {
       () => this.createAndInitializeView());
 
     this.registerEventHandlers();
+    // Make sure isInitialized starts as false
     this.isInitialized = false;
 
     // Determine the best similarity provider based on vault size
     const files = this.app.vault.getMarkdownFiles();
     const isLargeVault = files.length > 10000;
+    this.logger.info(`Vault analysis: ${files.length} markdown files found (${isLargeVault ? 'large' : 'standard'} vault mode)`);
+
     
     // Always use SimHash for better similarity detection
     // SimHash is faster and more memory-efficient for large vaults
+    this.logger.debug("Initializing SimHash provider with parameters:",
+      {
+        hashBits: 64,
+        shingleSize: isLargeVault ? 3 : 2,
+        chunkCount: isLargeVault ? 8 : 4,
+        threshold: this.settings.similarityThreshold
+      });
+
     this.similarityProvider = new SimHashProvider(this.app.vault, {
       simhash: {
         // For large vaults, use more aggressive chunking and larger shingles
@@ -93,13 +115,13 @@ export default class RelatedNotesPlugin extends Plugin {
       maxRelatedNotes: this.settings.maxSuggestions
     });
 
-    this.statusBarItem.setText("Ready (indexing in background)");
+    this.statusBarItem.setText("Initializing similarity engine...");
+    this.logger.info("Starting similarity provider initialization...");
 
-    // Use requestAnimationFrame for more responsive UI during initialization
-    // This helps prevent UI blocking better than setTimeout
-    requestAnimationFrame(() => {
-      this.initializeSimilarityProvider();
-    });
+    // Instead of deferring initialization with requestAnimationFrame,
+    // directly initialize the similarity provider to ensure it's ready
+    // before we try to use it for finding related notes
+    await this.initializeSimilarityProvider();
   }
 
   /**
@@ -107,6 +129,7 @@ export default class RelatedNotesPlugin extends Plugin {
    * This is optimized to minimize UI updates and be more efficient
    */
   private async initializeSimilarityProvider() {
+    this.logger.info("Starting similarity provider initialization...");
     this.statusBarItem.setText("Loading related notes...");
     
     // Track last update time to throttle UI updates
@@ -123,6 +146,10 @@ export default class RelatedNotesPlugin extends Plugin {
     
     // Current phase to avoid redundant updates
     let currentPhase = -1;
+    let lastLoggedPercent = 0;
+    
+    // IMPORTANT: Don't set isInitialized until the provider is fully initialized
+    this.isInitialized = false;
     
     await this.similarityProvider.initialize((percent, total) => {
       const now = Date.now();
@@ -148,8 +175,16 @@ export default class RelatedNotesPlugin extends Plugin {
         const message = `${phase}... ${percent}%`;
         this.statusBarItem.setText(message);
         lastUpdateTime = now;
+        
+        // Log progress at 25% intervals to avoid log spam
+        if (Math.floor(percent / 25) > Math.floor(lastLoggedPercent / 25)) {
+          this.logger.info(`Initialization progress: ${percent}% (${phase})`);
+          lastLoggedPercent = percent;
+        }
       }
     });
+    
+    this.logger.info("Similarity provider initialization complete");
 
     // Optimized file access time updates in batches
     const allFiles = this.app.vault.getMarkdownFiles();
@@ -182,6 +217,7 @@ export default class RelatedNotesPlugin extends Plugin {
       this.statusBarItem.removeAttribute('title');
     }
     
+    // Now that provider is fully initialized, set isInitialized flag
     this.isInitialized = true;
   }
 
@@ -410,12 +446,23 @@ export default class RelatedNotesPlugin extends Plugin {
    * @returns Array of related notes
    */
   private async getRelatedNotes(file: TFile): Promise<Array<RelatedNote>> {
+    this.logger.debug(`Getting related notes for ${file.path}`);
+    
+    // Make sure initialization is complete before finding related notes
+    if (!this.isInitialized) {
+      this.logger.warn("Similarity provider not fully initialized yet, waiting for initialization...");
+      this.statusBarItem.setText("Finishing initialization...");
+      await this.waitForInitialization();
+      this.logger.debug("Initialization complete, continuing with related notes lookup");
+    }
+    
     // First, ensure the current file is indexed
     // This handles the case where the current file wasn't part of the initial indexing
     await this.ensureFileIsIndexed(file);
     
     // Get pre-indexed candidates
     const candidates = this.similarityProvider.getCandidateFiles(file);
+    this.logger.debug(`Found ${candidates.length} candidate files for ${file.path}`);
     
     // Create a set of files to check for on-demand indexing
     // This ensures we don't do duplicate work
@@ -431,6 +478,7 @@ export default class RelatedNotesPlugin extends Plugin {
     if (this.similarityProvider.isCorpusSampled() && candidates.length < this.settings.maxSuggestions) {
       // Get a small random sample of files that might not be indexed
       const additionalCandidates = this.getAdditionalCandidates(file, 10);
+      this.logger.debug(`Adding ${additionalCandidates.length} additional candidates for large vault`);
       for (const candidate of additionalCandidates) {
         filesToEnsureIndexed.add(candidate);
       }
@@ -438,6 +486,7 @@ export default class RelatedNotesPlugin extends Plugin {
     
     // Ensure all candidates are indexed (in parallel)
     if (filesToEnsureIndexed.size > 0) {
+      this.logger.debug(`Ensuring ${filesToEnsureIndexed.size} files are indexed`);
       await Promise.all(
         Array.from(filesToEnsureIndexed).map(f => this.ensureFileIsIndexed(f))
       );
@@ -445,6 +494,7 @@ export default class RelatedNotesPlugin extends Plugin {
     
     // Now get the updated list of candidates (should include newly indexed files)
     const updatedCandidates = this.similarityProvider.getCandidateFiles(file);
+    this.logger.debug(`After indexing, found ${updatedCandidates.length} candidate files for ${file.path}`);
     
     // Calculate similarities for all candidates
     const similarityPromises = updatedCandidates.map(async (candidate) => {
@@ -457,6 +507,7 @@ export default class RelatedNotesPlugin extends Plugin {
     });
 
     const relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
+    this.logger.debug(`Computed similarities for ${relatedNotes.length} candidates`);
 
     // Sort by similarity (highest first)
     const sortedNotes = relatedNotes.sort((a, b) => b.similarity - a.similarity);
@@ -465,15 +516,40 @@ export default class RelatedNotesPlugin extends Plugin {
     if (this.similarityProvider.isCorpusSampled()) {
       // Return up to maxSuggestions*2 notes for large corpora, but ensure they have some relevance
       const minSimilarity = this.settings.similarityThreshold / 2; // Lower threshold for large corpora
-      return sortedNotes
+      const filteredNotes = sortedNotes
         .filter(note => note.similarity >= minSimilarity)
         .slice(0, this.settings.maxSuggestions * 2);
+      
+      this.logger.debug(`Returning ${filteredNotes.length} related notes for large corpus (threshold: ${minSimilarity})`);
+      return filteredNotes;
     }
 
     // For normal corpora, take top N with standard threshold
-    return sortedNotes
+    const filteredNotes = sortedNotes
       .filter(note => note.similarity >= this.settings.similarityThreshold)
       .slice(0, this.settings.maxSuggestions);
+    
+    this.logger.debug(`Returning ${filteredNotes.length} related notes (threshold: ${this.settings.similarityThreshold})`);
+    return filteredNotes;
+  }
+  
+  /**
+   * Wait for initialization to complete
+   * @returns Promise that resolves when initialization is complete
+   */
+  private async waitForInitialization(): Promise<void> {
+    // If already initialized, return immediately
+    if (this.isInitialized) return;
+    
+    // Otherwise wait for initialization to complete
+    return new Promise<void>((resolve) => {
+      const checkInterval = setInterval(() => {
+        if (this.isInitialized) {
+          clearInterval(checkInterval);
+          resolve();
+        }
+      }, 100);
+    });
   }
   
   /**
@@ -485,12 +561,23 @@ export default class RelatedNotesPlugin extends Plugin {
     if (!this.isMarkdownFile(file)) return;
     
     try {
+      // Wait for initialization if needed
+      if (!this.isInitialized) {
+        this.logger.debug(`Waiting for initialization before indexing ${file.path}`);
+        await this.waitForInitialization();
+      }
+      
       // Check if the file is already indexed
       // Using a method that uses type checking to see if the method exists
       if ('isFileIndexed' in this.similarityProvider) {
         const isIndexed = (this.similarityProvider as any).isFileIndexed(file);
-        if (isIndexed) return; // Already indexed, nothing to do
+        if (isIndexed) {
+          this.logger.debug(`File ${file.path} is already indexed`);
+          return; // Already indexed, nothing to do
+        }
       }
+      
+      this.logger.debug(`Indexing file: ${file.path}`);
       
       // Update file access time to prioritize it in the future
       if ('updateFileAccessTime' in this.similarityProvider) {
@@ -498,8 +585,14 @@ export default class RelatedNotesPlugin extends Plugin {
       }
       
       // Add the document to the index
-      await this.similarityProvider.addDocument(file);
+      if ('addDocument' in this.similarityProvider && this.similarityProvider.addDocument) {
+        await this.similarityProvider.addDocument(file);
+        this.logger.debug(`Successfully indexed file: ${file.path}`);
+      } else {
+        this.logger.warn(`Could not add document ${file.path} - method not available`);
+      }
     } catch (error) {
+      this.logger.error(`Error ensuring file ${file.path} is indexed:`, error);
       console.error(`Error ensuring file ${file.path} is indexed:`, error);
     }
   }

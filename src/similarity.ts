@@ -4,6 +4,7 @@
 
 import { TFile, Vault } from 'obsidian';
 import { SimHash, SimHashStats, SimHashConfig } from './simhash';
+import { getLogger, Logger } from './logger';
 
 /**
  * Interface for similarity information
@@ -85,6 +86,7 @@ export class SimHashProvider implements SimilarityProvider {
   private readonly simhash: SimHash;
   private readonly similarityThreshold: number;
   private readonly maxRelatedNotes: number;
+  private readonly logger: Logger;
   
   // Track file access times for prioritization
   private readonly fileAccessTimes = new Map<string, number>();
@@ -103,6 +105,8 @@ export class SimHashProvider implements SimilarityProvider {
   
   constructor(vault: Vault, config: SimHashProviderConfig = {}) {
     this.vault = vault;
+    this.logger = getLogger('SimHashProvider');
+    this.logger.debug('Creating SimHash provider with config:', config);
     this.simhash = new SimHash(vault, config.simhash);
     this.similarityThreshold = config.similarityThreshold || 0.3;
     this.maxRelatedNotes = config.maxRelatedNotes || 10;
@@ -114,9 +118,37 @@ export class SimHashProvider implements SimilarityProvider {
    * @returns Array of candidate similar files
    */
   public getCandidateFiles(file: TFile): TFile[] {
+    this.logger.info(`=== Finding candidate files for ${file.path} ===`);
+    
+    // Check if file is indexed first
+    const fileIndexed = this.isFileIndexed(file);
+    this.logger.info(`File ${file.path} indexed: ${fileIndexed}`);
+    
+    const stats = this.simhash.getStats();
+    this.logger.info(`SimHash stats: ${stats.numDocuments} documents indexed`);
+    
     // SimHash directly finds similar files
     const maxDistance = Math.floor((1 - this.similarityThreshold) * 64); // For 64-bit SimHash
+    this.logger.info(`Using maxDistance=${maxDistance} for similarityThreshold=${this.similarityThreshold}`);
+    this.logger.info(`maxRelatedNotes limit: ${this.maxRelatedNotes}`);
+    
     const similars = this.simhash.findSimilarDocuments(file, maxDistance, this.maxRelatedNotes);
+    this.logger.info(`Found ${similars.length} candidate files for ${file.path}`);
+    
+    if (similars.length === 0) {
+      this.logger.warn(`=== NO CANDIDATES FOUND DEBUG INFO ===`);
+      this.logger.warn(`- File indexed: ${fileIndexed}`);
+      this.logger.warn(`- Total documents: ${stats.numDocuments}`);
+      this.logger.warn(`- maxDistance: ${maxDistance} (out of 64 bits)`);
+      this.logger.warn(`- Threshold: ${this.similarityThreshold}`);
+      this.logger.warn(`- Chunk index enabled: ${(this.simhash as any).config.useChunkIndex}`);
+    } else {
+      this.logger.info(`=== CANDIDATES FOUND ===`);
+      similars.forEach((sim, idx) => {
+        this.logger.info(`  ${idx + 1}. ${sim.file.path} - distance: ${sim.distance}, similarity: ${sim.similarity.toFixed(3)}`);
+      });
+    }
+    
     return similars.map(item => item.file);
   }
   
@@ -127,8 +159,21 @@ export class SimHashProvider implements SimilarityProvider {
    * @returns Object with similarity information
    */
   public async computeCappedCosineSimilarity(file1: TFile, file2: TFile): Promise<SimilarityInfo> {
+    this.logger.debug(`Computing similarity between ${file1.path} and ${file2.path}`);
+    
     // SimHash already computes similarity during findSimilarDocuments
     // But for direct comparison, we can use the SimHash values to compute a similarity score
+    
+    // Make sure both files are indexed first
+    if (!this.isFileIndexed(file1)) {
+      this.logger.debug(`File ${file1.path} not indexed, adding...`);
+      await this.addDocument(file1);
+    }
+    
+    if (!this.isFileIndexed(file2)) {
+      this.logger.debug(`File ${file2.path} not indexed, adding...`);
+      await this.addDocument(file2);
+    }
     
     // Get the SimHash values from the index (accessing private property)
     const documentHashes = (this.simhash as any).documentHashes;
@@ -136,6 +181,7 @@ export class SimHashProvider implements SimilarityProvider {
     const hash2 = documentHashes.get(file2.path);
     
     if (!hash1 || !hash2) {
+      this.logger.warn(`Missing hash for ${!hash1 ? file1.path : ''} ${!hash2 ? file2.path : ''}`);
       return { similarity: 0 };
     }
     
@@ -155,6 +201,8 @@ export class SimHashProvider implements SimilarityProvider {
     const hashBits = (this.simhash as any).config.hashBits;
     const similarity = 1 - (distance / hashBits);
     
+    this.logger.info(`Similarity between ${file1.path} and ${file2.path}: ${similarity.toFixed(3)} (distance: ${distance}/${hashBits} bits)`);
+    
     return { 
       similarity,
       file: file2,
@@ -169,12 +217,17 @@ export class SimHashProvider implements SimilarityProvider {
   public async initialize(progressCallback?: (processed: number, total: number) => void): Promise<void> {
     // Get all markdown files
     const allFiles = this.vault.getMarkdownFiles();
+    this.logger.info(`Initializing SimHash provider with ${allFiles.length} markdown files`);
     
     // Determine if corpus is large (more than 10000 files)
     this._isCorpusSampled = allFiles.length > 10000;
+    if (this._isCorpusSampled) {
+      this.logger.warn(`Large vault detected (${allFiles.length} files). Using sampled corpus for better performance.`);
+    }
     
     await this.simhash.initialize(progressCallback);
     this.isInitialized = true;
+    this.logger.info('SimHash provider initialization complete');
   }
   
   /**
@@ -198,13 +251,17 @@ export class SimHashProvider implements SimilarityProvider {
    * @param onProgress Optional callback for progress reporting
    */
   public async forceReindex(onProgress?: (processed: number, total: number) => void): Promise<void> {
+    this.logger.info('Starting forced re-indexing of all documents');
+    
     // Clear cache
     this.commonTermsCache.clear();
+    this.logger.debug('Cleared common terms cache');
     
     // Instead of recreating the SimHash, we'll just reinitialize it
     // since the simhash property is readonly
     
     // Reinitialize by recreating the internal data structures
+    this.logger.debug('Clearing SimHash internal data structures');
     (this.simhash as any).documentHashes.clear();
     (this.simhash as any).fileMap.clear();
     
@@ -214,9 +271,14 @@ export class SimHashProvider implements SimilarityProvider {
       }
     }
     
+    // Reset on-demand indexing counter
+    this._onDemandIndexedCount = 0;
+    
     // Reinitialize
+    this.logger.debug('Starting reinitialization process');
     this.isInitialized = false;
     await this.initialize(onProgress);
+    this.logger.info('Forced re-indexing complete');
   }
   
   /**
@@ -230,7 +292,10 @@ export class SimHashProvider implements SimilarityProvider {
       // If not, this is an on-demand indexing
       if (this.isInitialized) {
         this._onDemandIndexedCount++;
+        this.logger.debug(`On-demand indexing for file: ${file.path} (total on-demand: ${this._onDemandIndexedCount})`);
       }
+    } else {
+      this.logger.debug(`File already indexed, updating: ${file.path}`);
     }
     
     await this.simhash.addDocument(file, content);
@@ -321,48 +386,4 @@ export class SimHashProvider implements SimilarityProvider {
       totalIndexedCount: simhashStats.numDocuments || 0
     };
   }
-}
-
-/**
- * Factory for creating the appropriate similarity provider
- * based on configuration and corpus size
- */
-export function createSimilarityProvider(vault: Vault, config: any = {}): SimilarityProvider {
-  const files = vault.getMarkdownFiles();
-  
-  // Use SimHash for very large corpora or if specified
-  if (config.useSimHash || files.length > 10000) {
-    return new SimHashProvider(vault, {
-      simhash: {
-        hashBits: 64,
-        shingleSize: 2,
-        useChunkIndex: true
-      },
-      similarityThreshold: 0.7,
-      maxRelatedNotes: 20
-    });
-  }
-  
-  // Use MinHash-LSH for medium to large corpora
-  if (files.length > 1000) {
-    // Import dynamically to avoid circular dependencies
-    const { MinHashLSH } = require('./minhash');
-    return new MinHashLSH(vault, {
-      numHashes: 100,
-      numBands: 20,
-      rowsPerBand: 5,
-      shingleSize: 3,
-      useWordShingles: true
-    });
-  }
-  
-  // Default to MinHash with fewer hashes for smaller corpora
-  const { MinHashLSH } = require('./minhash');
-  return new MinHashLSH(vault, {
-    numHashes: 64,
-    numBands: 16,
-    rowsPerBand: 4,
-    shingleSize: 2,
-    useWordShingles: true
-  });
 }

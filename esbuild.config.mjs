@@ -44,7 +44,9 @@ const context = await esbuild.context({
 	outfile: "main.js",
 	define: {
 		// Set DEBUG_MODE to false in production, true in development
-		DEBUG_MODE: prod ? "false" : "true"
+		DEBUG_MODE: prod && !process.argv.includes("dev-build") ? "false" : "true",
+		// Version string for logging
+		PLUGIN_VERSION: `"${process.env.npm_package_version || '1.0.4'}"`,
 	},
 });
 

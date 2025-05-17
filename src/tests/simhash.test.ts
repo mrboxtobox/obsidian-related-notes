@@ -2,8 +2,14 @@
  * @file Tests for the SimHash implementation
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, beforeAll } from 'vitest';
 import { SimHash } from '../simhash';
+
+// Define DEBUG_MODE for tests
+// This is defined by esbuild at build time, but needs to be set for tests
+if (typeof DEBUG_MODE === 'undefined') {
+  (global as any).DEBUG_MODE = false;
+}
 
 // Mock TFile and Vault
 const mockFile = (path: string) => ({

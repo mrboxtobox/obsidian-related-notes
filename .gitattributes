@@ -1,1 +1,2 @@
 test-vault/** filter=lfs diff=lfs merge=lfs -text
+test-vault/*.md filter=lfs diff=lfs merge=lfs -text

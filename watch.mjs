@@ -28,6 +28,9 @@ function copyFiles() {
   });
 }
 
+// Check if debugging is enabled
+const debugBuild = process.argv.includes("dev-build");
+
 const context = await esbuild.context({
   banner: { js: banner },
   entryPoints: ["src/main.ts"],
@@ -58,6 +61,12 @@ const context = await esbuild.context({
   sourcemap: "inline",
   treeShaking: true,
   outfile: "main.js",
+  define: {
+    // Enable debug mode
+    DEBUG_MODE: "true",
+    // Pass debugging flag
+    PLUGIN_VERSION: `"${process.env.npm_package_version || '1.0.4'}"`,
+  },
   plugins: [{
     name: 'watch-plugin',
     setup(build) {

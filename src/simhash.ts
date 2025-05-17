@@ -3,6 +3,7 @@
  */
 
 import { TFile, Vault } from 'obsidian';
+import { getLogger, Logger } from './logger';
 
 /**
  * Statistics for the SimHash implementation
@@ -155,8 +156,11 @@ async function generateSimHash(text: string, config: SimHashConfig): Promise<big
 
 /**
  * Yield to the main thread to avoid UI blocking
+ * This is a utility function that helps prevent UI freezing during intensive operations
+ * by allowing other events in the JavaScript event loop to be processed
+ * @returns Promise that resolves after yielding
  */
-async function yieldToMain(): Promise<void> {
+export async function yieldToMain(): Promise<void> {
   return new Promise<void>(resolve => setTimeout(resolve, 0));
 }
 
@@ -211,6 +215,7 @@ function hammingDistance(a: bigint, b: bigint): number {
 export class SimHash {
   private readonly config: SimHashConfig;
   private readonly vault: Vault;
+  private readonly logger: Logger;
   
   // Document hashes (document path -> SimHash)
   private readonly documentHashes = new Map<string, bigint>();
@@ -228,11 +233,15 @@ export class SimHash {
   
   constructor(vault: Vault, config: Partial<SimHashConfig> = {}) {
     this.vault = vault;
+    this.logger = getLogger('SimHash');
     this.config = { ...DEFAULT_SIMHASH_CONFIG, ...config };
+    
+    this.logger.debug('SimHash initialized with config:', this.config);
     
     // Initialize chunk index if enabled
     if (this.config.useChunkIndex) {
       const bitsPerChunk = Math.floor(this.config.hashBits / this.config.chunkCount);
+      this.logger.debug(`Creating chunk index with ${this.config.chunkCount} chunks of ${bitsPerChunk} bits each`);
       for (let i = 0; i < this.config.chunkCount; i++) {
         this.chunkIndex.set(i, new Map<number, Set<string>>());
       }
@@ -256,8 +265,16 @@ export class SimHash {
         content = await this.vault.cachedRead(file);
       }
       
+      // Skip empty documents
+      if (!content || content.trim().length === 0) {
+        this.logger.debug(`Skipping empty document: ${file.path}`);
+        return;
+      }
+      
       // Generate SimHash for the document (now async)
       const hash = await generateSimHash(content, this.config);
+      
+      this.logger.debug(`Generated hash for ${file.path}: ${hash.toString(16).padStart(16, '0')}`);
       
       // Store document hash
       this.documentHashes.set(file.path, hash);
@@ -376,7 +393,17 @@ export class SimHash {
     
     // Get document hash
     const hash = this.documentHashes.get(filePath);
-    if (!hash) return [];
+    if (!hash) {
+      this.logger.warn(`No hash found for file: ${filePath}`);
+      this.logger.warn(`Available files: ${Array.from(this.documentHashes.keys()).slice(0, 10).join(', ')}... (${this.documentHashes.size} total)`);
+      return [];
+    }
+    
+    this.logger.info(`Finding similar documents for ${filePath}`);
+    this.logger.info(`- Hash: ${hash.toString(16).padStart(16, '0')}`);
+    this.logger.info(`- maxDistance=${maxDistance}, limit=${limit}`);
+    this.logger.info(`- Total documents indexed: ${this.documentHashes.size}`);
+    this.logger.info(`- Using chunk index: ${this.config.useChunkIndex}`);
     
     if (this.config.useChunkIndex) {
       // Use chunk-based index for faster lookup
@@ -386,15 +413,20 @@ export class SimHash {
       results.push(...this.findSimilarBruteForce(filePath, hash, maxDistance));
     }
     
+    this.logger.info(`Found ${results.length} raw results before normalization`);
+    
     // Normalize similarity scores (0 = maxDistance, 1 = identical)
     for (const result of results) {
       result.similarity = 1 - (result.distance / this.config.hashBits);
+      this.logger.debug(`- ${result.file.path}: distance=${result.distance}, similarity=${result.similarity.toFixed(3)}`);
     }
     
     // Sort by distance (ascending) and limit results
     const limitedResults = results
       .sort((a, b) => a.distance - b.distance)
       .slice(0, limit);
+    
+    this.logger.info(`Returning ${limitedResults.length} results after limiting`);
     
     // Track query performance
     this.totalQueryTime += performance.now() - startTime;
@@ -418,17 +450,27 @@ export class SimHash {
     const bitsPerChunk = Math.floor(this.config.hashBits / this.config.chunkCount);
     const chunks = splitHashIntoChunks(hash, this.config.chunkCount, bitsPerChunk);
     
+    this.logger.info(`Searching for similar documents to ${filePath}`);
+    this.logger.info(`Query hash chunks: [${chunks.join(', ')}]`);
+    
     // Collect candidate documents that match at least one chunk
     const candidates = new Map<string, number>(); // filePath -> matching chunks
     
     // For each chunk
     for (let i = 0; i < chunks.length; i++) {
       const chunkValue = chunks[i];
-      const chunkBuckets = this.chunkIndex.get(i)!;
+      const chunkBuckets = this.chunkIndex.get(i);
+      
+      // Safety check in case the chunk index isn't properly initialized
+      if (!chunkBuckets) {
+        this.logger.warn(`Chunk bucket missing for chunk ${i}`);
+        continue;
+      }
       
       // Get documents with matching chunk
       const bucket = chunkBuckets.get(chunkValue);
-      if (bucket) {
+      if (bucket && bucket.size > 0) {
+        this.logger.debug(`Chunk ${i} (value ${chunkValue}): found ${bucket.size} documents`);
         for (const docPath of bucket) {
           if (docPath !== filePath) {
             candidates.set(docPath, (candidates.get(docPath) || 0) + 1);
@@ -436,9 +478,36 @@ export class SimHash {
         }
       }
       
-      // Optionally: get documents with similar chunks (1-2 bit differences)
-      // This improves recall but adds more computation
-      // Implementation omitted for brevity
+      // Find similar chunks (with 1-2 bit differences)
+      // This improves recall for documents near the bucket boundaries
+      if (maxDistance > bitsPerChunk) {
+        // Only do this for files that need high recall (low maxDistance)
+        for (const [otherChunkValue, bucket] of chunkBuckets.entries()) {
+          // Skip the exact match (already processed)
+          if (otherChunkValue === chunkValue) continue;
+          
+          // Only check chunks with a small bit difference
+          const chunkDiff = this.hammingDistanceSmall(chunkValue, otherChunkValue);
+          if (chunkDiff <= 2) { // 1-2 bit differences
+            for (const docPath of bucket) {
+              if (docPath !== filePath) {
+                candidates.set(docPath, (candidates.get(docPath) || 0) + 0.5); // Half weight for similar chunks
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    this.logger.info(`Found ${candidates.size} initial candidates from chunk matching`);
+    if (candidates.size === 0) {
+      this.logger.warn(`No candidates found! Checking chunk index state...`);
+      for (let i = 0; i < this.config.chunkCount; i++) {
+        const chunkBuckets = this.chunkIndex.get(i);
+        if (chunkBuckets) {
+          this.logger.warn(`Chunk ${i}: ${chunkBuckets.size} buckets, sample values: ${Array.from(chunkBuckets.keys()).slice(0, 5).join(', ')}`);
+        }
+      }
     }
     
     // Calculate actual Hamming distances for candidates
@@ -449,14 +518,30 @@ export class SimHash {
       // Pigeonhole principle: if ham distance ≤ d, at least k-⌈d/r⌉ chunks must match
       // where k is chunk count and r is bits per chunk
       const minRequiredChunks = this.config.chunkCount - Math.ceil(maxDistance / bitsPerChunk);
-      if (matchingChunks < minRequiredChunks) continue;
+      
+      // Use a much lower threshold for better recall
+      // Even documents with just 1-2 matching chunks could be similar
+      const effectiveMinChunks = Math.max(1, minRequiredChunks * 0.5);
+      this.logger.debug(`Candidate ${docPath}: matchingChunks=${matchingChunks}, minRequired=${minRequiredChunks}, effective=${effectiveMinChunks}`);
+      if (matchingChunks < effectiveMinChunks) {
+        this.logger.debug(`Skipping ${docPath} - not enough matching chunks`);
+        continue;
+      }
       
       const docHash = this.documentHashes.get(docPath);
       if (!docHash) continue;
       
       const distance = hammingDistance(hash, docHash);
+      this.logger.debug(`Distance between ${filePath} and ${docPath}: ${distance} (maxDistance=${maxDistance})`);
       if (distance <= maxDistance) {
-        const docFile = this.fileMap.get(docPath)!;
+        const docFile = this.fileMap.get(docPath);
+        
+        // Safety check in case the file reference is missing
+        if (!docFile) {
+          this.logger.warn(`File reference missing for ${docPath}`);
+          continue;
+        }
+        
         results.push({
           file: docFile,
           distance,
@@ -465,7 +550,28 @@ export class SimHash {
       }
     }
     
+    this.logger.debug(`Returning ${results.length} similar documents from chunk-based search`);
     return results;
+  }
+  
+  /**
+   * Calculate Hamming distance between two small integers
+   * More efficient implementation for small integers
+   * @param a First integer
+   * @param b Second integer 
+   * @returns Hamming distance
+   */
+  private hammingDistanceSmall(a: number, b: number): number {
+    let xor = a ^ b;
+    let distance = 0;
+    
+    // Count bits using Brian Kernighan's algorithm
+    while (xor > 0) {
+      distance++;
+      xor &= xor - 1; // Clear the least significant bit set
+    }
+    
+    return distance;
   }
   
   /**
@@ -522,6 +628,7 @@ export class SimHash {
     
     // Get all markdown files
     const allFiles = this.vault.getMarkdownFiles();
+    this.logger.info(`Initializing SimHash index with ${allFiles.length} files`);
     
     // Determine maximum files to index during initialization
     // For very large vaults, we prioritize recent files
@@ -531,6 +638,7 @@ export class SimHash {
     let filesToProcess = allFiles;
     
     if (needsPrioritization) {
+      this.logger.warn(`Large vault detected (${allFiles.length} files). Will index only ${MAX_INITIAL_FILES} most recent files.`);
       // Sort files by modification time (most recent first)
       filesToProcess = [...allFiles].sort((a, b) => b.stat.mtime - a.stat.mtime);
       
@@ -540,8 +648,16 @@ export class SimHash {
     
     // Process files in batches to avoid UI blocking
     const BATCH_SIZE = 10; // Larger batch size than MinHash (SimHash is faster)
+    this.logger.debug(`Processing files in batches of ${BATCH_SIZE}`);
+    
     for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
       const batch = filesToProcess.slice(i, i + BATCH_SIZE);
+      
+      // Log batch progress at 20% intervals to avoid log spam
+      if (i % (Math.floor(filesToProcess.length / 5) + 1) < BATCH_SIZE) {
+        const percentComplete = Math.floor((i / filesToProcess.length) * 100);
+        this.logger.info(`Indexing progress: ${percentComplete}% (${i}/${filesToProcess.length} files)`);
+      }
       
       // Process batch in parallel
       await Promise.all(batch.map(file => this.addDocument(file)));
@@ -562,6 +678,35 @@ export class SimHash {
     this.totalIndexingTime = performance.now() - startTime;
     this.totalQueryTime = 0;
     this.queryCount = 0;
+    
+    const indexingTimeSeconds = (this.totalIndexingTime / 1000).toFixed(2);
+    this.logger.info(`SimHash indexing complete in ${indexingTimeSeconds}s. Indexed ${this.documentHashes.size} files.`);
+    
+    // Log some stats about the chunk index
+    if (this.config.useChunkIndex) {
+      let totalBuckets = 0;
+      let maxBucketSize = 0;
+      let totalDocsInBuckets = 0;
+      const bucketSizes: number[] = [];
+      
+      for (const [chunkId, chunkBuckets] of this.chunkIndex.entries()) {
+        totalBuckets += chunkBuckets.size;
+        for (const [_, bucket] of chunkBuckets.entries()) {
+          const size = bucket.size;
+          bucketSizes.push(size);
+          maxBucketSize = Math.max(maxBucketSize, size);
+          totalDocsInBuckets += size;
+        }
+      }
+      
+      const avgBucketSize = totalBuckets > 0 ? (totalDocsInBuckets / totalBuckets).toFixed(2) : '0';
+      this.logger.info(`Chunk index stats:`);
+      this.logger.info(`- Total buckets: ${totalBuckets}`);
+      this.logger.info(`- Avg bucket size: ${avgBucketSize}`);
+      this.logger.info(`- Max bucket size: ${maxBucketSize}`);
+      this.logger.info(`- Chunks per document: ${this.config.chunkCount}`);
+      this.logger.info(`- Bits per chunk: ${Math.floor(this.config.hashBits / this.config.chunkCount)}`);
+    }
   }
   
   /**
@@ -600,8 +745,9 @@ export class SimHash {
   
   /**
    * Yield to the main thread to avoid UI blocking
+   * Uses the exported yieldToMain function
    */
   private async yieldToMain(): Promise<void> {
-    return new Promise<void>(resolve => setTimeout(resolve, 0));
+    return yieldToMain();
   }
 }

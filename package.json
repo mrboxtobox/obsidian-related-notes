@@ -6,9 +6,10 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"build:dev": "node esbuild.config.mjs production && npm run copy:dev",
+		"build:dev": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production dev-build",
 		"copy:dev": "cp main.js manifest.json styles.css ~/Desktop/ObsidianVault/.obsidian/plugins/obsidian-related-notes/",
 		"watch": "node watch.mjs",
+		"watch:debug": "node watch.mjs dev-build",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"test": "vitest run",
 		"test:watch": "vitest",
