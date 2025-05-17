@@ -70,7 +70,7 @@ function generateSimHash(text: string, config: SimHashConfig): bigint {
   
   // If not enough words, return a simple hash
   if (words.length < config.shingleSize) {
-    return BigInt(hashString(text)) & ((1n << BigInt(config.hashBits)) - 1n);
+    return BigInt(hashString(text)) & ((BigInt(1) << BigInt(config.hashBits)) - BigInt(1));
   }
   
   // 2. Create shingles and hash them
@@ -98,10 +98,10 @@ function generateSimHash(text: string, config: SimHashConfig): bigint {
   }
   
   // 5. Generate final fingerprint
-  let fingerprint = 0n;
+  let fingerprint = BigInt(0);
   for (let i = 0; i < config.hashBits; i++) {
     if (V[i] > 0) {
-      fingerprint |= 1n << BigInt(i);
+      fingerprint |= BigInt(1) << BigInt(i);
     }
   }
   
@@ -117,7 +117,7 @@ function generateSimHash(text: string, config: SimHashConfig): bigint {
  */
 function splitHashIntoChunks(hash: bigint, chunkCount: number, bitsPerChunk: number): Uint16Array {
   const chunks = new Uint16Array(chunkCount);
-  const mask = (1n << BigInt(bitsPerChunk)) - 1n;
+  const mask = (BigInt(1) << BigInt(bitsPerChunk)) - BigInt(1);
   
   for (let i = 0; i < chunkCount; i++) {
     const chunk = Number((hash >> BigInt(i * bitsPerChunk)) & mask);
@@ -139,9 +139,9 @@ function hammingDistance(a: bigint, b: bigint): number {
   
   // Count the number of 1 bits in the XOR result
   let distance = 0;
-  while (xor > 0n) {
-    if (xor & 1n) distance++;
-    xor >>= 1n;
+  while (xor > BigInt(0)) {
+    if (xor & BigInt(1)) distance++;
+    xor >>= BigInt(1);
   }
   
   return distance;
