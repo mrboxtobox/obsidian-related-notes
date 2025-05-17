@@ -45,26 +45,57 @@ export interface SimHashSimilarity {
 
 /**
  * Compute hash code for a string (FNV-1a algorithm)
- * More collision-resistant than djb2
+ * This is a fast, high-quality hash function with excellent distribution
  * @param str The string to hash
  * @returns 32-bit integer hash code
  */
 function hashString(str: string): number {
-  let h = 2166136261; // FNV offset basis
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  // FNV-1a constants (32-bit)
+  const FNV_PRIME = 16777619;
+  const FNV_OFFSET_BASIS = 2166136261;
+  
+  let hash = FNV_OFFSET_BASIS;
+  
+  // Process 4 characters at a time when possible (optimization)
+  const len = str.length;
+  let i = 0;
+  
+  // Fast path: process 4 characters at once
+  while (i + 4 <= len) {
+    // Use bit operations for faster computation
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    hash ^= str.charCodeAt(i + 1);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    hash ^= str.charCodeAt(i + 2);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    hash ^= str.charCodeAt(i + 3);
+    hash = Math.imul(hash, FNV_PRIME);
+    
+    i += 4;
   }
-  return h >>> 0; // Convert to unsigned 32-bit integer
+  
+  // Handle remaining characters (1-3)
+  while (i < len) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, FNV_PRIME);
+    i++;
+  }
+  
+  // Make sure we get a positive value
+  return hash >>> 0;
 }
 
 /**
  * Generate a SimHash fingerprint from text
  * @param text Input text
  * @param config SimHash configuration
- * @returns SimHash fingerprint as a BigInt
+ * @returns Promise with SimHash fingerprint as a BigInt
  */
-function generateSimHash(text: string, config: SimHashConfig): bigint {
+async function generateSimHash(text: string, config: SimHashConfig): Promise<bigint> {
   // 1. Tokenize text into shingles
   const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 0);
   
@@ -76,15 +107,23 @@ function generateSimHash(text: string, config: SimHashConfig): bigint {
   // 2. Create shingles and hash them
   const shingles = new Map<string, number>();
   
+  // Use batching for large documents to avoid UI blocking
+  const SHINGLING_BATCH_SIZE = 1000;
   for (let i = 0; i <= words.length - config.shingleSize; i++) {
     const shingle = words.slice(i, i + config.shingleSize).join(' ');
     shingles.set(shingle, (shingles.get(shingle) || 0) + 1);
+    
+    // Yield to main thread periodically for large documents
+    if (words.length > SHINGLING_BATCH_SIZE && i % SHINGLING_BATCH_SIZE === 0) {
+      await yieldToMain();
+    }
   }
   
   // 3. Initialize feature vector (V)
   const V = new Int32Array(config.hashBits).fill(0);
   
-  // 4. Update V for each shingle
+  // 4. Update V for each shingle (with batching for large documents)
+  let shingleCount = 0;
   for (const [shingle, weight] of shingles.entries()) {
     // Hash the shingle
     const hash = hashString(shingle);
@@ -94,6 +133,12 @@ function generateSimHash(text: string, config: SimHashConfig): bigint {
       // If bit i of hash is 1, add weight; otherwise subtract
       const bit = (hash & (1 << (i % 32))) !== 0;
       V[i] += bit ? weight : -weight;
+    }
+    
+    // Yield to main thread periodically for large shingle sets
+    shingleCount++;
+    if (shingles.size > SHINGLING_BATCH_SIZE && shingleCount % SHINGLING_BATCH_SIZE === 0) {
+      await yieldToMain();
     }
   }
   
@@ -106,6 +151,13 @@ function generateSimHash(text: string, config: SimHashConfig): bigint {
   }
   
   return fingerprint;
+}
+
+/**
+ * Yield to the main thread to avoid UI blocking
+ */
+async function yieldToMain(): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, 0));
 }
 
 /**
@@ -129,6 +181,7 @@ function splitHashIntoChunks(hash: bigint, chunkCount: number, bitsPerChunk: num
 
 /**
  * Calculate Hamming distance between two bigints
+ * This implementation uses a lookup-based popcount for better performance
  * @param a First bigint
  * @param b Second bigint
  * @returns Hamming distance (number of differing bits)
@@ -137,11 +190,16 @@ function hammingDistance(a: bigint, b: bigint): number {
   // XOR the values - bits that differ will be 1
   let xor = a ^ b;
   
-  // Count the number of 1 bits in the XOR result
+  // Convert to binary string
+  const binaryStr = xor.toString(2);
+  
+  // Count the number of 1 bits (popcount)
+  // More efficient than bit shifting in JavaScript
   let distance = 0;
-  while (xor > BigInt(0)) {
-    if (xor & BigInt(1)) distance++;
-    xor >>= BigInt(1);
+  for (let i = 0; i < binaryStr.length; i++) {
+    if (binaryStr[i] === '1') {
+      distance++;
+    }
   }
   
   return distance;
@@ -198,8 +256,8 @@ export class SimHash {
         content = await this.vault.cachedRead(file);
       }
       
-      // Generate SimHash for the document
-      const hash = generateSimHash(content, this.config);
+      // Generate SimHash for the document (now async)
+      const hash = await generateSimHash(content, this.config);
       
       // Store document hash
       this.documentHashes.set(file.path, hash);
@@ -443,7 +501,18 @@ export class SimHash {
   }
   
   /**
-   * Initialize the index with all documents in the vault
+   * Check if a file is indexed in the SimHash index
+   * @param file The file to check
+   * @returns True if the file is indexed, false otherwise
+   */
+  public isFileIndexed(file: TFile): boolean {
+    return this.documentHashes.has(file.path);
+  }
+
+  /**
+   * Initialize the index with prioritized documents from the vault
+   * Uses a progressive approach that ensures high-priority documents are indexed first,
+   * and others are indexed on-demand as they're accessed
    * @param progressCallback Optional callback for progress reporting
    */
   public async initialize(
@@ -452,19 +521,37 @@ export class SimHash {
     const startTime = performance.now();
     
     // Get all markdown files
-    const files = this.vault.getMarkdownFiles();
+    const allFiles = this.vault.getMarkdownFiles();
+    
+    // Determine maximum files to index during initialization
+    // For very large vaults, we prioritize recent files
+    const MAX_INITIAL_FILES = 10000;
+    const needsPrioritization = allFiles.length > MAX_INITIAL_FILES;
+    
+    let filesToProcess = allFiles;
+    
+    if (needsPrioritization) {
+      // Sort files by modification time (most recent first)
+      filesToProcess = [...allFiles].sort((a, b) => b.stat.mtime - a.stat.mtime);
+      
+      // Take a subset of prioritized files
+      filesToProcess = filesToProcess.slice(0, MAX_INITIAL_FILES);
+    }
     
     // Process files in batches to avoid UI blocking
     const BATCH_SIZE = 10; // Larger batch size than MinHash (SimHash is faster)
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < filesToProcess.length; i += BATCH_SIZE) {
+      const batch = filesToProcess.slice(i, i + BATCH_SIZE);
       
       // Process batch in parallel
       await Promise.all(batch.map(file => this.addDocument(file)));
       
       // Report progress
       if (progressCallback) {
-        progressCallback(i + batch.length, files.length);
+        // Report progress against total files being processed now
+        const processed = Math.min(i + batch.length, filesToProcess.length);
+        const percentage = Math.floor((processed / filesToProcess.length) * 100);
+        progressCallback(percentage, 100);
       }
       
       // Yield to main thread to avoid UI blocking

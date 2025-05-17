@@ -260,3 +260,11 @@ button:disabled {
 .related-notes-cancel-button-hidden {
   display: none;
 }
+
+/* Version info styling */
+.related-notes-version-info {
+  color: var(--text-muted);
+  margin-top: -10px;
+  margin-bottom: 10px;
+  font-size: 0.8em;
+}

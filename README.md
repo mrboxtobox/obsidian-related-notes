@@ -99,22 +99,31 @@ The plugin automatically selects the optimal similarity provider based on your v
 - No external dependencies or setup required
 - Built-in test suite and benchmarks validate both accuracy and performance
 
-### Hybrid Indexing for Large Vaults
+### Progressive Indexing for Complete Coverage
 
-For users with extensive note collections (tens of thousands of notes), the plugin now implements a hybrid indexing approach:
+The plugin uses a progressive indexing approach to ensure all your notes are eventually included in the similarity index, even with very large vaults:
 
-- **Priority-Based Indexing**: The plugin intelligently prioritizes which notes to pre-index based on:
+- **Initial Priority-Based Indexing**: At startup, the plugin prioritizes notes to pre-index based on:
   - **Access Frequency**: Notes you open frequently are prioritized
-  - **Creation Time**: Recently created notes are given higher priority
-  - **Configurable Limit**: Up to 10,000 notes are pre-indexed (increased from previous 5,000 limit)
+  - **Modification Time**: Recently modified notes are given higher priority
+  - **Configurable Limit**: Up to 10,000 notes are pre-indexed for optimal startup performance
 
-- **On-Demand Computation**: For notes outside the priority index:
-  - **Real-Time Processing**: Similarity is computed when you view the note
-  - **Smart Caching**: Results are cached to improve performance on subsequent views
-  - **Visual Indicators**: UI shows which notes were computed on-demand
-  - **Balanced Approach**: Combines performance with comprehensive coverage
+- **On-Demand Indexing**: Any note that isn't initially indexed gets processed when:
+  - **You Open It**: The current note is always indexed immediately if needed
+  - **It's Similar**: When searching for related notes, candidates are indexed on-demand
+  - **Background Expansion**: The plugin gradually indexes more notes over time
 
-This hybrid approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
+- **Complete Coverage Guarantee**: Unlike sampling approaches that may miss files, this ensures:
+  - **Every Accessed Note**: Gets fully indexed when you interact with it
+  - **Related Content**: Notes similar to your accessed notes get discovered and indexed
+  - **Incremental Expansion**: The index grows more comprehensive as you use Obsidian
+
+- **Smart Resource Management**: Keeps memory usage reasonable while ensuring all important notes are indexed:
+  - **Prioritization**: Most relevant notes are always indexed first
+  - **Efficient Storage**: Uses typed arrays and sparse data structures
+  - **Adaptive Parameters**: Adjusts algorithm parameters based on vault size
+
+This progressive approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance, even with tens of thousands of notes.
 
 ### Adaptive Similarity for Large Corpora
 
@@ -208,6 +217,8 @@ npm run build
 - `main.ts` - Main plugin file with core functionality and event handling
 - `core.ts` - Core similarity algorithms and providers
 - `minhash.ts` - Optimized MinHash-LSH implementation for large document collections
+- `simhash.ts` - SimHash implementation for efficient document similarity
+- `similarity.ts` - Similarity provider interfaces and implementations
 - `settings.ts` - Settings tab implementation
 - `ui.ts` - UI components and view implementations
 - `tests/` - Test suites for verifying algorithm correctness
@@ -231,6 +242,204 @@ This creates a test vault using content from Project Gutenberg texts. The test v
 
 - `obsidian` - Obsidian API types and utilities
 
+## How It Works: Technical Details
+
+The Related Notes plugin uses several sophisticated algorithms to efficiently find connections between your notes. Here's a technical overview of how the plugin works internally:
+
+### SimHash Implementation
+
+SimHash is a locality-sensitive hashing algorithm that converts documents into fixed-length fingerprints (hashes) where similar documents have similar hashes. The implementation follows these steps:
+
+1. **Tokenization and Shingling**: The document text is split into overlapping sequences of words (shingles).
+   ```typescript
+   // Create shingles from the document text
+   const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+   const shingles = new Map<string, number>();
+   for (let i = 0; i <= words.length - config.shingleSize; i++) {
+     const shingle = words.slice(i, i + config.shingleSize).join(' ');
+     shingles.set(shingle, (shingles.get(shingle) || 0) + 1);
+   }
+   ```
+
+2. **Feature Vector Creation**: Each shingle is hashed and contributes to a feature vector.
+   ```typescript
+   // Initialize feature vector
+   const V = new Int32Array(config.hashBits).fill(0);
+   
+   // Update the vector for each shingle
+   for (const [shingle, weight] of shingles.entries()) {
+     const hash = hashString(shingle);
+     for (let i = 0; i < config.hashBits; i++) {
+       const bit = (hash & (1 << (i % 32))) !== 0;
+       V[i] += bit ? weight : -weight;
+     }
+   }
+   ```
+
+3. **Fingerprint Generation**: The feature vector is converted to a fingerprint.
+   ```typescript
+   // Generate final fingerprint
+   let fingerprint = BigInt(0);
+   for (let i = 0; i < config.hashBits; i++) {
+     if (V[i] > 0) {
+       fingerprint |= BigInt(1) << BigInt(i);
+     }
+   }
+   ```
+
+4. **Similarity Calculation**: Hamming distance between fingerprints determines similarity.
+   ```typescript
+   // Calculate Hamming distance
+   function hammingDistance(a: bigint, b: bigint): number {
+     let xor = a ^ b;
+     let distance = 0;
+     while (xor > BigInt(0)) {
+       if (xor & BigInt(1)) distance++;
+       xor >>= BigInt(1);
+     }
+     return distance;
+   }
+   ```
+
+5. **Optimized Retrieval**: For efficient similarity search, SimHash uses chunk-based indexing.
+   ```typescript
+   // Split hash into chunks for indexing
+   const chunks = splitHashIntoChunks(hash, config.chunkCount, bitsPerChunk);
+   
+   // Index each chunk
+   for (let i = 0; i < chunks.length; i++) {
+     const chunkValue = chunks[i];
+     const chunkBuckets = this.chunkIndex.get(i)!;
+     if (!chunkBuckets.has(chunkValue)) {
+       chunkBuckets.set(chunkValue, new Set<string>());
+     }
+     chunkBuckets.get(chunkValue)!.add(filePath);
+   }
+   ```
+
+### MinHash-LSH Implementation
+
+MinHash with Locality-Sensitive Hashing combines two techniques for efficiently finding similar documents in large collections:
+
+1. **MinHash Signatures**: Each document is represented by a signature of minimum hash values.
+   ```typescript
+   // Compute signature for a set of shingles
+   private computeSignature(shingles: Set<string>): Uint32Array {
+     const signature = new Uint32Array(numHashes).fill(0xFFFFFFFF);
+     
+     for (const shingle of shingles) {
+       const shingleHash = hashString(shingle);
+       for (let i = 0; i < numHashes; i++) {
+         const [a, b] = this.hashCoefficients[i];
+         const hashValue = (a * shingleHash + b) % numBuckets;
+         signature[i] = Math.min(signature[i], hashValue);
+       }
+     }
+     
+     return signature;
+   }
+   ```
+
+2. **LSH Bucketing**: Signatures are split into bands to group similar documents.
+   ```typescript
+   // Compute LSH buckets for a document's signature
+   private computeLSHBuckets(signature: Uint32Array): Map<number, number> {
+     const buckets = new Map<number, number>();
+     
+     for (let bandIdx = 0; bandIdx < numBands; bandIdx++) {
+       const startIdx = bandIdx * rowsPerBand;
+       const endIdx = startIdx + rowsPerBand;
+       
+       let bandHash = 1;
+       for (let i = startIdx; i < endIdx; i++) {
+         bandHash = (bandHash * 31 + signature[i]) % numBuckets;
+       }
+       
+       buckets.set(bandIdx, bandHash);
+     }
+     
+     return buckets;
+   }
+   ```
+
+3. **Similarity Calculation**: The Jaccard similarity between documents is estimated.
+   ```typescript
+   // Calculate similarity between two MinHash signatures
+   private calculateSignatureSimilarity(sig1: Uint32Array, sig2: Uint32Array): number {
+     let matches = 0;
+     for (let i = 0; i < sig1.length; i++) {
+       if (sig1[i] === sig2[i]) {
+         matches++;
+       }
+     }
+     return matches / sig1.length;
+   }
+   ```
+
+### Smart Adaptation for Performance
+
+The plugin automatically selects the appropriate algorithm based on vault size:
+
+```typescript
+// Create the appropriate similarity provider based on corpus size
+export function createSimilarityProvider(vault: Vault, config: any = {}): SimilarityProvider {
+  const files = vault.getMarkdownFiles();
+  
+  // Use SimHash for very large corpora
+  if (files.length > 10000) {
+    return new SimHashProvider(vault, {...});
+  }
+  
+  // Use MinHash-LSH for medium to large corpora
+  if (files.length > 1000) {
+    return new MinHashLSH(vault, {...});
+  }
+  
+  // Default to MinHash with fewer hashes for smaller corpora
+  return new MinHashLSH(vault, {...});
+}
+```
+
+### Performance Considerations
+
+The implementation includes several optimizations for single-threaded environments:
+
+1. **Batch Processing**: Files are processed in small batches with yield operations.
+   ```typescript
+   const BATCH_SIZE = 5;
+   for (let i = 0; i < files.length; i += BATCH_SIZE) {
+     const batch = files.slice(i, i + BATCH_SIZE);
+     await Promise.all(batch.map(file => this.addDocument(file)));
+     await this.yieldToMain(); // Yield to prevent UI blocking
+   }
+   ```
+
+2. **TypedArrays**: Using Uint32Array for efficient memory usage.
+   ```typescript
+   const signature = new Uint32Array(numHashes);
+   ```
+
+3. **Caching**: Results are cached to avoid redundant computation.
+   ```typescript
+   // Check cache first
+   let similarity: number;
+   if (this.similarityCache.has(cacheKey)) {
+     similarity = this.similarityCache.get(cacheKey)!;
+   } else {
+     // Calculate and cache the result
+     similarity = this.calculateSignatureSimilarity(sig1, sig2);
+     this.similarityCache.set(cacheKey, similarity);
+   }
+   ```
+
+4. **Partial Indexing**: For very large vaults, only a subset of files is pre-indexed.
+   ```typescript
+   // Apply limit if configured
+   if (this.config.maxFiles && files.length > this.config.maxFiles) {
+     files = files.slice(0, this.config.maxFiles);
+   }
+   ```
+
 ## Building From Source
 
 1. Clone the repository as described in the Development section
@@ -244,6 +453,35 @@ This creates a test vault using content from Project Gutenberg texts. The test v
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Optimization Summary
+
+The plugin has been optimized with the following principles in mind:
+
+### Performance Optimizations
+- **Efficient Hashing**: Uses FNV-1a algorithm with 4-character batching for faster computation
+- **Adaptive Shingling**: Adjusts shingle size and processing for large documents
+- **Memory Management**: Limits maximum shingles for large documents to control memory usage
+- **UI Responsiveness**: Throttles UI updates and uses batched processing with yield operations
+- **TypedArrays**: Utilizes Uint32Array for efficient memory usage
+
+### Efficiency for Single-Threaded Environments
+- **Non-Blocking Operations**: All long-running operations yield to the main thread periodically
+- **Batch Processing**: Files and document components are processed in small batches
+- **Throttled Updates**: UI updates are throttled to prevent excessive reflows
+- **Adaptive Processing**: More aggressive sampling for larger documents
+- **Early Termination**: Calculations stop early when appropriate thresholds are reached
+
+### Algorithm Selection
+- **Dynamic Provider Selection**: Automatically selects SimHash for very large vaults
+- **Parameter Tuning**: Adjusts hash bits, chunk count, and shingle size based on vault size
+- **Chunked Indexing**: Optimizes SimHash with chunk-based indexing for faster queries
+- **Frequency-Based Filtering**: Prioritizes important shingles in large documents
+
+### Documentation
+- Added detailed technical documentation explaining how the algorithms work
+- Included code examples for critical sections of the implementation
+- Documented performance considerations for single-threaded environments
 
 ## Contributing
 

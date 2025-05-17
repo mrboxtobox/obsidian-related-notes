@@ -58,6 +58,13 @@ export interface SimilarityProvider {
    * @param content Optional content (will be read from vault if not provided)
    */
   updateDocument(file: TFile, content?: string): Promise<void>;
+  
+  /**
+   * Check if a file is already indexed
+   * @param file The file to check
+   * @returns True if the file is already indexed, false otherwise
+   */
+  isFileIndexed(file: TFile): boolean;
 }
 
 /**
@@ -87,6 +94,9 @@ export class SimHashProvider implements SimilarityProvider {
   
   // Whether the corpus is sampled (limited to maxFiles)
   private _isCorpusSampled = false;
+  
+  // Track on-demand indexing statistics
+  private _onDemandIndexedCount = 0;
   
   // Map from file path to common terms (for display)
   private readonly commonTermsCache = new Map<string, Map<string, string[]>>();
@@ -215,6 +225,14 @@ export class SimHashProvider implements SimilarityProvider {
    * @param content Optional content (will be read from vault if not provided)
    */
   public async addDocument(file: TFile, content?: string): Promise<void> {
+    // Check if the file is already indexed
+    if (!this.isFileIndexed(file)) {
+      // If not, this is an on-demand indexing
+      if (this.isInitialized) {
+        this._onDemandIndexedCount++;
+      }
+    }
+    
     await this.simhash.addDocument(file, content);
   }
   
@@ -233,6 +251,23 @@ export class SimHashProvider implements SimilarityProvider {
    */
   public async updateDocument(file: TFile, content?: string): Promise<void> {
     await this.simhash.updateDocument(file, content);
+  }
+  
+  /**
+   * Check if a file is indexed in the SimHash provider
+   * @param file File to check
+   * @returns True if the file is indexed, false otherwise
+   */
+  public isFileIndexed(file: TFile): boolean {
+    return (this.simhash as any).documentHashes.has(file.path);
+  }
+  
+  /**
+   * Get the number of files indexed on-demand (after initial indexing)
+   * @returns Number of files indexed on-demand
+   */
+  public getOnDemandIndexedCount(): number {
+    return this._onDemandIndexedCount;
   }
   
   /**
@@ -281,7 +316,9 @@ export class SimHashProvider implements SimilarityProvider {
       useWordShingles: true,
       totalBuckets: totalBuckets,
       maxBucketSize: maxBucketSize,
-      avgBucketSize: avgBucketSize
+      avgBucketSize: avgBucketSize,
+      onDemandIndexedCount: this._onDemandIndexedCount,
+      totalIndexedCount: simhashStats.numDocuments || 0
     };
   }
 }
