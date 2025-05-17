@@ -4,7 +4,6 @@
 
 import { TFile, Vault } from 'obsidian';
 import { SimHash, SimHashStats, SimHashConfig } from './simhash';
-import { MinHashLSH } from './minhash';
 
 /**
  * Interface for similarity information
@@ -118,12 +117,16 @@ export class SimHashProvider implements SimilarityProvider {
       return { similarity: 0 };
     }
     
-    // Compute Hamming distance
-    let xor = hash1 ^ hash2;
+    // Compute Hamming distance using BigInt operations
+    const xorBigInt = hash1 ^ hash2;
     let distance = 0;
-    while (xor > 0n) {
-      if (xor & 1n) distance++;
-      xor >>= 1n;
+    
+    // Convert to binary string and count the 1s
+    const binaryStr = xorBigInt.toString(2);
+    for (let i = 0; i < binaryStr.length; i++) {
+      if (binaryStr[i] === '1') {
+        distance++;
+      }
     }
     
     // Convert distance to similarity (0-1 range, where 1 is identical)
@@ -202,6 +205,8 @@ export function createSimilarityProvider(vault: Vault, config: any = {}): Simila
   
   // Use MinHash-LSH for medium to large corpora
   if (files.length > 1000) {
+    // Import dynamically to avoid circular dependencies
+    const { MinHashLSH } = require('./minhash');
     return new MinHashLSH(vault, {
       numHashes: 100,
       numBands: 20,
@@ -212,6 +217,7 @@ export function createSimilarityProvider(vault: Vault, config: any = {}): Simila
   }
   
   // Default to MinHash with fewer hashes for smaller corpora
+  const { MinHashLSH } = require('./minhash');
   return new MinHashLSH(vault, {
     numHashes: 64,
     numBands: 16,
