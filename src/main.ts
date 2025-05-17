@@ -498,7 +498,9 @@ export default class RelatedNotesPlugin extends Plugin {
       }
       
       // Add the document to the index
-      await this.similarityProvider.addDocument(file);
+      if ('addDocument' in this.similarityProvider && this.similarityProvider.addDocument) {
+        await this.similarityProvider.addDocument(file);
+      }
     } catch (error) {
       console.error(`Error ensuring file ${file.path} is indexed:`, error);
     }
