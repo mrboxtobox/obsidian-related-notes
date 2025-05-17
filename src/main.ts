@@ -1,8 +1,9 @@
 import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian';
-import { RelatedNote, SimilarityProvider, OptimizedSimilarityProvider } from './core';
+import { RelatedNote, SimilarityProvider } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
 import { Logger } from './logger';
+import { SimHashProvider } from './similarity';
 
 'use strict';
 
@@ -71,19 +72,15 @@ export default class RelatedNotesPlugin extends Plugin {
     this.registerEventHandlers();
     this.isInitialized = false;
 
-    this.similarityProvider = new OptimizedSimilarityProvider(this.app.vault, {
-      minhash: {
-        numHashes: 100,
-        numBands: 20,
-        rowsPerBand: 5,
-        shingleSize: 3,
-        useWordShingles: true,
-        maxFiles: this.settings.priorityIndexSize
+    // Always use SimHash for better similarity detection
+    this.similarityProvider = new SimHashProvider(this.app.vault, {
+      simhash: {
+        hashBits: 64,
+        shingleSize: 2,
+        useChunkIndex: true
       },
       similarityThreshold: this.settings.similarityThreshold,
-      maxRelatedNotes: this.settings.maxSuggestions,
-      cacheFilePath: `${this.manifest.dir}/similarity-cache.json`,
-      largeCorpusThreshold: 1000
+      maxRelatedNotes: this.settings.maxSuggestions
     });
 
     this.statusBarItem.setText("Ready (indexing in background)");

@@ -79,6 +79,18 @@ export class SimHashProvider implements SimilarityProvider {
   private readonly similarityThreshold: number;
   private readonly maxRelatedNotes: number;
   
+  // Track file access times for prioritization
+  private readonly fileAccessTimes = new Map<string, number>();
+  
+  // Whether initialization is complete
+  private isInitialized = false;
+  
+  // Whether the corpus is sampled (limited to maxFiles)
+  private _isCorpusSampled = false;
+  
+  // Map from file path to common terms (for display)
+  private readonly commonTermsCache = new Map<string, Map<string, string[]>>();
+  
   constructor(vault: Vault, config: SimHashProviderConfig = {}) {
     this.vault = vault;
     this.simhash = new SimHash(vault, config.simhash);
@@ -145,7 +157,56 @@ export class SimHashProvider implements SimilarityProvider {
    * @param progressCallback Optional callback for progress reporting
    */
   public async initialize(progressCallback?: (processed: number, total: number) => void): Promise<void> {
+    // Get all markdown files
+    const allFiles = this.vault.getMarkdownFiles();
+    
+    // Determine if corpus is large (more than 10000 files)
+    this._isCorpusSampled = allFiles.length > 10000;
+    
     await this.simhash.initialize(progressCallback);
+    this.isInitialized = true;
+  }
+  
+  /**
+   * Update the access time for a file
+   * This is used for prioritizing files
+   * @param file The file to update
+   */
+  public updateFileAccessTime(file: TFile): void {
+    this.fileAccessTimes.set(file.path, Date.now());
+  }
+  
+  /**
+   * Check if the corpus is sampled (limited to a subset of all files)
+   */
+  public isCorpusSampled(): boolean {
+    return this._isCorpusSampled;
+  }
+  
+  /**
+   * Force a full reindexing of all documents
+   * @param onProgress Optional callback for progress reporting
+   */
+  public async forceReindex(onProgress?: (processed: number, total: number) => void): Promise<void> {
+    // Clear cache
+    this.commonTermsCache.clear();
+    
+    // Instead of recreating the SimHash, we'll just reinitialize it
+    // since the simhash property is readonly
+    
+    // Reinitialize by recreating the internal data structures
+    (this.simhash as any).documentHashes.clear();
+    (this.simhash as any).fileMap.clear();
+    
+    if ((this.simhash as any).chunkIndex) {
+      for (const [key, value] of (this.simhash as any).chunkIndex.entries()) {
+        value.clear();
+      }
+    }
+    
+    // Reinitialize
+    this.isInitialized = false;
+    await this.initialize(onProgress);
   }
   
   /**
@@ -180,6 +241,48 @@ export class SimHashProvider implements SimilarityProvider {
    */
   public getStats(): SimHashStats {
     return this.simhash.getStats();
+  }
+  
+  /**
+   * Get statistics about the provider
+   * @returns Object with statistics
+   */
+  public getStatistics(): any {
+    const simhashStats = this.simhash.getStats();
+    
+    // Calculate some additional stats that SimHash doesn't provide directly
+    let totalBuckets = 0;
+    let maxBucketSize = 0;
+    let totalBucketEntries = 0;
+    
+    if ((this.simhash as any).config.useChunkIndex) {
+      const chunkIndex = (this.simhash as any).chunkIndex;
+      for (const [_, chunkBuckets] of chunkIndex.entries()) {
+        totalBuckets += chunkBuckets.size;
+        
+        for (const [_, bucket] of chunkBuckets.entries()) {
+          maxBucketSize = Math.max(maxBucketSize, bucket.size);
+          totalBucketEntries += bucket.size;
+        }
+      }
+    }
+    
+    const avgBucketSize = totalBuckets > 0 ? totalBucketEntries / totalBuckets : 0;
+    
+    return {
+      isInitialized: this.isInitialized,
+      isCorpusSampled: this._isCorpusSampled,
+      commonTermsCacheSize: this.commonTermsCache.size,
+      fileAccessTimesCount: this.fileAccessTimes.size,
+      similarityThreshold: this.similarityThreshold,
+      numDocuments: simhashStats.numDocuments || 0,
+      shingleSize: (this.simhash as any).config.shingleSize || 2,
+      numHashes: 1, // SimHash uses a single hash function
+      useWordShingles: true,
+      totalBuckets: totalBuckets,
+      maxBucketSize: maxBucketSize,
+      avgBucketSize: avgBucketSize
+    };
   }
 }
 
