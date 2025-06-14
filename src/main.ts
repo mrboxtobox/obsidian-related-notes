@@ -2,6 +2,7 @@ import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace, App } from 'obsi
 import { RelatedNote, SimilarityProvider, SimilarityProviderV2 } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
+import { MultiResolutionBloomFilterProvider } from './multi-bloom';
 
 'use strict';
 
@@ -89,27 +90,46 @@ export default class RelatedNotesPlugin extends Plugin {
     this.isInitialized = false;
     const configDir = this.app.vault.configDir;
 
-    this.similarityProvider = new SimilarityProviderV2(this.app.vault, {
-      numBands: 5,
-      rowsPerBand: 2,
-      shingleSize: 2,
-      batchSize: this.settings.batchSize,
-      priorityIndexSize: this.settings.priorityIndexSize,
-      cacheFilePath: `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
-      // Adaptive parameters for large corpora
-      largeBands: 8,       // More bands for large corpora = more candidates
-      largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
-      largeCorpusThreshold: 1000, // When to consider a corpus "large"
-      minSimilarityThreshold: this.settings.similarityThreshold / 2, // Lower threshold for large corpora
-      onDemandCacheSize: 1000, // Number of on-demand computations to cache
-      onDemandComputationEnabled: this.settings.onDemandComputationEnabled,
-      disableIncrementalUpdates: this.settings.disableIncrementalUpdates,
-      // Bloom filter settings
-      useBloomFilter: this.settings.useBloomFilter,
-      bloomFilterSize: this.settings.bloomFilterSize,
-      bloomFilterHashFunctions: this.settings.bloomFilterHashFunctions,
-      ngramSize: this.settings.ngramSize
-    });
+    // Determine which similarity provider to use
+    if (this.settings.useMultiResolutionBloom || 
+        this.settings.similarityProvider === 'multi-bloom') {
+      // Use multi-resolution bloom filter provider
+      this.similarityProvider = new MultiResolutionBloomFilterProvider(this.app.vault, {
+        ngramSizes: this.settings.multiResolutionNgramSizes,
+        bloomSizes: this.settings.multiResolutionBloomSizes,
+        hashFunctions: this.settings.multiResolutionHashFunctions,
+        adaptiveParameters: this.settings.adaptiveParameters,
+        similarityThreshold: this.settings.similarityThreshold,
+        commonWordsThreshold: this.settings.commonWordsThreshold,
+        maxStopwords: this.settings.maxStopwords,
+        priorityIndexSize: this.settings.priorityIndexSize,
+        batchSize: this.settings.batchSize,
+        onDemandComputationEnabled: this.settings.onDemandComputationEnabled
+      });
+    } else {
+      // Use original similarity provider
+      this.similarityProvider = new SimilarityProviderV2(this.app.vault, {
+        numBands: 5,
+        rowsPerBand: 2,
+        shingleSize: 2,
+        batchSize: this.settings.batchSize,
+        priorityIndexSize: this.settings.priorityIndexSize,
+        cacheFilePath: `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
+        // Adaptive parameters for large corpora
+        largeBands: 8,       // More bands for large corpora = more candidates
+        largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
+        largeCorpusThreshold: 1000, // When to consider a corpus "large"
+        minSimilarityThreshold: this.settings.similarityThreshold / 2, // Lower threshold for large corpora
+        onDemandCacheSize: 1000, // Number of on-demand computations to cache
+        onDemandComputationEnabled: this.settings.onDemandComputationEnabled,
+        disableIncrementalUpdates: this.settings.disableIncrementalUpdates,
+        // Bloom filter settings
+        useBloomFilter: this.settings.useBloomFilter,
+        bloomFilterSize: this.settings.bloomFilterSize,
+        bloomFilterHashFunctions: this.settings.bloomFilterHashFunctions,
+        ngramSize: this.settings.ngramSize
+      });
+    }
 
     // Show initial status
     this.statusBarItem.setText("Ready (indexing in background)");
