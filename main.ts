@@ -148,9 +148,9 @@ export default class RelatedNotesPlugin extends Plugin {
       this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
       this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
     } else {
-      this.statusBarItem.setText("Ready to find related notes");
-      this.statusBarItem.removeAttribute('aria-label');
-      this.statusBarItem.removeAttribute('title');
+      this.statusBarItem.setText("Ready (using lazy indexing)");
+      this.statusBarItem.setAttribute('aria-label', 'Using lazy indexing for on-demand similarity calculations');
+      this.statusBarItem.setAttribute('title', 'Frequently accessed notes are pre-indexed, others calculated on-demand');
     }
     this.isInitialized = true;
   }
@@ -220,15 +220,15 @@ export default class RelatedNotesPlugin extends Plugin {
         let message = "";
         let phase = "";
 
-        // Determine the current phase based on percentage
+        // Determine the current phase based on percentage with more concrete descriptions
         if (percentage <= 25) {
-          phase = "Reading your notes";
+          phase = "Computing index";
         } else if (percentage <= 50) {
-          phase = "Analyzing patterns";
+          phase = "Processing metadata";
         } else if (percentage <= 75) {
-          phase = "Finding connections";
+          phase = "Building similarity matrix";
         } else {
-          phase = "Building relationships";
+          phase = "Optimizing search index";
         }
 
         // Simple progress message with percentage
@@ -243,9 +243,9 @@ export default class RelatedNotesPlugin extends Plugin {
         this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
         this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
       } else {
-        this.statusBarItem.setText("Ready to find related notes");
-        this.statusBarItem.removeAttribute('aria-label');
-        this.statusBarItem.removeAttribute('title');
+        this.statusBarItem.setText("Ready (using lazy indexing)");
+        this.statusBarItem.setAttribute('aria-label', 'Using lazy indexing for on-demand similarity calculations');
+        this.statusBarItem.setAttribute('title', 'Frequently accessed notes are pre-indexed, others calculated on-demand');
       }
       this.isInitialized = true;
 

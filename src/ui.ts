@@ -5,7 +5,7 @@
 
 import { ItemView, WorkspaceLeaf, TFile, MarkdownView } from 'obsidian';
 import RelatedNotesPlugin from './main';
-import { RelatedNote } from './core';
+import { RelatedNote, SimilarityProviderV2 } from './core';
 
 'use strict';
 
@@ -234,8 +234,7 @@ export class RelatedNotesView extends ItemView {
         
         settingsBtn.addEventListener('click', () => {
           // Open plugin settings
-          const settingsTabId = this.plugin.id;
-          this.app.setting.openTabById(settingsTabId);
+          this.plugin.openSettings();
         });
       }
     }

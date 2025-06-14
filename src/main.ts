@@ -1,4 +1,4 @@
-import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian';
+import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace, App } from 'obsidian';
 import { RelatedNote, SimilarityProvider, SimilarityProviderV2 } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
@@ -34,6 +34,17 @@ export default class RelatedNotesPlugin extends Plugin {
   private isInitialized = false;
   private isReindexing = false;
   private reindexCancelled = false;
+  public id: string = 'obsidian-related-notes'; // Plugin ID for settings
+  
+  /**
+   * Opens the plugin settings tab
+   */
+  public openSettings(): void {
+    // Access setting via cast to handle TypeScript error
+    const appWithSettings = this.app as App & { setting: { open: () => void, openTabById: (id: string) => void } };
+    appWithSettings.setting.open();
+    appWithSettings.setting.openTabById(this.id);
+  }
 
   async onload() {
     // Load settings
@@ -120,15 +131,15 @@ export default class RelatedNotesPlugin extends Plugin {
       let message = "";
       let phase = "";
 
-      // Determine the current phase based on percentage
+      // Determine the current phase based on percentage with more concrete descriptions
       if (percentage <= 25) {
-        phase = "Reading your notes";
+        phase = "Computing index";
       } else if (percentage <= 50) {
-        phase = "Analyzing patterns";
+        phase = "Processing metadata";
       } else if (percentage <= 75) {
-        phase = "Finding connections";
+        phase = "Building similarity matrix";
       } else {
-        phase = "Building relationships";
+        phase = "Optimizing search index";
       }
 
       // Simple progress message with percentage
@@ -159,14 +170,14 @@ export default class RelatedNotesPlugin extends Plugin {
         
         if (this.settings.useBloomFilter) {
           // Using bloom filter (optimized for large vaults)
-          this.statusBarItem.setText(`📊 Using bloom filter (${percentIndexed}% indexed)`);
+          this.statusBarItem.setText(`Using bloom filter (${percentIndexed}% indexed)`);
           this.statusBarItem.setAttribute('aria-label', 
             `Bloom filter enabled: Using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
           this.statusBarItem.setAttribute('title', 
             `Bloom filter is optimized for large vaults. Currently using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes.`);
         } else {
           // Using MinHash with sampling
-          this.statusBarItem.setText(`⚠️ Using a sample of your notes (${percentIndexed}%)`);
+          this.statusBarItem.setText(`Using a sample of your notes (${percentIndexed}%)`);
           this.statusBarItem.setAttribute('aria-label', 
             `For better performance, Related Notes is using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
           this.statusBarItem.setAttribute('title', 
@@ -174,7 +185,7 @@ export default class RelatedNotesPlugin extends Plugin {
         }
       } else if (this.settings.useBloomFilter) {
         // Using bloom filter with full indexing
-        this.statusBarItem.setText("🔍 Bloom filter ready");
+        this.statusBarItem.setText("Bloom filter ready");
         this.statusBarItem.setAttribute('aria-label', 'Using efficient bloom filter algorithm');
         this.statusBarItem.setAttribute('title', 'Using bloom filter algorithm for lightweight similarity calculations');
       } else {
