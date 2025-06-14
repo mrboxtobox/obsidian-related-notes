@@ -68,11 +68,6 @@ The plugin features a streamlined settings interface:
 ### Stats Toggle
 Enable to view detailed statistics about the plugin's operation:
 
-- **Memory Usage**: See how much memory the plugin is using (vocabulary size, file vectors, signatures, cache sizes, etc.)
-- **NLP Metrics**: View natural language processing statistics (shingle size, document length, similarity provider, etc.)
-
-The re-indexing process now includes a visual progress indicator below the button, showing the current phase and completion percentage.
-
 ### Multi-Resolution Bloom Filter
 
 The plugin uses a multi-resolution bloom filter approach for efficient similarity detection:
@@ -125,7 +120,6 @@ The plugin provides excellent support for all languages:
 - **No Language Detection**: Works with mixed-language documents without special configuration
 - **No Dictionary Dependence**: Does not rely on language-specific dictionaries or stopword lists
 - **Self-Adapting**: Automatically detects common words in your specific corpus, regardless of language
-
 The multi-resolution bloom filter approach is inherently language-agnostic, working equally well across all scripts and writing systems without any language-specific tuning required.
 
 ### File Type Support
@@ -244,26 +238,26 @@ Benchmarks were run on a 2021 MacBook Pro with M1 Pro processor and 16GB RAM.
 
 #### Indexing Performance
 
-| Vault Size | MinHash LSH | Bloom Filter | Improvement |
-|------------|-------------|--------------|-------------|
-| 100 files  | 1,523 ms    | 783 ms       | 48.6% faster |
-| 500 files  | 8,321 ms    | 3,429 ms     | 58.8% faster |
-| 1,000 files| 17,835 ms   | 6,842 ms     | 61.6% faster |
-| 5,000 files| 95,732 ms   | 33,127 ms    | 65.4% faster |
+| Vault Size  | MinHash LSH | Bloom Filter | Improvement  |
+| ----------- | ----------- | ------------ | ------------ |
+| 100 files   | 1,523 ms    | 783 ms       | 48.6% faster |
+| 500 files   | 8,321 ms    | 3,429 ms     | 58.8% faster |
+| 1,000 files | 17,835 ms   | 6,842 ms     | 61.6% faster |
+| 5,000 files | 95,732 ms   | 33,127 ms    | 65.4% faster |
 
 #### Similarity Calculation Performance
 
-| Vault Size | MinHash LSH | Bloom Filter | Improvement |
-|------------|-------------|--------------|-------------|
-| 100 files  | 42 ms       | 17 ms        | 59.5% faster |
-| 500 files  | 57 ms       | 21 ms        | 63.2% faster |
-| 1,000 files| 68 ms       | 24 ms        | 64.7% faster |
-| 5,000 files| 124 ms      | 39 ms        | 68.5% faster |
+| Vault Size  | MinHash LSH | Bloom Filter | Improvement  |
+| ----------- | ----------- | ------------ | ------------ |
+| 100 files   | 42 ms       | 17 ms        | 59.5% faster |
+| 500 files   | 57 ms       | 21 ms        | 63.2% faster |
+| 1,000 files | 68 ms       | 24 ms        | 64.7% faster |
+| 5,000 files | 124 ms      | 39 ms        | 68.5% faster |
 
 #### Memory Usage
 
-| Configuration | Memory Usage | Notes |
-|---------------|--------------|-------|
+| Configuration | Memory Usage | Notes                            |
+| ------------- | ------------ | -------------------------------- |
 | MinHash LSH   | 287 MB       | 10,000 file vault, 5,000 indexed |
 | Bloom Filter  | 105 MB       | 10,000 file vault, 5,000 indexed |
 

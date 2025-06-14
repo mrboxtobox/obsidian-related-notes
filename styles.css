@@ -37,48 +37,10 @@
   text-transform: uppercase;
 }
 
-/* Re-index button styles */
-.related-notes-reindex-button {
-  font-size: 16px;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: 4px;
-  background-color: transparent;
-  color: var(--text-muted);
-  border: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s ease;
-}
-
-.related-notes-reindex-button:hover {
-  background-color: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
-.related-notes-reindex-button.reindexing {
-  animation: spin 1.5s linear infinite;
-  color: var(--text-accent);
-  cursor: wait;
-}
-
 /* Disabled button styles */
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-@keyframes spin {
-  0% {
-    transform: rotate(0deg);
-  }
-
-  100% {
-    transform: rotate(360deg);
-  }
 }
 
 /* Content styles */
@@ -177,35 +139,6 @@ button:disabled {
   font-style: italic;
 }
 
-.related-notes-recommendation {
-  margin: 4px 0;
-  font-size: 14px;
-  color: var(--text-accent);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px;
-  background-color: var(--background-modifier-border);
-  border-radius: 6px;
-}
-
-.related-notes-settings-button {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background-color: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border: none;
-  cursor: pointer;
-  transition: background-color 0.15s ease;
-  white-space: nowrap;
-}
-
-.related-notes-settings-button:hover {
-  background-color: var(--interactive-accent-hover);
-}
-
 /* Item container styles */
 .related-note-item-container {
   display: flex;
@@ -243,39 +176,6 @@ button:disabled {
   cursor: default;
 }
 
-/* On-demand indicator styles */
-.related-note-indicator {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-left: 8px;
-  font-style: italic;
-  opacity: 0.8;
-}
-
-/* Re-indexing progress container styles */
-.related-notes-progress-container {
-  height: 10px;
-  background-color: var(--background-modifier-border);
-  border-radius: 5px;
-  overflow: hidden;
-  margin-top: 8px;
-  width: 100%;
-}
-
-.related-notes-progress-indicator {
-  height: 100%;
-  background-color: var(--interactive-accent);
-  width: 0%;
-  transition: width 0.5s ease;
-}
-
-.related-notes-progress-text {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  display: block;
-}
-
 /* Settings tab styles */
 .related-notes-button-container {
   display: flex;
@@ -288,43 +188,4 @@ button:disabled {
 
 .related-notes-cancel-button-hidden {
   display: none;
-}
-
-/* Bloom filter specific styles */
-.related-notes-algorithm-badge {
-  font-size: 10px;
-  color: var(--text-on-accent);
-  background-color: var(--interactive-accent);
-  padding: 2px 6px;
-  border-radius: 10px;
-  margin-left: 8px;
-  font-weight: bold;
-  text-transform: none;
-}
-
-.related-note-score {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-left: 8px;
-  opacity: 0.8;
-}
-
-.related-note-terms {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  padding-left: 12px;
-  display: none;
-}
-
-.related-note-item:hover .related-note-terms {
-  display: block;
-}
-
-.related-note-terms-label {
-  font-weight: 500;
-}
-
-.related-note-terms-list {
-  font-style: italic;
 }

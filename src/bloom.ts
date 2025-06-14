@@ -21,7 +21,7 @@ function log(...args: any[]) {
  * Optimized for memory efficiency while maintaining reasonable accuracy
  */
 export class BloomFilter {
-  private readonly bitArray: Uint32Array;
+  private bitArray: Uint32Array;
   private readonly size: number;
   private readonly hashFunctions: number;
   private readonly addedItems: Set<string> = new Set(); // Track added items for debugging
@@ -120,6 +120,18 @@ export class BloomFilter {
   getBitArray(): Uint32Array {
     return this.bitArray;
   }
+  
+  /**
+   * Sets the bit array directly (used for deserialization)
+   * @param array The bit array to set
+   */
+  setBitArray(array: Uint32Array): void {
+    if (array.length === this.bitArray.length) {
+      this.bitArray = array;
+    } else {
+      throw new Error(`Array length mismatch: got ${array.length}, expected ${this.bitArray.length}`);
+    }
+  }
 
   /**
    * Generates hash values for an item
@@ -179,8 +191,12 @@ export class BloomFilter {
    * @returns Similarity score between 0 and 1
    */
   similarity(other: BloomFilter): number {
+    // Check if filters have the same size
     if (this.size !== other.size) {
-      throw new Error('Bloom filters must be the same size for comparison');
+      if (DEBUG_MODE) {
+        log(`Cannot directly compare bloom filters of different sizes: ${this.size} vs ${other.size}`);
+      }
+      return 0;
     }
 
     let intersectionBits = 0;
@@ -204,26 +220,45 @@ export class BloomFilter {
       otherBits += otherCount;
     }
 
-    const similarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
+    // Check for nearly empty documents
+    const minBitsRequired = 5; // Minimum number of bits set to consider meaningful
+    if (thisBits < minBitsRequired || otherBits < minBitsRequired) {
+      // If either document has too few bits set, it's likely too short to compare meaningfully
+      if (DEBUG_MODE) {
+        log(`One or both documents too small for meaningful comparison: ${thisBits} vs ${otherBits} bits set`);
+      }
+      return 0;
+    }
+    
+    // Calculate raw Jaccard similarity
+    let similarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
+    
+    // Check for filter saturation (too many bits set)
+    const thisRatio = thisBits / this.size;
+    const otherRatio = otherBits / this.size;
+    
+    // If either filter is highly saturated (>40% bits set), scale down similarity
+    // This reduces false positives when bloom filters become saturated
+    if (thisRatio > 0.4 || otherRatio > 0.4) {
+      // Scale down more aggressively as saturation increases
+      const saturationFactor = Math.max(thisRatio, otherRatio);
+      // Apply polynomial scaling (stronger than logarithmic)
+      similarity = similarity * Math.pow(1 - saturationFactor, 2);
+    }
     
     if (DEBUG_MODE) {
+      const rawSimilarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
       log(
         `Similarity details:
-        - Filter 1: ${thisBits} bits set (${thisBits / this.size * 100}% of capacity)
-        - Filter 2: ${otherBits} bits set (${otherBits / this.size * 100}% of capacity)
+        - Filter 1: ${thisBits} bits set (${(thisRatio * 100).toFixed(1)}% of capacity)
+        - Filter 2: ${otherBits} bits set (${(otherRatio * 100).toFixed(1)}% of capacity)
         - Intersection: ${intersectionBits} bits
         - Union: ${unionBits} bits
         - Items in filter 1: ${this.addedItems.size}
         - Items in filter 2: ${other.addedItems.size}
-        - Common items (estimated): ${Math.round(intersectionBits / (this.hashFunctions + other.hashFunctions) * 2)}
-        - Jaccard similarity: ${(similarity * 100).toFixed(2)}%`
+        - Raw similarity: ${(rawSimilarity * 100).toFixed(2)}%
+        - Adjusted similarity: ${(similarity * 100).toFixed(2)}%`
       );
-      
-      // Log a sample of items that were added to both filters
-      const commonItems = [...this.addedItems].filter(item => other.addedItems.has(item));
-      if (commonItems.length > 0) {
-        log(`First 5 common items: ${commonItems.slice(0, 5).join(', ')}`);
-      }
     }
 
     return similarity;
@@ -465,9 +500,9 @@ export class BloomFilterSimilarityProvider {
   }
 
   /**
-   * Extract character n-grams from text
+   * Extract words from text to use as items in bloom filter
    * @param text Input text
-   * @returns Set of n-grams
+   * @returns Set of words
    */
   private extractNgrams(text: string): Set<string> {
     const startTime = performance.now();
@@ -475,14 +510,10 @@ export class BloomFilterSimilarityProvider {
     // Use the existing tokenize function from core
     const processed = tokenize(text);
     
-    // Extract character n-grams from meaningful words only
-    const ngrams = new Set<string>();
-    
-    // Split into words
+    // Split into words and convert to lowercase
     const words = processed.toLowerCase().split(/\s+/);
     
-    // Filter out common words if we've computed them
-    // Otherwise, just filter by word length
+    // Filter out common and short words
     let meaningfulWords: string[];
     let excludedCount = 0;
     
@@ -498,34 +529,38 @@ export class BloomFilterSimilarityProvider {
       excludedCount = words.length - meaningfulWords.length;
     }
     
-    if (DEBUG_MODE) {
-      const excludedPercent = words.length > 0 ? (excludedCount / words.length * 100).toFixed(1) : '0';
-      const method = this.commonWordsComputed ? 'adaptive stopwords' : 'length filter';
-      log(`Filtered out ${excludedCount} words (${excludedPercent}% of total) using ${method}`);
-    }
+    // Create a set of words (automatically deduplicates)
+    const wordSet = new Set<string>(meaningfulWords);
     
-    // Create n-grams from the filtered words
-    const filteredText = meaningfulWords.join(' ');
-    const chars = filteredText.replace(/\s+/g, ' ');
+    // Also add word pairs (bigrams) for better context capture
+    // Limit the total number of bigrams to avoid creating too many
+    const maxBigrams = 300;
+    let bigramCount = 0;
     
-    for (let i = 0; i <= chars.length - this.ngramSize; i++) {
-      ngrams.add(chars.substring(i, i + this.ngramSize));
+    for (let i = 0; i < meaningfulWords.length - 1 && bigramCount < maxBigrams; i++) {
+      const bigram = `${meaningfulWords[i]} ${meaningfulWords[i + 1]}`;
+      wordSet.add(bigram);
+      bigramCount++;
     }
     
     const endTime = performance.now();
     
     if (DEBUG_MODE) {
-      // Only log if we have few enough n-grams to display
-      const sampleSize = Math.min(10, ngrams.size);
-      if (ngrams.size < 100) {
-        const sample = Array.from(ngrams).slice(0, sampleSize);
-        log(`Extracted ${ngrams.size} n-grams in ${(endTime - startTime).toFixed(2)}ms. Sample: ${sample.join(', ')}`);
+      const excludedPercent = words.length > 0 ? (excludedCount / words.length * 100).toFixed(1) : '0';
+      const method = this.commonWordsComputed ? 'adaptive stopwords' : 'length filter';
+      log(`Filtered out ${excludedCount} words (${excludedPercent}% of total) using ${method}`);
+      
+      // Only log if we have few enough words to display
+      const sampleSize = Math.min(10, wordSet.size);
+      if (wordSet.size < 100) {
+        const sample = Array.from(wordSet).slice(0, sampleSize);
+        log(`Extracted ${wordSet.size} words/phrases in ${(endTime - startTime).toFixed(2)}ms. Sample: ${sample.join(', ')}`);
       } else {
-        log(`Extracted ${ngrams.size} n-grams in ${(endTime - startTime).toFixed(2)}ms`);
+        log(`Extracted ${wordSet.size} words/phrases in ${(endTime - startTime).toFixed(2)}ms`);
       }
     }
     
-    return ngrams;
+    return wordSet;
   }
 
   /**

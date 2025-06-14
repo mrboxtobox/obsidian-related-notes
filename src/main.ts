@@ -6,28 +6,6 @@ import { MultiResolutionBloomFilterProvider } from './multi-bloom';
 
 'use strict';
 
-export interface MemoryStats {
-  vocabularySize: number;
-  fileVectorsCount: number;
-  signaturesCount: number;
-  relatedNotesCount: number;
-  onDemandCacheCount: number;
-  estimatedMemoryUsage: number;
-}
-
-export interface NLPStats {
-  averageShingleSize: number;
-  averageDocLength: number;
-  similarityProvider: string;
-  lshBands: number;
-  lshRowsPerBand: number;
-  averageSimilarityScore: number;
-  isCorpusSampled: boolean;
-  totalFiles: number;
-  indexedFiles: number;
-  onDemandComputations: number;
-}
-
 export default class RelatedNotesPlugin extends Plugin {
   settings!: RelatedNotesSettings;
   similarityProvider!: SimilarityProvider;
@@ -36,7 +14,7 @@ export default class RelatedNotesPlugin extends Plugin {
   private isReindexing = false;
   private reindexCancelled = false;
   public id: string = 'obsidian-related-notes'; // Plugin ID for settings
-  
+
   /**
    * Opens the plugin settings tab
    */
@@ -46,6 +24,82 @@ export default class RelatedNotesPlugin extends Plugin {
     appWithSettings.setting.open();
     appWithSettings.setting.openTabById(this.id);
   }
+  
+  /**
+   * Clears the cache files
+   * This removes all cached data and allows starting fresh
+   */
+  public async clearCache(): Promise<void> {
+    try {
+      // Get config directory
+      const configDir = this.app.vault.configDir;
+      const adapter = this.app.vault.adapter;
+      
+      if (!configDir || !adapter) {
+        console.error('Could not access vault config directory');
+        throw new Error('Could not access vault configuration');
+      }
+      
+      // Define all potential cache paths to clear
+      const cachePaths = [
+        // Current cache file
+        `${configDir}/plugins/obsidian-related-notes/.bloom-filter-cache.json`,
+        // Legacy cache files
+        `${configDir}/plugins/obsidian-related-notes/bloom-filter-cache.json`,
+        `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
+        `${configDir}/plugins/obsidian-related-notes/.index-cache.json`,
+      ];
+      
+      // Attempt to remove each cache file
+      let deletedCount = 0;
+      for (const cachePath of cachePaths) {
+        try {
+          const exists = await adapter.exists(cachePath);
+          if (exists) {
+            await adapter.remove(cachePath);
+            deletedCount++;
+            console.log(`Deleted cache file: ${cachePath}`);
+          }
+        } catch (err) {
+          // Log but continue with other files
+          console.error(`Failed to delete cache file ${cachePath}:`, err);
+        }
+      }
+      
+      // Also clear the in-memory cache by resetting the similarity provider
+      if (this.similarityProvider) {
+        // For MultiResolutionBloomFilterProvider, we can clear its internal cache
+        if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
+          this.similarityProvider.clear();
+        }
+      }
+      
+      console.log(`Cache cleared: ${deletedCount} files deleted`);
+      
+      // Update status bar temporarily
+      this.statusBarItem.setText('Cache cleared');
+      this.statusBarItem.style.display = 'block';
+      
+      // Hide status bar after 3 seconds
+      setTimeout(() => {
+        this.statusBarItem.setText('');
+        this.statusBarItem.style.display = 'none';
+      }, 3000);
+      
+      // Set as uninitialized to trigger reindexing on next use
+      this.isInitialized = false;
+      
+      // Reinitialize the similarity provider
+      // Use setTimeout to defer to next event loop cycle
+      setTimeout(() => {
+        this.initializeSimilarityProvider();
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+      throw error;
+    }
+  }
 
   async onload() {
     // Load settings
@@ -54,7 +108,8 @@ export default class RelatedNotesPlugin extends Plugin {
     // Register essential components immediately
     this.registerCommands();
     this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.setText("Initializing...");
+    this.statusBarItem.setText("Initializing");
+    this.statusBarItem.style.display = 'block';
 
     // Add settings tab
     this.addSettingTab(new RelatedNotesSettingTab(this.app, this));
@@ -92,31 +147,64 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Delete any old cache files from previous implementations
     try {
-      const oldCachePath = `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`;
-      await this.app.vault.adapter.remove(oldCachePath).catch(() => {
-        // Ignore error if file doesn't exist
-      });
-      console.log('Removed old similarity cache (if it existed)');
+      // Try to remove old cache files
+      const oldCachePaths = [
+        `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
+        `${configDir}/plugins/obsidian-related-notes/bloom-filter-cache.json`, // Non-hidden version
+        `${configDir}/plugins/obsidian-related-notes/.bloom-filter-cache.json` // Old format that might be incompatible
+      ];
+
+      // Remove old cache formats but not the current one
+      for (const oldCachePath of oldCachePaths) {
+        await this.app.vault.adapter.remove(oldCachePath).catch(() => {
+          // Ignore error if file doesn't exist
+        });
+      }
+
+      // Update version tracking but don't automatically clear cache
+      this.settings.lastKnownVersion = this.manifest.version;
+      await this.saveSettings();
+
+      console.log('Removed old cache files (if they existed)');
     } catch (error) {
       // Ignore errors when trying to delete old cache
     }
 
-    // Use multi-resolution bloom filter provider
+    // Ensure all bloom filters use the same size
+    const defaultSize = 8192; // Increased filter size to reduce false positives
+    // Make sure all bloom filters have the exact same size to prevent comparison issues
+    const bloomSizes = this.settings.ngramSizes.map(() => defaultSize);
+
+    // Set default weights to ensure valid comparisons (all weights = 1.0)
+    const defaultWeights = this.settings.ngramSizes.map(() => 1.0);
+
+    // Make sure hash functions array length matches n-gram sizes
+    let hashFunctions = this.settings.hashFunctions;
+    if (!hashFunctions || hashFunctions.length !== this.settings.ngramSizes.length) {
+      hashFunctions = this.settings.ngramSizes.map(() => 3);
+    }
+
+    // Use multi-resolution bloom filter provider with simplified settings
     this.similarityProvider = new MultiResolutionBloomFilterProvider(this.app.vault, {
       ngramSizes: this.settings.ngramSizes,
-      bloomSizes: this.settings.bloomSizes,
-      hashFunctions: this.settings.hashFunctions,
-      adaptiveParameters: this.settings.adaptiveParameters,
+      bloomSizes: bloomSizes, // Use consistent bloom sizes to prevent size mismatch errors
+      hashFunctions: hashFunctions,
+      weights: defaultWeights, // Use consistent weights to ensure valid comparisons
+      adaptiveParameters: true, // Always use adaptive parameters
       similarityThreshold: this.settings.similarityThreshold,
       commonWordsThreshold: this.settings.commonWordsThreshold,
       maxStopwords: this.settings.maxStopwords,
       priorityIndexSize: this.settings.priorityIndexSize,
       batchSize: this.settings.batchSize,
-      onDemandComputationEnabled: this.settings.onDemandComputationEnabled
+      // Sampling settings
+      enableSampling: this.settings.enableSampling,
+      sampleSizeThreshold: this.settings.sampleSizeThreshold,
+      maxSampleSize: this.settings.maxSampleSize,
     });
 
     // Show initial status
-    this.statusBarItem.setText("Indexing notes with bloom filter...");
+    this.statusBarItem.setText("Indexing notes...");
+    this.statusBarItem.style.display = 'block';
 
     // Use setTimeout to defer heavy initialization to the next event loop
     // This prevents UI blocking during startup
@@ -126,26 +214,22 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async initializeSimilarityProvider() {
-    // Show initial status
-    this.statusBarItem.setText("Loading related notes...");
+    try {
+      // Initialize with progress reporting and smooth transitions
+      // Pass the skipInitialIndexing setting to prevent reindexing on every load
+      await this.similarityProvider.initialize((processed, total) => {
+        const percentage = Math.round((processed / total) * 100);
+        let message = "";
+        let phase = "Indexing";
 
-    // Initialize with progress reporting and smooth transitions
-    await this.similarityProvider.initialize((processed, total) => {
-      const percentage = Math.round((processed / total) * 100);
-      let message = "";
-      let phase = "";
+        // Simple progress message with percentage (following Obsidian style guide)
+        message = `${phase} notes: ${percentage}%`;
 
-      // Determine the current phase based on percentage with more concrete descriptions
-      if (percentage <= 25) {
-        phase = "Computing index";
-      } else if (percentage <= 50) {
-        phase = "Processing metadata";
-      } else if (percentage <= 75) {
-        phase = "Building similarity matrix";
-      } else {
-        phase = "Optimizing search index";
-      }
+        this.statusBarItem.setText(message);
+        this.statusBarItem.style.display = 'block';
+      });
 
+<<<<<<< HEAD
       // Simple progress message with percentage
       message = `${phase}... ${percentage}%`;
 
@@ -163,6 +247,63 @@ export default class RelatedNotesPlugin extends Plugin {
     this.statusBarItem.setAttribute('title', 'Using multi-resolution bloom filter for accurate similarity calculations');
     
     this.isInitialized = true;
+=======
+      // Get stats for status bar
+      const stats = this.similarityProvider.getStats();
+      const totalFiles = this.app.vault.getMarkdownFiles().length;
+      const indexedFiles = stats.documentsIndexed || 0;
+      
+      // Check if progressive indexing is active
+      if (stats.progressiveIndexing && stats.progressiveIndexing.active) {
+        const remaining = stats.progressiveIndexing.remainingFiles;
+        const total = totalFiles;
+        const indexed = total - remaining;
+        const percent = Math.round((indexed / total) * 100);
+        
+        // Show a subtle indicator that progressive indexing is active
+        this.statusBarItem.setText(`Indexing: ${percent}%`);
+        this.statusBarItem.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
+        this.statusBarItem.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
+        this.statusBarItem.style.display = 'block';
+        
+        // Set a timer to periodically update the status
+        setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
+      } else {
+        // Remove status bar item when indexing is complete
+        this.statusBarItem.setText("");
+        this.statusBarItem.removeAttribute('aria-label');
+        this.statusBarItem.removeAttribute('title');
+        this.statusBarItem.style.display = 'none';
+      }
+
+      this.isInitialized = true;
+    } catch (error) {
+      // Handle cancellation error explicitly
+      if (error instanceof Error && error.message === 'Indexing cancelled') {
+        console.log('Initial indexing was cancelled');
+        // Set a proper status message
+        this.statusBarItem.setText("Indexing cancelled");
+        setTimeout(() => {
+          this.statusBarItem.setText("");
+          this.statusBarItem.style.display = 'none';
+        }, 2000);
+        
+        // Even if cancelled, mark as initialized to prevent blocking the UI
+        this.isInitialized = true;
+      } else {
+        // For other errors, log and show error message
+        console.error('Error during initialization:', error);
+        this.statusBarItem.setText("Indexing error");
+        setTimeout(() => {
+          this.statusBarItem.setText("");
+          this.statusBarItem.style.display = 'none';
+        }, 3000);
+        
+        // Mark as initialized even on error to prevent perpetual loading state
+        this.isInitialized = true;
+      }
+    }
+>>>>>>> 23150b0 (Improve Unicode support and remove MinHash references)
   }
 
   /**
@@ -171,22 +312,29 @@ export default class RelatedNotesPlugin extends Plugin {
    * @throws Error if indexing is cancelled
    */
   public async forceReindex(): Promise<void> {
+<<<<<<< HEAD
 
+=======
+>>>>>>> 23150b0 (Improve Unicode support and remove MinHash references)
     // Check if already reindexing or initial indexing is still in progress
     if (this.isReindexing) {
-      this.statusBarItem.setText("Already re-indexing, please wait...");
+      this.statusBarItem.setText("Already indexing");
+      this.statusBarItem.style.display = 'block';
       setTimeout(() => {
-        this.statusBarItem.setText("Re-indexing in progress...");
-      }, 2000);
+        this.statusBarItem.setText("Indexing in progress");
+        this.statusBarItem.style.display = 'block';
+      }, 1000);
       return;
     }
 
     // Check if initial indexing is still in progress
     if (!this.isInitialized) {
-      this.statusBarItem.setText("Initial indexing in progress, please wait...");
+      this.statusBarItem.setText("Initial indexing in progress");
+      this.statusBarItem.style.display = 'block';
       setTimeout(() => {
-        this.statusBarItem.setText("Indexing in progress...");
-      }, 2000);
+        this.statusBarItem.setText("Indexing in progress");
+        this.statusBarItem.style.display = 'block';
+      }, 1000);
       return;
     }
 
@@ -197,115 +345,75 @@ export default class RelatedNotesPlugin extends Plugin {
     try {
       // Update status bar
       this.isInitialized = false;
-      this.statusBarItem.setText("Re-indexing notes...");
+      this.statusBarItem.setText("Indexing notes");
+      this.statusBarItem.style.display = 'block';
 
-      // Force re-indexing with progress reporting
-      await this.similarityProvider.forceReindex((processed, total) => {
-        // Periodically yield to main thread to check for cancellation
-        // This ensures the UI remains responsive and can detect cancel button clicks
-        const yieldToMainAndCheckCancellation = async () => {
-          // TODO(olu): Use requestAnimationFrame if available (better for UI responsiveness).
-          // Fallback to setTimeout with 0ms delay
-          await new Promise<void>((resolve, reject) => {
-            setTimeout(() => {
-              // Check if reindexing was cancelled
-              if (this.reindexCancelled) {
-                reject(new Error('Indexing cancelled'));
-              } else {
-                resolve();
-              }
-            }, 0);
-          });
-        };
+      // Create a cancellation checker function
+      let lastCheckTime = Date.now();
+      const checkCancellation = async () => {
+        // Only check every 500ms to avoid excessive checks
+        const now = Date.now();
+        if (now - lastCheckTime < 500) return;
 
-        // Yield to main thread every 5% progress
-        if (processed % 5 === 0) {
-          yieldToMainAndCheckCancellation();
+        lastCheckTime = now;
+
+        // Use microtask to check cancellation without blocking
+        return new Promise<void>((resolve, reject) => {
+          setTimeout(() => {
+            if (this.reindexCancelled) {
+              reject(new Error('Indexing cancelled'));
+            } else {
+              resolve();
+            }
+          }, 0);
+        });
+      };
+
+      // Force re-indexing with progress reporting and cancellation checks
+      await this.similarityProvider.forceReindex(async (processed, total) => {
+        try {
+          // Check for cancellation periodically
+          if (processed % 10 === 0) {
+            await checkCancellation();
+          }
+
+          const percentage = Math.min(100, Math.round((processed / Math.max(1, total)) * 100));
+          let message = "";
+          let phase = "";
+
+          // Simplified phases with minimal text
+          if (percentage <= 33) {
+            phase = "Processing";
+          } else if (percentage <= 66) {
+            phase = "Analyzing";
+          } else {
+            phase = "Indexing";
+          }
+
+          // Simple progress message with percentage (following Obsidian style guide)
+          message = `${phase} notes: ${percentage}%`;
+          this.statusBarItem.setText(message);
+          this.statusBarItem.style.display = 'block';
+        } catch (error) {
+          // Propagate cancellation errors
+          if (error instanceof Error && error.message === 'Indexing cancelled') {
+            throw error;
+          }
+          // Log other errors but continue
+          console.error("Error during progress update:", error);
         }
-
-        const percentage = processed;
-        let message = "";
-        let phase = "";
-
-        // Determine the current phase based on percentage
-        if (percentage <= 25) {
-          phase = "Reading your notes";
-        } else if (percentage <= 50) {
-          phase = "Analyzing patterns";
-        } else if (percentage <= 75) {
-          phase = "Finding connections";
-        } else {
-          phase = "Building relationships";
-        }
-
-        // Simple progress message with percentage
-        message = `Re-indexing: ${phase}... ${percentage}%`;
-
-        this.statusBarItem.setText(message);
       });
 
-      // Update status bar after re-indexing with detailed information
-      if (this.similarityProvider instanceof SimilarityProviderV2) {
-        const provider = this.similarityProvider as SimilarityProviderV2;
-        
-        if (provider.isCorpusSampled()) {
-          // For very large vaults using sampling
-          const totalFiles = this.app.vault.getMarkdownFiles().length;
-          const indexedFiles = provider.getFileVectorsCount();
-          const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
-          
-          if (this.settings.useBloomFilter) {
-            // Using bloom filter with sampling
-            this.statusBarItem.setText(`📊 Re-indexed with bloom filter (${percentIndexed}%)`);
-            setTimeout(() => {
-              this.statusBarItem.setText(`📊 Using bloom filter (${percentIndexed}% indexed)`);
-            }, 3000);
-            
-            this.statusBarItem.setAttribute('aria-label', 
-              `Bloom filter enabled: Using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
-            this.statusBarItem.setAttribute('title', 
-              `Bloom filter is optimized for large vaults. Currently using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes.`);
-          } else {
-            // Using MinHash with sampling
-            this.statusBarItem.setText(`⚠️ Re-indexed ${percentIndexed}% of notes`);
-            setTimeout(() => {
-              this.statusBarItem.setText(`⚠️ Using a sample of your notes (${percentIndexed}%)`);
-            }, 3000);
-            
-            this.statusBarItem.setAttribute('aria-label', 
-              `For better performance, Related Notes is using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
-            this.statusBarItem.setAttribute('title', 
-              `Your vault is large. For better performance, only ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes are indexed. Enable bloom filter in settings for better large vault support.`);
-          }
-        } else if (this.settings.useBloomFilter) {
-          // Using bloom filter with full indexing
-          this.statusBarItem.setText("✅ Re-indexed with bloom filter");
-          setTimeout(() => {
-            this.statusBarItem.setText("🔍 Bloom filter ready");
-          }, 3000);
-          
-          this.statusBarItem.setAttribute('aria-label', 'Using efficient bloom filter algorithm');
-          this.statusBarItem.setAttribute('title', 'Using bloom filter algorithm for lightweight similarity calculations');
-        } else {
-          // Normal operation
-          this.statusBarItem.setText("✅ Re-indexing complete");
-          setTimeout(() => {
-            this.statusBarItem.setText("Ready to find related notes");
-          }, 3000);
-          
-          this.statusBarItem.removeAttribute('aria-label');
-          this.statusBarItem.removeAttribute('title');
-        }
-      } else {
-        // Fallback for other providers
-        this.statusBarItem.setText("Re-indexing complete");
-        setTimeout(() => {
-          this.statusBarItem.setText("Ready to find related notes");
-        }, 3000);
-        
-        this.statusBarItem.removeAttribute('aria-label');
-        this.statusBarItem.removeAttribute('title');
-      }
+      // Clear status bar after re-indexing
+      this.statusBarItem.setText("Indexing complete");
+      setTimeout(() => {
+        this.statusBarItem.setText("");
+        this.statusBarItem.style.display = 'none';
+      }, 3000);
+
+      this.statusBarItem.removeAttribute('aria-label');
+      this.statusBarItem.removeAttribute('title');
+
       this.isInitialized = true;
 
       // Refresh the view if it's open
@@ -324,16 +432,27 @@ export default class RelatedNotesPlugin extends Plugin {
       if (error instanceof Error && error.message === 'Indexing cancelled') {
         this.statusBarItem.setText("Re-indexing cancelled");
         setTimeout(() => {
-          this.statusBarItem.setText("Ready to find related notes");
+          this.statusBarItem.setText("");
+          this.statusBarItem.style.display = 'none';
         }, 2000);
-        throw error; // Re-throw to be caught by the settings tab
+
+        // Restore initialized state
+        this.isInitialized = true;
+
+        // Do not rethrow the cancellation error - it's an expected condition
+        console.log("Re-indexing was cancelled by user");
+      } else {
+        // For other errors, log and update status bar
+        console.error("Error during re-indexing:", error);
+        this.statusBarItem.setText("Error during re-indexing");
+        setTimeout(() => {
+          this.statusBarItem.setText("");
+          this.statusBarItem.style.display = 'none';
+        }, 2000);
+
+        // Restore initialized state for other errors too
+        this.isInitialized = true;
       }
-      // For other errors, log and update status bar
-      console.error("Error during re-indexing:", error);
-      this.statusBarItem.setText("Error during re-indexing");
-      setTimeout(() => {
-        this.statusBarItem.setText("Ready to find related notes");
-      }, 2000);
     } finally {
       // Reset reindexing state
       this.isReindexing = false;
@@ -346,6 +465,17 @@ export default class RelatedNotesPlugin extends Plugin {
   public cancelReindex(): void {
     if (this.isReindexing) {
       this.reindexCancelled = true;
+      // Also stop the similarity provider directly
+      this.similarityProvider.stop();
+      // Update the status immediately (following Obsidian style guide)
+      this.statusBarItem.setText("Indexing cancelled");
+      // Hide status after a short delay
+      setTimeout(() => {
+        this.statusBarItem.setText("");
+        this.statusBarItem.style.display = 'none';
+      }, 2000);
+      // Restore initialized state
+      this.isInitialized = true;
     }
   }
 
@@ -354,6 +484,115 @@ export default class RelatedNotesPlugin extends Plugin {
       this.app.workspace.on('file-open',
         (file: TFile | null) => this.showRelatedNotes(this.app.workspace, file))
     );
+
+    // Track file changes to update the index
+    this.registerEvent(
+      this.app.vault.on('create', (file) => {
+        if (file instanceof TFile && this.isMarkdownFile(file)) {
+          this.updateIndexForFile(file);
+        }
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on('modify', (file) => {
+        if (file instanceof TFile && this.isMarkdownFile(file)) {
+          this.updateIndexForFile(file);
+        }
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on('delete', (file) => {
+        if (file instanceof TFile && this.isMarkdownFile(file)) {
+          // Just mark the similarity provider as dirty to trigger a save
+          // The specific file handling is done inside the provider
+          if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
+            (this.similarityProvider as any).cacheDirty = true;
+          }
+        }
+      })
+    );
+  }
+
+  /**
+   * Update the index for a single file
+   * Uses a debounce mechanism to avoid excessive processing
+   */
+  private fileUpdateQueue = new Set<string>();
+  private processingQueue = false;
+  private lastProcessTime = 0;
+  private readonly PROCESS_INTERVAL = 2000; // 2 seconds between batches
+  private readonly MAX_BATCH_SIZE = 5; // Process at most 5 files at once
+
+  private async updateIndexForFile(file: TFile): Promise<void> {
+    if (!this.isInitialized || !this.similarityProvider) return;
+
+    // Add file to queue
+    this.fileUpdateQueue.add(file.path);
+    
+    // Start queue processing if not already running
+    if (!this.processingQueue) {
+      this.processingQueue = true;
+      this.processFileQueue();
+    }
+  }
+
+  private async processFileQueue(): Promise<void> {
+    // Respect minimum interval between processing batches
+    const now = Date.now();
+    const timeSinceLastProcess = now - this.lastProcessTime;
+    
+    if (timeSinceLastProcess < this.PROCESS_INTERVAL && this.lastProcessTime > 0) {
+      // Wait until interval has passed
+      await new Promise(resolve => 
+        setTimeout(resolve, this.PROCESS_INTERVAL - timeSinceLastProcess)
+      );
+    }
+    
+    // Nothing to process
+    if (this.fileUpdateQueue.size === 0) {
+      this.processingQueue = false;
+      return;
+    }
+    
+    this.lastProcessTime = Date.now();
+    
+    // Process a batch of files
+    const batch = Array.from(this.fileUpdateQueue).slice(0, this.MAX_BATCH_SIZE);
+    
+    // Remove processed files from queue
+    for (const filePath of batch) {
+      this.fileUpdateQueue.delete(filePath);
+    }
+    
+    // Process each file in the batch
+    for (const filePath of batch) {
+      try {
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (file instanceof TFile) {
+          // Get file content
+          const content = await this.app.vault.cachedRead(file);
+
+          // Extract title from the file path and add it to the content for improved matching
+          const fileName = file.basename;
+          const enhancedContent = `${fileName} ${content}`;
+
+          // Process with a yield to keep UI responsive
+          await new Promise(resolve => setTimeout(resolve, 10));
+          await this.similarityProvider.processDocument(file.path, enhancedContent);
+        }
+      } catch (error) {
+        console.error(`Error updating index for file ${filePath}:`, error);
+      }
+    }
+    
+    // Continue processing if there are more files
+    if (this.fileUpdateQueue.size > 0) {
+      this.processFileQueue();
+    } else {
+      this.processingQueue = false;
+    }
   }
 
   private registerCommands() {
@@ -371,7 +610,16 @@ export default class RelatedNotesPlugin extends Plugin {
 
   async onunload() {
     // Obsidian automatically detaches leaves when a plugin is unloaded
-    // No need to manually detach leaves here
+
+    // Save cache before unloading
+    if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
+      try {
+        // Call the public method
+        await (this.similarityProvider as MultiResolutionBloomFilterProvider).saveCache();
+      } catch (error) {
+        console.error('Error saving cache during unload:', error);
+      }
+    }
   }
 
   private async toggleRelatedNotes(workspace: Workspace) {
@@ -418,111 +666,40 @@ export default class RelatedNotesPlugin extends Plugin {
   public isReindexingInProgress(): boolean {
     return this.isReindexing;
   }
-
+  
   /**
-   * Gets memory usage statistics from the similarity provider
+   * Updates the status bar with progressive indexing information
+   * Called periodically to refresh the status
    */
-  public getMemoryStats(): MemoryStats {
-    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
-      return {
-        vocabularySize: 0,
-        fileVectorsCount: 0,
-        signaturesCount: 0,
-        relatedNotesCount: 0,
-        onDemandCacheCount: 0,
-        estimatedMemoryUsage: 0
-      };
-    }
-
-    const provider = this.similarityProvider as SimilarityProviderV2;
-
-    // Get stats from the provider
-    const vocabularySize = provider.getVocabularySize();
-    const fileVectorsCount = provider.getFileVectorsCount();
-    const signaturesCount = provider.getSignaturesCount();
-    const relatedNotesCount = provider.getRelatedNotesCount();
-    const onDemandCacheCount = provider.getOnDemandCacheCount();
-
-    // Estimate memory usage (very rough estimate)
-    // Vocabulary: ~50 bytes per term
-    // File vectors: ~100 bytes per file
-    // Signatures: ~100 bytes per signature
-    // Related notes: ~50 bytes per entry
-    // On-demand cache: ~200 bytes per entry
-    const estimatedMemoryUsage = Math.round(
-      (vocabularySize * 50 +
-        fileVectorsCount * 100 +
-        signaturesCount * 100 +
-        relatedNotesCount * 50 +
-        onDemandCacheCount * 200) / 1024
-    );
-
-    return {
-      vocabularySize,
-      fileVectorsCount,
-      signaturesCount,
-      relatedNotesCount,
-      onDemandCacheCount,
-      estimatedMemoryUsage
-    };
-  }
-
-  /**
-   * Gets NLP-related statistics from the similarity provider
-   */
-  public getNLPStats(): NLPStats {
-    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
-      return {
-        averageShingleSize: 0,
-        averageDocLength: 0,
-        similarityProvider: 'unknown',
-        lshBands: 0,
-        lshRowsPerBand: 0,
-        averageSimilarityScore: 0,
-        isCorpusSampled: false,
-        totalFiles: 0,
-        indexedFiles: 0,
-        onDemandComputations: 0
-      };
-    }
-
-    const provider = this.similarityProvider as SimilarityProviderV2;
-
-    // Get stats from the provider
-    const averageShingleSize = provider.getAverageShingleSize();
-    const averageDocLength = provider.getAverageDocLength();
-    const lshBands = provider.getLSHBands();
-    const lshRowsPerBand = provider.getLSHRowsPerBand();
-    const averageSimilarityScore = provider.getAverageSimilarityScore();
-    const isCorpusSampled = provider.isCorpusSampled();
-    const totalFiles = this.app.vault.getMarkdownFiles().length;
-    const indexedFiles = provider.getFileVectorsCount();
-    const onDemandComputations = provider.getOnDemandComputationsCount();
-
-    // Determine similarity provider type
-    let similarityProviderType = 'auto';
-    if (this.settings.similarityProvider !== 'auto') {
-      similarityProviderType = this.settings.similarityProvider;
-    } else if (this.settings.useBloomFilter) {
-      similarityProviderType = 'bloomfilter';
-    } else if (isCorpusSampled) {
-      similarityProviderType = 'minhash';
+  private updateProgressiveIndexingStatus(): void {
+    // Only update if we're initialized
+    if (!this.isInitialized) return;
+    
+    // Get the latest stats
+    const stats = this.similarityProvider.getStats();
+    
+    // Check if progressive indexing is still active
+    if (stats.progressiveIndexing && stats.progressiveIndexing.active) {
+      const remaining = stats.progressiveIndexing.remainingFiles;
+      const totalFiles = this.app.vault.getMarkdownFiles().length;
+      const indexed = totalFiles - remaining;
+      const percent = Math.round((indexed / totalFiles) * 100);
+      
+      // Update the status bar
+      this.statusBarItem.setText(`Indexing: ${percent}%`);
+      this.statusBarItem.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
+      this.statusBarItem.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
+      this.statusBarItem.style.display = 'block';
+      
+      // Schedule another update
+      setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
     } else {
-      similarityProviderType = 'bm25';
+      // No longer doing progressive indexing, hide the status
+      this.statusBarItem.setText("");
+      this.statusBarItem.removeAttribute('aria-label');
+      this.statusBarItem.removeAttribute('title');
+      this.statusBarItem.style.display = 'none';
     }
-
-    return {
-      averageShingleSize,
-      averageDocLength,
-      similarityProvider: similarityProviderType,
-      lshBands,
-      lshRowsPerBand,
-      averageSimilarityScore,
-      isCorpusSampled,
-      totalFiles,
-      indexedFiles,
-      onDemandComputations
-    };
   }
 
   private async showRelatedNotes(workspace: Workspace, file: TFile | null) {
@@ -539,74 +716,51 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async getRelatedNotes(file: TFile): Promise<Array<RelatedNote>> {
-    // Get pre-indexed candidates
+    // Get candidates from the similarity provider
+    // Use sampling for large vaults
+    const markdownFiles = this.app.vault.getMarkdownFiles();
+    const totalFiles = markdownFiles.length;
+    
+    // Get sampling settings from plugin settings
+    const { enableSampling, sampleSizeThreshold, maxSampleSize } = this.settings;
+    
+    // Calculate adaptive sample size if sampling is enabled
+    const sampleSize = enableSampling && totalFiles > sampleSizeThreshold
+      ? Math.min(Math.ceil(totalFiles * 0.2), maxSampleSize)
+      : undefined; // undefined means no sampling
+    
+    // Get candidates, potentially with sampling
     const candidates = this.similarityProvider.getCandidateFiles(file);
+    
+    // Add informational message to status bar if sampling is active
+    if (sampleSize && totalFiles > sampleSizeThreshold) {
+      this.statusBarItem.setText(`Large vault detected - sampling ${sampleSize} of ${totalFiles} files`);
+      this.statusBarItem.style.display = 'block';
+      
+      // Hide status bar after 3 seconds
+      setTimeout(() => {
+        this.statusBarItem.setText("");
+        this.statusBarItem.style.display = 'none';
+      }, 3000);
+    }
 
-    // Calculate similarities for all pre-indexed candidates
+    // Calculate similarities for all candidates
     const similarityPromises = candidates.map(async (candidate) => {
       const similarity = await this.similarityProvider.computeCappedCosineSimilarity(file, candidate);
       return {
         file: candidate,
         similarity: similarity.similarity,
-        commonTerms: similarity.commonTerms || [], // Pass common terms to UI
-        isPreIndexed: true // Mark as pre-indexed
+        isPreIndexed: true
       };
     });
 
-    let relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
-
-    // Track files we've already processed to prevent duplicates
-    const processedFilePaths = new Set<string>(
-      relatedNotes.map(note => note.file.path)
-    );
-
-    // Check if we should compute on-demand suggestions
-    if (this.similarityProvider instanceof SimilarityProviderV2 &&
-      this.similarityProvider.isCorpusSampled() &&
-      this.similarityProvider.onDemandComputationEnabled) {
-
-      // Compute on-demand suggestions if the file isn't in the priority index
-      // or if we have fewer than 5 pre-indexed candidates
-      const shouldComputeOnDemand =
-        !this.similarityProvider.isFileIndexed(file) ||
-        candidates.length < 5;
-
-      if (shouldComputeOnDemand) {
-        // Compute related notes on-demand, passing the set of already processed file paths
-        // to avoid computing similarity for files we've already processed
-        const onDemandNotes = await this.similarityProvider.computeRelatedNotesOnDemand(
-          file,
-          10, // Default limit
-          processedFilePaths // Pass the set of already processed file paths
-        );
-
-        relatedNotes = [
-          ...relatedNotes,
-          ...onDemandNotes.map(note => ({
-            ...note,
-            isPreIndexed: false // Mark as computed on-demand
-          }))
-        ];
-      }
-    }
+    // Await all similarity calculations
+    const relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
 
     // Sort by similarity (highest first)
     const sortedNotes = relatedNotes.sort((a, b) => b.similarity - a.similarity);
 
-    // Determine if we're dealing with a large corpus
-    const isLargeCorpus = this.similarityProvider instanceof SimilarityProviderV2 &&
-      this.similarityProvider.isCorpusSampled();
-
-    // For large corpora, return more results but with a minimum similarity threshold
-    if (isLargeCorpus) {
-      // Return up to maxSuggestions*2 notes for large corpora, but ensure they have some relevance
-      const minSimilarity = this.settings.similarityThreshold / 2; // Lower threshold for large corpora
-      return sortedNotes
-        .filter(note => note.similarity >= minSimilarity)
-        .slice(0, this.settings.maxSuggestions * 2);
-    }
-
-    // For normal corpora, take top N with standard threshold
+    // Return top N notes according to settings
     return sortedNotes.slice(0, this.settings.maxSuggestions);
   }
 }

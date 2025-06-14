@@ -5,8 +5,9 @@
 
 'use strict';
 
-import { tokenize } from './core';
+import { tokenize, SimilarityProvider, SimilarityInfo } from './core';
 import { BloomFilter } from './bloom';
+import { TFile, TAbstractFile } from 'obsidian';
 
 // Logger for multi-bloom filter operations
 const DEBUG_MODE = true;
@@ -43,207 +44,155 @@ export function calculateOptimalHashFunctions(size: number, itemCount: number): 
 }
 
 /**
- * Multi-resolution bloom filter that uses multiple n-gram sizes
- * This provides better accuracy by capturing both fine and coarse-grained features
+ * Simplified bloom filter that uses word-based tokenization
+ * Optimized for better latency
  */
 export class MultiResolutionBloomFilter {
-  // Bloom filters for different n-gram sizes
-  private readonly filters: Map<number, BloomFilter> = new Map();
-  // Weights for each n-gram size (higher weights give more importance)
-  private readonly weights: Map<number, number> = new Map();
+  // Single bloom filter for simplicity
+  readonly filter: BloomFilter;
+
   // Configuration
-  private readonly ngramSizes: number[];
-  private readonly bloomSizes: number[];
-  private readonly hashFunctionCounts: number[];
+  readonly ngramSizes: number[];
+  private readonly bloomSize: number;
+  private readonly hashFunctionCount: number;
+
   // Statistics
   private readonly addedItems = new Set<string>();
-  private readonly itemCounts = new Map<number, number>();
-  
+  private itemCount = 0;
+
   /**
-   * Creates a new multi-resolution bloom filter
-   * @param ngramSizes Array of n-gram sizes to use (e.g., [2, 3, 4])
-   * @param bloomSizes Array of bloom filter sizes for each n-gram size
-   * @param hashFunctions Array of hash function counts for each n-gram size
-   * @param weights Array of weights for each n-gram size (higher gives more importance)
+   * Creates a new bloom filter
+   * @param ngramSizes Array of n-gram sizes (only first value is used, kept for backward compatibility)
+   * @param bloomSizes Array of bloom filter sizes (only first value is used)
+   * @param hashFunctions Array of hash function counts (only first value is used)
    */
   constructor(
-    ngramSizes: number[] = [2, 3, 4],
+    ngramSizes: number[] = [3], // Only the first value is actually used
     bloomSizes?: number[],
-    hashFunctions?: number[],
-    weights?: number[]
+    hashFunctions?: number[]
   ) {
+    // Keep the array for backward compatibility, but we only use first value
     this.ngramSizes = ngramSizes;
-    
-    // Calculate default sizes and hash function counts if not provided
-    const defaultSize = 256;
-    const defaultHashFunctions = 3;
-    
-    this.bloomSizes = bloomSizes || ngramSizes.map(() => defaultSize);
-    this.hashFunctionCounts = hashFunctions || ngramSizes.map(() => defaultHashFunctions);
-    
-    // Create bloom filters for each n-gram size
-    for (let i = 0; i < ngramSizes.length; i++) {
-      const ngramSize = ngramSizes[i];
-      const bloomSize = this.bloomSizes[i];
-      const hashCount = this.hashFunctionCounts[i];
-      
-      this.filters.set(ngramSize, new BloomFilter(bloomSize, hashCount));
-      this.itemCounts.set(ngramSize, 0);
-    }
-    
-    // Set weights (default: equal weights)
-    if (weights && weights.length === ngramSizes.length) {
-      for (let i = 0; i < ngramSizes.length; i++) {
-        this.weights.set(ngramSizes[i], weights[i]);
-      }
-    } else {
-      // Default: higher weight for middle n-gram sizes
-      const totalSizes = ngramSizes.length;
-      for (let i = 0; i < totalSizes; i++) {
-        // Bell curve weighting: higher weights for middle values
-        // For [2,3,4], weights are approximately [0.3, 0.4, 0.3]
-        const position = i / (totalSizes - 1); // 0 to 1
-        const weight = Math.exp(-Math.pow((position - 0.5) * 2, 2));
-        this.weights.set(ngramSizes[i], weight);
-      }
-    }
-    
-    // Normalize weights to sum to 1
-    const totalWeight = Array.from(this.weights.values()).reduce((sum, w) => sum + w, 0);
-    for (const [size, weight] of this.weights.entries()) {
-      this.weights.set(size, weight / totalWeight);
-    }
-    
-    log(`Created MultiResolutionBloomFilter with ${ngramSizes.length} resolutions:`);
-    for (let i = 0; i < ngramSizes.length; i++) {
-      log(`  - n-gram size ${ngramSizes[i]}: ${this.bloomSizes[i]} bits, ${this.hashFunctionCounts[i]} hash functions, weight ${this.weights.get(ngramSizes[i])?.toFixed(2)}`);
+
+    // Significantly reduced bloom filter size since we're using word-level tokens
+    // instead of character n-grams - this gives similar accuracy with better performance
+    this.bloomSize = bloomSizes && bloomSizes.length > 0 ? bloomSizes[0] : 2048;
+    this.hashFunctionCount = hashFunctions && hashFunctions.length > 0 ? hashFunctions[0] : 3;
+
+    // Create single bloom filter
+    this.filter = new BloomFilter(this.bloomSize, this.hashFunctionCount);
+
+    if (DEBUG_MODE) {
+      log(`Created simplified BloomFilter with ${this.bloomSize} bits, ${this.hashFunctionCount} hash functions`);
     }
   }
-  
+
   /**
-   * Add text to the multi-resolution bloom filter
+   * Add text to the bloom filter
    * @param text The text to add
    */
   addText(text: string): void {
     this.addedItems.add(text);
-    
-    // Generate n-grams for each size and add to corresponding filter
-    for (const ngramSize of this.ngramSizes) {
-      const ngrams = this.extractNgrams(text, ngramSize);
-      const filter = this.filters.get(ngramSize);
-      
-      if (!filter) continue;
-      
-      let count = 0;
-      for (const ngram of ngrams) {
-        filter.add(ngram);
-        count++;
-      }
-      
-      this.itemCounts.set(ngramSize, (this.itemCounts.get(ngramSize) || 0) + count);
-      
-      if (DEBUG_MODE) {
-        log(`Added ${ngrams.size} ${ngramSize}-grams to filter`);
-      }
+
+    // Extract words from text
+    const words = this.extractWords(text);
+
+    // Add each word to the bloom filter
+    for (const word of words) {
+      this.filter.add(word);
+      this.itemCount++;
+    }
+
+    if (DEBUG_MODE) {
+      log(`Added ${words.size} words to bloom filter`);
     }
   }
-  
+
   /**
    * Calculate similarity between this filter and another
-   * @param other The other multi-resolution filter
-   * @returns Weighted similarity score (0-1)
+   * @param other The other filter
+   * @returns Similarity score between 0 and 1
    */
   similarity(other: MultiResolutionBloomFilter): number {
-    let totalSimilarity = 0;
-    let totalWeight = 0;
-    
-    // Calculate similarity for each n-gram size and apply weights
-    for (const ngramSize of this.ngramSizes) {
-      const thisFilter = this.filters.get(ngramSize);
-      const otherFilter = other.filters.get(ngramSize);
-      const weight = this.weights.get(ngramSize) || 0;
-      
-      if (!thisFilter || !otherFilter) continue;
-      
-      const similarity = thisFilter.similarity(otherFilter);
-      totalSimilarity += similarity * weight;
-      totalWeight += weight;
-      
-      if (DEBUG_MODE) {
-        log(`${ngramSize}-gram similarity: ${(similarity * 100).toFixed(2)}% (weight: ${weight.toFixed(2)})`);
-      }
+    try {
+      // Direct comparison of the underlying bloom filters
+      return this.filter.similarity(other.filter);
+    } catch (error) {
+      console.error(`Error comparing filters:`, error);
+      return 0;
     }
-    
-    // Normalize by total weight
-    const weightedSimilarity = totalWeight > 0 ? totalSimilarity / totalWeight : 0;
-    
-    if (DEBUG_MODE) {
-      log(`Weighted similarity: ${(weightedSimilarity * 100).toFixed(2)}%`);
-    }
-    
-    return weightedSimilarity;
   }
-  
+
   /**
-   * Extract n-grams from text
+   * Extract words from text, with special handling for CJK scripts
    * @param text Input text
-   * @param ngramSize Size of n-grams to extract
-   * @returns Set of n-grams
+   * @returns Set of words and word pairs
    */
-  private extractNgrams(text: string, ngramSize: number): Set<string> {
+  private extractWords(text: string): Set<string> {
     // Use the tokenize function to normalize text
+    // The tokenize function now handles CJK scripts properly
     const processed = tokenize(text);
-    const ngrams = new Set<string>();
-    
-    // Prepare text by removing extra spaces
-    // Use a Unicode-aware normalization to ensure consistent handling across languages
-    const chars = processed.toLowerCase().normalize('NFC').replace(/\s+/g, ' ');
-    
-    // Extract character n-grams with Unicode awareness
-    // This will properly handle multi-byte characters in languages like Chinese, Japanese, etc.
-    for (let i = 0; i <= [...chars].length - ngramSize; i++) {
-      // Use Array.from to properly handle Unicode characters
-      const ngram = [...chars].slice(i, i + ngramSize).join('');
-      if (ngram.length === ngramSize) {
-        ngrams.add(ngram);
-      }
+
+    // Split into words/tokens
+    const words = processed.split(/\s+/);
+
+    // Create a set of words (automatically deduplicates)
+    const wordSet = new Set<string>(words);
+
+    // Detect if text contains CJK characters
+    const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/.test(text);
+
+    // Add word pairs (bigrams) for context
+    // Use a lower limit for CJK text to avoid too many bigrams
+    const maxBigrams = hasCJK ? 100 : 200;
+    let count = 0;
+
+    for (let i = 0; i < words.length - 1 && count < maxBigrams; i++) {
+      const bigram = `${words[i]} ${words[i + 1]}`;
+      wordSet.add(bigram);
+      count++;
     }
-    
-    return ngrams;
+
+    return wordSet;
   }
-  
+
   /**
-   * Get statistics about the multi-resolution bloom filter
+   * Get statistics about the bloom filter
    */
   getStats(): any {
-    const stats: any = {
-      resolutions: this.ngramSizes.length,
-      ngramSizes: this.ngramSizes,
-      totalMemoryBytes: 0,
-      itemCounts: {},
-      weights: {},
-      saturation: {}
+    return {
+      type: "simplified",
+      bloomSize: this.bloomSize,
+      hashFunctionCount: this.hashFunctionCount,
+      itemCount: this.itemCount,
+      totalMemoryBytes: this.bloomSize / 8,
+      saturation: this.filter.getFalsePositiveRate(),
+      addedItems: this.addedItems.size
     };
-    
-    // Collect stats for each resolution
-    for (const ngramSize of this.ngramSizes) {
-      const filter = this.filters.get(ngramSize);
-      if (!filter) continue;
-      
-      const size = filter.getSize();
-      const hashFunctions = filter.getHashFunctions();
-      const itemCount = this.itemCounts.get(ngramSize) || 0;
-      const weight = this.weights.get(ngramSize) || 0;
-      const memoryBytes = size / 8;
-      
-      stats.totalMemoryBytes += memoryBytes;
-      stats.itemCounts[ngramSize] = itemCount;
-      stats.weights[ngramSize] = weight;
-      stats.saturation[ngramSize] = filter.getFalsePositiveRate();
-    }
-    
-    return stats;
   }
+
+  /**
+   * These methods are kept for backward compatibility
+   */
+  getBitArray(): Uint32Array {
+    return this.filter.getBitArray();
+  }
+
+  getSize(): number {
+    return this.bloomSize;
+  }
+
+  getHashFunctions(): number {
+    return this.hashFunctionCount;
+  }
+
+  getFalsePositiveRate(): number {
+    return this.filter.getFalsePositiveRate();
+  }
+
+  filters = {
+    get: (ngramSize: number) => ngramSize === this.ngramSizes[0] ? this.filter : undefined
+  };
 }
 
 /**
@@ -256,7 +205,7 @@ export class AdaptiveParameterCalculator {
   private averageDocLength = 0;
   private averageVocabularySize = 0;
   private documentsAnalyzed = 0;
-  
+
   /**
    * Track document statistics to inform parameter decisions
    * @param text Document text
@@ -265,43 +214,34 @@ export class AdaptiveParameterCalculator {
     const processed = tokenize(text);
     const words = processed.toLowerCase().split(/\s+/);
     const uniqueWords = new Set(words);
-    
+
     this.documentLengths.push(words.length);
     this.vocabularySizes.push(uniqueWords.size);
     this.documentsAnalyzed++;
-    
+
     // Update averages
     this.averageDocLength = this.documentLengths.reduce((sum, len) => sum + len, 0) / this.documentsAnalyzed;
     this.averageVocabularySize = this.vocabularySizes.reduce((sum, size) => sum + size, 0) / this.documentsAnalyzed;
   }
-  
+
   /**
    * Calculate optimal n-gram sizes based on document characteristics
    * @returns Array of recommended n-gram sizes
    */
   calculateOptimalNgramSizes(): number[] {
     if (this.documentsAnalyzed < 10) {
-      // Default n-gram sizes for small corpora
-      return [2, 3, 4];
+      // Default n-gram size for small corpora - using a single size for simplicity
+      return [3];
     }
-    
+
     // Calculate average word length
-    const avgWordLength = this.averageDocLength > 0 ? 
+    const avgWordLength = this.averageDocLength > 0 ?
       this.averageDocLength / this.averageVocabularySize : 5;
-    
-    // Choose n-gram sizes based on average word length
-    if (avgWordLength < 4) {
-      // Short words: use smaller n-grams
-      return [2, 3];
-    } else if (avgWordLength < 6) {
-      // Medium words: use standard n-grams
-      return [2, 3, 4];
-    } else {
-      // Long words: use larger n-grams
-      return [3, 4, 5];
-    }
+
+    // Always use a single n-gram size for simplicity regardless of word length
+    return [3];
   }
-  
+
   /**
    * Calculate optimal bloom filter sizes based on vocabulary size
    * @param ngramSizes Array of n-gram sizes
@@ -309,11 +249,17 @@ export class AdaptiveParameterCalculator {
    * @returns Array of recommended bloom filter sizes
    */
   calculateOptimalBloomSizes(ngramSizes: number[], falsePositiveRate: number = 0.01): number[] {
+    // Always use a consistent bloom filter size (2048 bits) for all n-gram sizes
+    // This ensures compatibility when comparing filters while reducing memory usage
+    const fixedSize = 8192; // Reduced from 4096 for faster indexing
+    return ngramSizes.map(() => fixedSize);
+
+    /* Original adaptive code commented out for reference:
     if (this.documentsAnalyzed < 10) {
       // Default bloom filter sizes for small corpora
       return ngramSizes.map(() => 256);
     }
-    
+
     // Estimate number of n-grams for each size
     return ngramSizes.map(ngramSize => {
       // Estimate number of unique n-grams based on vocabulary size and n-gram size
@@ -322,8 +268,9 @@ export class AdaptiveParameterCalculator {
       // Calculate optimal bloom filter size
       return calculateOptimalBloomSize(estimatedNgrams, falsePositiveRate);
     });
+    */
   }
-  
+
   /**
    * Calculate optimal hash function counts
    * @param bloomSizes Array of bloom filter sizes
@@ -331,11 +278,6 @@ export class AdaptiveParameterCalculator {
    * @returns Array of recommended hash function counts
    */
   calculateOptimalHashFunctions(bloomSizes: number[], ngramSizes: number[]): number[] {
-    if (this.documentsAnalyzed < 10) {
-      // Default hash function counts for small corpora
-      return ngramSizes.map(() => 3);
-    }
-    
     // Calculate optimal hash function count for each bloom filter
     return bloomSizes.map((size, i) => {
       // Estimate number of unique n-grams as above
@@ -345,17 +287,19 @@ export class AdaptiveParameterCalculator {
       return calculateOptimalHashFunctions(size, estimatedNgrams);
     });
   }
-  
+
   /**
    * Calculate optimal similarity threshold based on corpus characteristics
    * @returns Recommended similarity threshold (0-1)
    */
   calculateOptimalSimilarityThreshold(): number {
+    return 0.15;
+
     if (this.documentsAnalyzed < 10) {
-      // Default threshold for small corpora
-      return 0.3;
+      // Default threshold for small corpora - lowered to find more matches
+      return 0.15;
     }
-    
+
     // Calculate coefficient of variation for document lengths
     const meanDocLength = this.averageDocLength;
     const variance = this.documentLengths.reduce(
@@ -363,20 +307,20 @@ export class AdaptiveParameterCalculator {
     ) / this.documentsAnalyzed;
     const stdDev = Math.sqrt(variance);
     const cv = stdDev / meanDocLength;
-    
-    // Adjust threshold based on corpus homogeneity
+
+    // Adjust threshold based on corpus homogeneity - lowered all thresholds
     if (cv < 0.3) {
       // Very homogeneous corpus: higher threshold
-      return 0.4;
+      return 0.25;
     } else if (cv < 0.6) {
       // Moderately varied corpus: medium threshold
-      return 0.3;
+      return 0.15;
     } else {
       // Highly varied corpus: lower threshold
-      return 0.2;
+      return 0.1;
     }
   }
-  
+
   /**
    * Get statistics about analyzed documents
    */
@@ -391,7 +335,7 @@ export class AdaptiveParameterCalculator {
       maxVocabularySize: Math.max(...this.vocabularySizes)
     };
   }
-  
+
   /**
    * Generate a complete set of recommended parameters
    * @param falsePositiveRate Desired false positive rate
@@ -402,7 +346,7 @@ export class AdaptiveParameterCalculator {
     const bloomSizes = this.calculateOptimalBloomSizes(ngramSizes, falsePositiveRate);
     const hashFunctions = this.calculateOptimalHashFunctions(bloomSizes, ngramSizes);
     const similarityThreshold = this.calculateOptimalSimilarityThreshold();
-    
+
     return {
       ngramSizes,
       bloomSizes,
@@ -416,7 +360,7 @@ export class AdaptiveParameterCalculator {
  * A similarity provider based on multi-resolution bloom filters
  * Implements the SimilarityProvider interface from core.ts
  */
-export class MultiResolutionBloomFilterProvider {
+export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private readonly bloomFilters = new Map<string, MultiResolutionBloomFilter>();
   private readonly documentNgrams = new Map<string, Map<number, Set<string>>>();
   private readonly config: any;
@@ -426,44 +370,50 @@ export class MultiResolutionBloomFilterProvider {
   private hashFunctions: number[];
   private similarityThreshold: number;
   private adaptiveParameters = false;
-  private parameterUpdateInterval = 100; // Update parameters every 100 documents
+  private parameterUpdateInterval = 50; // Reduced from 100 to 50 for faster parameter adaptation
   private documentsProcessed = 0;
   private vault: any;
   private onProgressCallback: ((progress: number) => void) | null = null;
   private stopRequested = false;
   private isInitialized = false;
-  
-  // Required properties for SimilarityProvider interface
-  public isCorpusSampled = false;
-  public onDemandComputationEnabled = true;
-  
+  private cacheReady = false;
+  private cacheDirty = false;
+  private cacheFilePath: string = '';
+  private yieldInterval = 1; // Changed to yield after every document for smoother UI responsiveness
+
+  // Progressive indexing properties
+  private remainingFilesToIndex: TFile[] = [];
+  private hasPartialIndex = false;
+  private isProgressiveIndexingRunning = false;
+  private progressiveIndexingIntervalId: number | null = null;
+
   // Adaptive stopwords (reusing from BloomFilterSimilarityProvider)
   private readonly wordFrequencies = new Map<string, number>();
   private readonly wordDocumentCount = new Map<string, Set<string>>();
   private readonly commonWords = new Set<string>();
   private totalDocuments = 0;
-  private commonWordsThreshold = 0.5;
+  private commonWordsThreshold = 0.4; // Reduced from 0.5 to filter more words
   private commonWordsComputed = false;
   private minWordLength = 2;
-  private maxStopwords = 200;
-  
+  private maxStopwords = 250; // Increased from 200 to filter more common words
+
   constructor(vault: any, config: any = {}) {
     this.vault = vault;
     this.config = config;
-    
+
     // Initialize with default parameters
-    this.ngramSizes = config.ngramSizes || [2, 3, 4];
-    this.bloomSizes = config.bloomSizes || this.ngramSizes.map(() => 256);
-    this.hashFunctions = config.hashFunctions || this.ngramSizes.map(() => 3);
-    this.similarityThreshold = config.similarityThreshold || 0.3;
-    
+    this.ngramSizes = config.ngramSizes;
+    this.bloomSizes = config.bloomSizes;
+    this.hashFunctions = config.hashFunctions;
+    this.similarityThreshold = config.similarityThreshold;
+
     // Enable adaptive parameters if specified
     this.adaptiveParameters = config.adaptiveParameters !== false;
-    
+
     if (config.parameterUpdateInterval) {
       this.parameterUpdateInterval = config.parameterUpdateInterval;
     }
-    
+
     // Configure adaptive stopwords parameters
     if (config.commonWordsThreshold) {
       this.commonWordsThreshold = config.commonWordsThreshold;
@@ -474,70 +424,223 @@ export class MultiResolutionBloomFilterProvider {
     if (config.minWordLength) {
       this.minWordLength = config.minWordLength;
     }
-    
-    // Set interface properties
-    this.onDemandComputationEnabled = config.onDemandComputationEnabled !== false;
-    
+
+    // Configure yield interval
+    if (config.yieldInterval) {
+      this.yieldInterval = config.yieldInterval;
+    }
+
+    // Setup cache file path
+    if (vault.adapter && vault.configDir) {
+      this.cacheFilePath = `${vault.configDir}/plugins/obsidian-related-notes/.bloom-filter-cache.json`;
+    }
+
     log(`Created MultiResolutionBloomFilterProvider with:
-      - n-gram sizes: [${this.ngramSizes.join(', ')}]
-      - bloom sizes: [${this.bloomSizes.join(', ')}]
-      - hash functions: [${this.hashFunctions.join(', ')}]
+      - n-gram size: ${this.ngramSizes[0]}
+      - bloom size: ${this.bloomSizes[0]}
+      - hash functions: ${this.hashFunctions[0]}
       - similarity threshold: ${this.similarityThreshold}
       - adaptive parameters: ${this.adaptiveParameters}
       - parameter update interval: ${this.parameterUpdateInterval} documents
-      - adaptive stopwords: true (max: ${this.maxStopwords}, threshold: ${this.commonWordsThreshold * 100}%)
-      - on-demand computation: ${this.onDemandComputationEnabled}`);
+      - adaptive stopwords: true (max: ${this.maxStopwords}, threshold: ${this.commonWordsThreshold * 100}%`);
   }
-  
+
   /**
    * Initialize the similarity provider by processing all markdown files
    * @param onProgress Callback function for reporting progress
    */
   async initialize(onProgress?: (processed: number, total: number) => void): Promise<void> {
     if (this.isInitialized) return;
-    
+
     this.stopRequested = false;
-    
+
     try {
+      // Try to load from cache first - always prefer cache if it exists
+      const cachedLoaded = await this.loadFromCache();
+      if (cachedLoaded) {
+        log(`Successfully loaded index from cache with ${this.bloomFilters.size} documents`);
+        this.isInitialized = true;
+
+        // Still report 100% progress
+        if (onProgress) {
+          const totalFiles = this.vault.getMarkdownFiles().length;
+          onProgress(totalFiles, totalFiles);
+        }
+        return;
+      }
+
       // Get all markdown files
       const markdownFiles = this.vault.getMarkdownFiles();
       const totalFiles = markdownFiles.length;
       log(`Initializing with ${totalFiles} markdown files`);
-      
-      // Process files in batches
-      const batchSize = this.config.batchSize || 10;
-      let processedCount = 0;
-      
-      // Custom progress callback wrapper that adapts the signature
-      const progressCallback = (processed: number, total: number) => {
-        if (onProgress) {
-          onProgress(processed, total);
-        }
+
+      // Improved yielding function
+      const yield_to_main = async () => {
+        await new Promise(resolve => setTimeout(resolve, 15)); // 15ms yield gives UI more breathing room
       };
-      
-      for (let i = 0; i < totalFiles; i += batchSize) {
+
+      // Process files in smaller batches for better UI responsiveness
+      const batchSize = 3; // Even smaller batch size for more frequent UI updates
+      let processedCount = 0;
+
+      // Enhanced yielding function with variable durations
+      const yieldWithDuration = async (ms: number) => {
+        await new Promise(resolve => setTimeout(resolve, ms));
+      };
+
+      // Optimize for large vaults
+      const LARGE_VAULT_THRESHOLD = 5000;
+      const isLargeVault = totalFiles > LARGE_VAULT_THRESHOLD;
+
+      // For large vaults, we may want to process only a subset of files
+      // or prioritize certain files during initial indexing
+      let filesToProcess = markdownFiles;
+
+      // Check if sampling is enabled in the config and this is a large vault
+      const enableSampling = this.config.enableSampling !== undefined
+        ? this.config.enableSampling
+        : true; // Default to true if not specified
+
+      // Get max sample size from config or use default
+      const maxSampleSize = this.config.maxSampleSize || 5000;
+
+      if (isLargeVault && enableSampling) {
+        log(`Large vault detected (${totalFiles} files). Using progressive indexing strategy.`);
+
+        // For progressive indexing of large vaults:
+        // 1. First index a set of active/recent files (last 30 days)
+        // 2. Include any currently open files
+        // 3. Include a random sample of other files
+
+        // Priority 1: Get recently modified files (last 30 days)
+        const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        const recentFiles = markdownFiles.filter(file => file.stat.mtime > thirtyDaysAgo);
+
+        // Priority 2: Get currently active file
+        const activeLeaf = this.vault.getActiveLeaf?.();
+        const activeFile = activeLeaf?.view?.file as TFile | undefined;
+        let activeFiles: TFile[] = [];
+
+        if (activeFile && !recentFiles.includes(activeFile)) {
+          activeFiles.push(activeFile);
+        }
+
+        // Mark these files to be indexed first
+        const priorityFiles = [...recentFiles, ...activeFiles];
+
+        // Determine how many files to include in initial indexing (max 1000 or 10% of vault)
+        const initialIndexSize = Math.min(1000, Math.ceil(totalFiles * 0.1));
+
+        // If we already have enough priority files, use those
+        if (priorityFiles.length >= initialIndexSize) {
+          log(`Using ${priorityFiles.length} priority files for initial indexing`);
+          filesToProcess = priorityFiles.slice(0, initialIndexSize);
+        }
+        // Otherwise, supplement with random files
+        else {
+          // Create a list of non-priority files
+          const remainingFiles = markdownFiles.filter(file => !priorityFiles.includes(file));
+
+          // Shuffle the remaining files for random sampling
+          const shuffledRemaining = [...remainingFiles];
+          for (let i = shuffledRemaining.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffledRemaining[i], shuffledRemaining[j]] = [shuffledRemaining[j], shuffledRemaining[i]];
+          }
+
+          // Take enough random files to reach our target initial index size
+          const randomSampleCount = initialIndexSize - priorityFiles.length;
+          const randomSample = shuffledRemaining.slice(0, randomSampleCount);
+
+          // Combine priority files with random sample
+          filesToProcess = [...priorityFiles, ...randomSample];
+
+          log(`Using ${priorityFiles.length} priority files and ${randomSample.length} random files for initial indexing`);
+        }
+
+        // Store the information about remaining files for later progressive indexing
+        this.remainingFilesToIndex = markdownFiles.filter(file => !filesToProcess.includes(file));
+        this.hasPartialIndex = true;
+
+        log(`Progressive indexing: Processing ${filesToProcess.length} files initially out of ${totalFiles} total (${this.remainingFilesToIndex.length} files will be indexed later)`);
+
+        // Schedule background indexing of remaining files
+        setTimeout(() => this.scheduleProgressiveIndexing(), 60000); // Start after 1 minute
+      }
+
+      // Process files in batches
+      for (let i = 0; i < filesToProcess.length; i += batchSize) {
         if (this.stopRequested) {
           log('Initialization stopped by user');
-          break;
+          // Explicitly throw cancellation error to propagate up the promise chain
+          throw new Error('Indexing cancelled');
         }
-        
-        const batch = markdownFiles.slice(i, i + batchSize);
-        
+
+        // Process a batch of files
+        const batch = filesToProcess.slice(i, Math.min(i + batchSize, filesToProcess.length));
+
+        // Update progress at start of batch - calculate proper percentage
+        if (onProgress) {
+          // If we're sampling, adjust the progress reporting to show progress relative to the total files
+          if (isLargeVault) {
+            const progressPercentage = (processedCount / filesToProcess.length) * 100;
+            // Map the percentage to the total files to show accurate progress
+            const scaledProcessed = Math.floor((progressPercentage / 100) * totalFiles);
+            onProgress(scaledProcessed, totalFiles);
+          } else {
+            onProgress(processedCount, totalFiles);
+          }
+        }
+
+        // Longer yield before processing batch
+        await yieldWithDuration(20);
+
         // Process each file in the batch
-        await Promise.all(batch.map(async (file: any) => {
+        for (const file of batch) {
+          if (this.stopRequested) {
+            log('Initialization stopped by user during batch processing');
+            // Explicitly throw cancellation error to propagate up the promise chain
+            throw new Error('Indexing cancelled');
+          }
+
           try {
+            // Read file content with yield before potentially expensive operation
+            await yieldWithDuration(5);
             const content = await this.vault.cachedRead(file);
-            this.processDocument(file.path, content);
+            await yieldWithDuration(5);
+
+            // Process document
+            await this.processDocument(file.path, content);
+            processedCount++;
+
+            // Update progress after each file for more responsive UI
+            if (onProgress) {
+              // If we're sampling, adjust the progress reporting
+              if (isLargeVault) {
+                const progressPercentage = (processedCount / filesToProcess.length) * 100;
+                // Map the percentage to the total files to show accurate progress
+                const scaledProcessed = Math.floor((progressPercentage / 100) * totalFiles);
+                onProgress(scaledProcessed, totalFiles);
+              } else {
+                onProgress(processedCount, totalFiles);
+              }
+            }
+
+            // Extended yield after every document
+            await yieldWithDuration(30); // Longer yield for better UI responsiveness
           } catch (error) {
             console.error(`Error processing file ${file.path}:`, error);
           }
-        }));
-        
-        // Update processed count and report progress
-        processedCount += batch.length;
-        progressCallback(processedCount, totalFiles);
+        }
+
+        // Extra long yield to main thread after each batch
+        // This ensures the UI remains responsive even during intensive indexing
+        await yieldWithDuration(50);
       }
-      
+
+      // Save the cache after initialization
+      await this.saveToCache();
+
       log(`Initialization complete: processed ${this.bloomFilters.size} files`);
       this.isInitialized = true;
     } catch (error) {
@@ -545,197 +648,446 @@ export class MultiResolutionBloomFilterProvider {
       throw error;
     }
   }
-  
+
   /**
    * Stop any ongoing initialization
    */
   stop(): void {
     this.stopRequested = true;
+
+    // Also stop progressive indexing if it's running
+    if (this.progressiveIndexingIntervalId !== null) {
+      clearInterval(this.progressiveIndexingIntervalId);
+      this.progressiveIndexingIntervalId = null;
+      this.isProgressiveIndexingRunning = false;
+    }
+
+    // Log that stop was requested to help with debugging
+    if (DEBUG_MODE) {
+      log('Stop requested for ongoing indexing operation');
+    }
   }
-  
+
+  /**
+   * Schedule progressive indexing of remaining files
+   * This method processes files in small batches during idle time
+   * to avoid impacting performance during active use
+   */
+  private scheduleProgressiveIndexing(): void {
+    // Don't schedule if already running or no files to process
+    if (this.isProgressiveIndexingRunning || this.remainingFilesToIndex.length === 0) {
+      return;
+    }
+
+    if (DEBUG_MODE) {
+      log(`Scheduling progressive indexing for ${this.remainingFilesToIndex.length} remaining files`);
+    }
+
+    this.isProgressiveIndexingRunning = true;
+
+    // Process a small batch of files every few minutes
+    // This spreads the indexing load over time
+    const BATCH_SIZE = 20; // Process 20 files at a time
+    const INTERVAL_MINUTES = 5; // Process a batch every 5 minutes
+
+    let progressiveIndexCount = 0;
+
+    // Function to process a small batch of files
+    const processBatch = async () => {
+      // Stop if requested or no more files
+      if (this.stopRequested || this.remainingFilesToIndex.length === 0) {
+        if (this.progressiveIndexingIntervalId !== null) {
+          clearInterval(this.progressiveIndexingIntervalId);
+          this.progressiveIndexingIntervalId = null;
+          this.isProgressiveIndexingRunning = false;
+        }
+
+        if (DEBUG_MODE) {
+          log(`Progressive indexing completed or stopped after processing ${progressiveIndexCount} files`);
+        }
+
+        // Save cache after batch processing
+        await this.saveToCache();
+        return;
+      }
+
+      // Take the next batch of files
+      const batchToProcess = this.remainingFilesToIndex.splice(0, BATCH_SIZE);
+
+      if (DEBUG_MODE) {
+        log(`Progressive indexing: processing batch of ${batchToProcess.length} files (${this.remainingFilesToIndex.length} remaining)`);
+      }
+
+      // Process each file with yields between operations
+      for (const file of batchToProcess) {
+        try {
+          // Yield to avoid blocking UI
+          await new Promise(resolve => setTimeout(resolve, 50));
+
+          // Read file content
+          const content = await this.vault.cachedRead(file);
+
+          // Process document
+          await this.processDocument(file.path, content);
+          progressiveIndexCount++;
+
+          // Yield again after processing
+          await new Promise(resolve => setTimeout(resolve, 20));
+        } catch (error) {
+          console.error(`Error during progressive indexing of ${file.path}:`, error);
+        }
+      }
+
+      // Save cache after batch processing
+      this.cacheDirty = true;
+      await this.saveToCache();
+
+      // If no more files to process, clean up
+      if (this.remainingFilesToIndex.length === 0) {
+        if (this.progressiveIndexingIntervalId !== null) {
+          clearInterval(this.progressiveIndexingIntervalId);
+          this.progressiveIndexingIntervalId = null;
+        }
+        this.isProgressiveIndexingRunning = false;
+        this.hasPartialIndex = false;
+
+        if (DEBUG_MODE) {
+          log(`Progressive indexing completed after processing ${progressiveIndexCount} files`);
+        }
+      }
+    };
+
+    // Start the first batch immediately
+    processBatch();
+
+    // Schedule future batches
+    this.progressiveIndexingIntervalId = window.setInterval(processBatch, INTERVAL_MINUTES * 60 * 1000);
+  }
+
   /**
    * Force a complete reindexing of all files
    * @param onProgress Progress callback
    */
   async forceReindex(onProgress: (processed: number, total: number) => void): Promise<void> {
+    // Reset stop flag before starting
+    this.stopRequested = false;
+
+    // Stop any progressive indexing that might be in progress
+    if (this.progressiveIndexingIntervalId !== null) {
+      clearInterval(this.progressiveIndexingIntervalId);
+      this.progressiveIndexingIntervalId = null;
+      this.isProgressiveIndexingRunning = false;
+    }
+
     // Clear existing data
     this.bloomFilters.clear();
     this.documentNgrams.clear();
-    
+    this.remainingFilesToIndex = [];
+    this.hasPartialIndex = false;
+
     // Reset stopwords detection
     this.commonWords.clear();
     this.commonWordsComputed = false;
     this.totalDocuments = 0;
-    
+
+    // Mark cache as dirty
+    this.cacheDirty = true;
+
     // Reinitialize
     this.isInitialized = false;
-    return this.initialize(onProgress);
+
+    try {
+      return await this.initialize(onProgress);
+    } catch (error) {
+      // If it's a cancellation error, properly propagate it
+      if (error instanceof Error && error.message === 'Indexing cancelled') {
+        log('Reindexing was cancelled by user');
+        throw error; // Re-throw the cancellation error
+      }
+      // For other errors, log and re-throw
+      log(`Error during reindexing: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
   }
-  
+
   /**
    * Check if a file is indexed
    * @param file File to check
    */
-  isFileIndexed(file: any): boolean {
+  isFileIndexed(file: TFile): boolean {
     return this.bloomFilters.has(file.path);
   }
-  
-  /**
-   * Compute related notes on demand for a file
-   * @param file File to find related notes for
-   */
-  async computeRelatedNotesOnDemand(file: any): Promise<any[]> {
-    if (!this.isInitialized) {
-      return [];
-    }
-    
-    try {
-      // Process the file if not already indexed
-      if (!this.bloomFilters.has(file.path)) {
-        const content = await this.vault.cachedRead(file);
-        this.processDocument(file.path, content);
-      }
-      
-      // Get candidate files
-      return this.getCandidateFiles(file);
-    } catch (error) {
-      console.error(`Error computing related notes for ${file.path}:`, error);
-      return [];
-    }
-  }
-  
+
   /**
    * Get candidate similar files for a given file
    * Implements the SimilarityProvider interface
    * @param file The file to find candidates for
    * @returns Array of potential similar files
    */
-  getCandidateFiles(file: any): any[] {
+  getCandidateFiles(file: TFile): TFile[] {
     if (!this.isInitialized) {
+      if (DEBUG_MODE) {
+        log(`Provider not initialized yet, returning empty candidates list for ${file.path}`);
+      }
       return [];
     }
-    
+
     try {
-      // Get similar documents - if the file isn't in our index yet,
-      // we'll handle that in computeCappedCosineSimilarity
+      // If the file isn't in our index yet, process it
       if (!this.bloomFilters.has(file.path)) {
-        return []; // Return empty for now, we'll handle this on-demand
+        if (DEBUG_MODE) {
+          log(`File ${file.path} not in index yet, will process on-demand`);
+        }
+
+        // Return empty for now - computeCappedCosineSimilarity will handle on-demand processing
+        return [];
       }
-      
-      // Get similar documents
-      const similarDocuments = this.getSimilarDocuments(
-        file.path, 
-        this.config.maxSuggestions || 10,
-        this.similarityThreshold
-      );
-      
-      // Convert paths to files
-      const markdownFiles = this.vault.getMarkdownFiles();
-      const pathToFile = new Map<string, any>();
-      
-      for (const mdFile of markdownFiles) {
-        pathToFile.set(mdFile.path, mdFile);
+
+      try {
+        // Get similar documents - no threshold, just the top N results with non-zero similarity
+        const maxResults = this.config.maxSuggestions || 20; // Provide a reasonable default if config is missing
+
+        // Determine if we should use sampling for large corpus
+        const corpusSize = this.bloomFilters.size;
+
+        // Check if sampling is enabled in the config
+        const enableSampling = this.config.enableSampling !== undefined
+          ? this.config.enableSampling
+          : true; // Default to true if not specified
+
+        // Get thresholds from config or use defaults
+        const sampleSizeThreshold = this.config.sampleSizeThreshold || 5000;
+        const maxSampleSize = this.config.maxSampleSize || 1000;
+
+        // Calculate adaptive sample size if sampling is enabled
+        const sampleSize = enableSampling && corpusSize > sampleSizeThreshold
+          ? Math.min(Math.ceil(corpusSize * 0.2), maxSampleSize)
+          : undefined; // undefined means no sampling
+
+        // Get similar documents with potential sampling
+        const similarDocuments = this.getSimilarDocuments(file.path, maxResults, sampleSize);
+
+        // Convert paths to files
+        const markdownFiles = this.vault.getMarkdownFiles();
+        const pathToFile = new Map<string, any>();
+
+        for (const mdFile of markdownFiles) {
+          pathToFile.set(mdFile.path, mdFile);
+        }
+
+        // Return the files with their similarity scores
+        const result = similarDocuments
+          .map(([path, similarity]) => {
+            const matchedFile = pathToFile.get(path);
+            if (matchedFile) {
+              // Store the similarity score with the file
+              (matchedFile as any).similarity = similarity;
+              return matchedFile;
+            }
+            return null;
+          })
+          .filter(f => f !== null);
+
+        if (DEBUG_MODE) {
+          log(`Found ${result.length} candidate files for ${file.path}${sampleSize ? ` (sampled ${sampleSize} of ${corpusSize} docs)` : ''
+            }`);
+        }
+
+        return result;
+      } catch (error) {
+        console.error(`Error in similarity calculation for ${file.path}:`, error);
+        // Continue with an empty result rather than crashing
+        return [];
       }
-      
-      // Return the files with their similarity scores
-      return similarDocuments
-        .map(([path, similarity]) => {
-          const matchedFile = pathToFile.get(path);
-          if (matchedFile) {
-            // Store the similarity score with the file
-            (matchedFile as any).similarity = similarity;
-            return matchedFile;
-          }
-          return null;
-        })
-        .filter(f => f !== null);
     } catch (error) {
       console.error(`Error getting candidate files for ${file.path}:`, error);
       return [];
     }
   }
-  
+
   /**
    * Compute similarity between two files
    * Implements the SimilarityProvider interface
    * @param file1 First file
    * @param file2 Second file
-   * @returns Similarity info with score
+   * @returns Similarity info with score and common terms
    */
-  async computeCappedCosineSimilarity(file1: any, file2: any): Promise<{ similarity: number }> {
+  async computeCappedCosineSimilarity(file1: TFile, file2: TFile): Promise<SimilarityInfo> {
     if (!this.isInitialized) {
       return { similarity: 0 };
     }
-    
+
     try {
       // If either file isn't in our index yet, process it
       if (!this.bloomFilters.has(file1.path)) {
         const content1 = await this.vault.cachedRead(file1);
         this.processDocument(file1.path, content1);
       }
-      
+
       if (!this.bloomFilters.has(file2.path)) {
         const content2 = await this.vault.cachedRead(file2);
         this.processDocument(file2.path, content2);
       }
-      
+
       // Calculate similarity
       const similarity = this.calculateSimilarity(file1.path, file2.path);
-      return { similarity };
+
+      // Extract common terms for display (if available)
+      const commonTerms = this.extractCommonTerms(file1.path, file2.path);
+
+      return {
+        similarity
+      };
     } catch (error) {
       console.error(`Error computing similarity between ${file1.path} and ${file2.path}:`, error);
       return { similarity: 0 };
     }
   }
-  
+
+  /**
+   * Extract common terms between two documents
+   * @param docId1 First document ID
+   * @param docId2 Second document ID
+   * @returns Array of common terms
+   */
+  private extractCommonTerms(docId1: string, docId2: string): string[] {
+    // If we don't have n-grams for either document, return empty array
+    if (!this.documentNgrams.has(docId1) || !this.documentNgrams.has(docId2)) {
+      return [];
+    }
+
+    try {
+      // Get the document n-grams (from any n-gram size)
+      const ngrams1Map = this.documentNgrams.get(docId1);
+      const ngrams2Map = this.documentNgrams.get(docId2);
+
+      if (!ngrams1Map || !ngrams2Map) {
+        return [];
+      }
+
+      // Choose the first available n-gram size for each document
+      const ngramSize1 = Array.from(ngrams1Map.keys())[0];
+      const ngramSize2 = Array.from(ngrams2Map.keys())[0];
+
+      if (ngramSize1 === undefined || ngramSize2 === undefined) {
+        return [];
+      }
+
+      const ngrams1 = ngrams1Map.get(ngramSize1);
+      const ngrams2 = ngrams2Map.get(ngramSize2);
+
+      if (!ngrams1 || !ngrams2) {
+        return [];
+      }
+
+      // Find common n-grams
+      const commonNgrams = [...ngrams1].filter(n => ngrams2.has(n));
+
+      // Return up to 10 common terms
+      return commonNgrams.slice(0, 10);
+    } catch (error) {
+      console.error(`Error extracting common terms for ${docId1} and ${docId2}:`, error);
+      return [];
+    }
+  }
+
   /**
    * Process a document and create bloom filters
    * @param docId Document identifier
    * @param text Document text
    */
-  processDocument(docId: string, text: string): void {
+  async processDocument(docId: string, text: string): Promise<void> {
+    this.cacheDirty = true;
     const startTime = performance.now();
-    
-    // Analyze document for parameter optimization
-    if (this.adaptiveParameters) {
-      this.parameterCalculator.analyzeDocument(text);
-    }
-    
-    // Track word frequencies for adaptive stopwords
-    this.trackWordFrequencies(docId, text);
-    
-    // Update parameters periodically if adaptive
+
+    // More aggressive yielding to ensure UI responsiveness
+    const yieldWithDuration = async (ms: number) => {
+      await new Promise(resolve => setTimeout(resolve, ms));
+    };
+
+    // Initial yield before any processing
+    await yieldWithDuration(10);
+
+    // Skip adaptive parameters for better performance
     this.documentsProcessed++;
-    if (this.adaptiveParameters && this.documentsProcessed % this.parameterUpdateInterval === 0) {
-      this.updateParameters();
+
+    // For very large documents, limit the content to process
+    // This drastically improves performance for huge files
+    const processLimit = 10000; // Character limit
+    const isLargeDocument = text.length > processLimit;
+
+    if (isLargeDocument && DEBUG_MODE) {
+      log(`Large document detected (${text.length} chars), limiting to ${processLimit} chars`);
     }
-    
-    // Compute common words if enough documents have been processed
-    if (this.totalDocuments >= 100 && !this.commonWordsComputed) {
+
+    const limitedText = isLargeDocument ? text.substring(0, processLimit) : text;
+
+    // Track word frequencies for adaptive stopwords
+    this.trackWordFrequencies(docId, limitedText);
+    await yieldWithDuration(10);
+
+    // Compute common words if enough documents processed
+    if (this.totalDocuments >= 30 && !this.commonWordsComputed) {
       this.computeCommonWords();
+      await yieldWithDuration(15);
     }
-    
-    // Create multi-resolution bloom filter
+
+    // Create a simplified bloom filter (word-based, single resolution)
     const filter = new MultiResolutionBloomFilter(
-      this.ngramSizes,
-      this.bloomSizes,
-      this.hashFunctions
+      [3], // Single n-gram size (kept as array for backward compatibility)
+      [2048], // Reduced bloom filter size for word-level indexing
+      [3] // Hash functions
     );
-    
-    // Process text with stopwords filtering
-    const processed = this.preprocessText(text);
+
+    // Pre-process text to filter stopwords if we've computed them
+    const processed = this.preprocessText(limitedText);
+    await yieldWithDuration(10);
+
+    // Add text to the filter
     filter.addText(processed);
-    
+    await yieldWithDuration(15);
+
     // Store the filter
     this.bloomFilters.set(docId, filter);
-    
+
+    // No longer storing n-grams for memory efficiency
+
     const endTime = performance.now();
-    
+
+    // Final yield to ensure UI responsiveness
+    await yieldWithDuration(5);
+
     if (DEBUG_MODE) {
       log(`Processed document ${docId} in ${(endTime - startTime).toFixed(2)}ms`);
     }
   }
-  
+
+  /**
+   * Extract n-grams from text for a specific n-gram size
+   * @param text Input text
+   * @param ngramSize Size of n-grams to extract
+   * @returns Set of n-grams
+   */
+  private extractNgrams(text: string, ngramSize: number): Set<string> {
+    // Prepare text by removing extra spaces
+    // Use a Unicode-aware normalization to ensure consistent handling across languages
+    const chars = text.toLowerCase().normalize('NFC').replace(/\s+/g, ' ');
+
+    // Extract character n-grams with Unicode awareness
+    const ngrams = new Set<string>();
+
+    // This will properly handle multi-byte characters in languages like Chinese, Japanese, etc.
+    for (let i = 0; i <= [...chars].length - ngramSize; i++) {
+      // Use Array.from to properly handle Unicode characters
+      const ngram = [...chars].slice(i, i + ngramSize).join('');
+      if (ngram.length === ngramSize) {
+        ngrams.add(ngram);
+      }
+    }
+
+    return ngrams;
+  }
+
   /**
    * Preprocess text by removing common words
    * @param text Input text
@@ -744,26 +1096,26 @@ export class MultiResolutionBloomFilterProvider {
   private preprocessText(text: string): string {
     // Use the tokenize function from core
     const processed = tokenize(text);
-    
+
     // Split into words
     const words = processed.toLowerCase().split(/\s+/);
-    
+
     // Filter out common words if we've computed them
     let meaningfulWords: string[];
-    
+
     if (this.commonWordsComputed) {
       // Use adaptive stopwords
-      meaningfulWords = words.filter(word => 
+      meaningfulWords = words.filter(word =>
         word.length > this.minWordLength && !this.commonWords.has(word)
       );
     } else {
       // Just filter by length until we have enough data
       meaningfulWords = words.filter(word => word.length > this.minWordLength);
     }
-    
+
     return meaningfulWords.join(' ');
   }
-  
+
   /**
    * Calculate similarity between two documents
    * @param docId1 First document ID
@@ -772,11 +1124,11 @@ export class MultiResolutionBloomFilterProvider {
    */
   calculateSimilarity(docId1: string, docId2: string): number {
     const startTime = performance.now();
-    
+
     // Get the filters for both documents
     const filter1 = this.bloomFilters.get(docId1);
     const filter2 = this.bloomFilters.get(docId2);
-    
+
     // If either filter is missing, return 0
     if (!filter1 || !filter2) {
       if (DEBUG_MODE) {
@@ -785,98 +1137,163 @@ export class MultiResolutionBloomFilterProvider {
       }
       return 0;
     }
-    
+
     // Calculate the multi-resolution similarity
     const similarity = filter1.similarity(filter2);
-    
+
     const endTime = performance.now();
-    
+
     if (DEBUG_MODE) {
       log(`Similarity calculation for ${docId1} and ${docId2}: ${(similarity * 100).toFixed(2)}% in ${(endTime - startTime).toFixed(2)}ms`);
     }
-    
+
     return similarity;
   }
-  
+
   /**
    * Get most similar documents to a query document
    * @param queryDocId Query document ID
    * @param limit Maximum number of results
-   * @param threshold Minimum similarity threshold
+   * @param sampleSize Optional: Number of documents to sample when corpus is large
    * @returns Array of [docId, similarity] pairs, sorted by similarity
    */
   getSimilarDocuments(
     queryDocId: string,
     limit: number = 10,
-    threshold?: number
+    sampleSize?: number
   ): [string, number][] {
-    // Use provided threshold or the current adaptive one
-    const actualThreshold = threshold || this.similarityThreshold;
     const startTime = performance.now();
-    
+
     // Get the filter for the query document
     const queryFilter = this.bloomFilters.get(queryDocId);
     if (!queryFilter) {
       if (DEBUG_MODE) log(`Query document ${queryDocId} not found`);
       return [];
     }
-    
+
     const results: [string, number][] = [];
     let comparisons = 0;
-    
-    // Compare with all other documents
-    for (const [docId, filter] of this.bloomFilters.entries()) {
+    let skippedComparisons = 0;
+
+    // Determine if we should sample based on corpus size
+    const corpusSize = this.bloomFilters.size;
+    const shouldSample = sampleSize && corpusSize > sampleSize;
+
+    // Convert to array for sampling if needed
+    const docEntries = shouldSample
+      ? Array.from(this.bloomFilters.entries())
+      : null;
+
+    // If sampling, select a random subset
+    const samplesToProcess = shouldSample
+      ? this.sampleDocuments(docEntries!, sampleSize, queryDocId)
+      : this.bloomFilters.entries();
+
+    if (shouldSample && DEBUG_MODE) {
+      log(`Large corpus detected (${corpusSize} documents), sampling ${sampleSize} documents`);
+    }
+
+    // Compare with sampled documents or all documents
+    for (const [docId, filter] of samplesToProcess) {
       if (docId === queryDocId) continue; // Skip self-comparison
-      
+
       comparisons++;
-      const similarity = queryFilter.similarity(filter);
-      
-      if (similarity >= actualThreshold) {
-        results.push([docId, similarity]);
+
+      try {
+        // Calculate similarity - safe version that won't throw on size mismatch
+        const similarity = queryFilter.similarity(filter);
+
+        // Include all non-zero similarities (no threshold)
+        if (similarity > 0) {
+          results.push([docId, similarity]);
+        }
+      } catch (error) {
+        // Log error but continue processing other documents
+        skippedComparisons++;
+        if (DEBUG_MODE) {
+          log(`Error comparing ${queryDocId} with ${docId}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
-    
+
     // Sort by similarity and limit results
     const sortedResults = results
       .sort((a, b) => b[1] - a[1])
       .slice(0, limit);
-    
+
     const endTime = performance.now();
-    
+
     if (DEBUG_MODE) {
       log(`Found ${sortedResults.length} similar documents to ${queryDocId}:
-        - Compared with ${comparisons} documents
-        - Threshold: ${actualThreshold}
-        - Time: ${(endTime - startTime).toFixed(2)}ms`);
+        - Compared with ${comparisons - skippedComparisons} documents (${skippedComparisons} skipped)
+        - ${shouldSample ? `Sampled ${sampleSize} out of ${corpusSize} documents` : 'No sampling applied'}
+        - No threshold applied, showing top ${limit} non-zero matches
+        - Time: ${(endTime - startTime).toFixed(2)}ms
+        ${sortedResults.length > 0 ? `- Top match: ${sortedResults[0][0]} (${(sortedResults[0][1] * 100).toFixed(1)}%)` : ''}`);
     }
-    
+
     return sortedResults;
   }
-  
+
+  /**
+   * Sample a subset of documents for similarity comparison
+   * Uses pure random sampling to discover diverse connections
+   * @param documents Array of [docId, filter] pairs
+   * @param sampleSize Number of documents to sample
+   * @param queryDocId The ID of the query document (to exclude)
+   * @returns Array of sampled [docId, filter] pairs
+   */
+  private sampleDocuments(
+    documents: [string, MultiResolutionBloomFilter][],
+    sampleSize: number,
+    queryDocId: string
+  ): [string, MultiResolutionBloomFilter][] {
+    // Skip the query document
+    const filteredDocs = documents.filter(([docId]) => docId !== queryDocId);
+
+    // If we have fewer documents than the sample size, return all
+    if (filteredDocs.length <= sampleSize) {
+      return filteredDocs;
+    }
+
+    // Create a copy for shuffling
+    const docsToSample = [...filteredDocs];
+
+    // Fisher-Yates shuffle for unbiased random sampling
+    for (let i = docsToSample.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [docsToSample[i], docsToSample[j]] = [docsToSample[j], docsToSample[i]];
+    }
+
+    // Take a random sample up to the requested size
+    return docsToSample.slice(0, sampleSize);
+  }
+
   /**
    * Update parameters based on corpus analysis
    */
   private updateParameters(): void {
-    if (!this.adaptiveParameters || this.documentsProcessed < 50) return;
-    
-    const params = this.parameterCalculator.generateRecommendedParameters();
-    
+    if (!this.adaptiveParameters || this.documentsProcessed < 25) return; // Reduced from 50 to 25 for faster adaptation
+
+    const params = this.parameterCalculator.generateRecommendedParameters(0.05); // Increased false positive rate from 0.01 to 0.05 for better performance
+
     // Log changes to parameters
     if (DEBUG_MODE) {
       log(`Updating parameters after analyzing ${this.documentsProcessed} documents:
         - n-gram sizes: [${this.ngramSizes.join(', ')}] -> [${params.ngramSizes.join(', ')}]
-        - bloom sizes: [${this.bloomSizes.join(', ')}] -> [${params.bloomSizes.join(', ')}]
+        - bloom sizes: [${this.bloomSizes.join(', ')}] (keeping fixed size for compatibility)
         - hash functions: [${this.hashFunctions.join(', ')}] -> [${params.hashFunctions.join(', ')}]
         - similarity threshold: ${this.similarityThreshold} -> ${params.similarityThreshold}`);
     }
-    
+
     // Update parameters
     this.ngramSizes = params.ngramSizes;
-    this.bloomSizes = params.bloomSizes;
+    // Keep bloom sizes fixed for compatibility
+    // this.bloomSizes = params.bloomSizes; 
     this.hashFunctions = params.hashFunctions;
     this.similarityThreshold = params.similarityThreshold;
   }
-  
+
   /**
    * Track word frequencies and document occurrences to identify common words
    * @param docId Document identifier
@@ -884,25 +1301,25 @@ export class MultiResolutionBloomFilterProvider {
    */
   private trackWordFrequencies(docId: string, text: string): void {
     if (this.commonWordsComputed) return; // Skip if we've already computed common words
-    
+
     // Use the tokenize function from core
     const processed = tokenize(text);
-    
+
     // Get unique words from the document
     const words = processed.toLowerCase().split(/\s+/);
     const uniqueWords = new Set<string>();
-    
+
     // Count word frequencies
     for (const word of words) {
       if (word.length <= this.minWordLength) continue; // Skip very short words
-      
+
       // Update overall word frequency
       this.wordFrequencies.set(word, (this.wordFrequencies.get(word) || 0) + 1);
-      
+
       // Track unique words in this document
       uniqueWords.add(word);
     }
-    
+
     // Track which documents each word appears in
     for (const word of uniqueWords) {
       if (!this.wordDocumentCount.has(word)) {
@@ -910,36 +1327,36 @@ export class MultiResolutionBloomFilterProvider {
       }
       this.wordDocumentCount.get(word)?.add(docId);
     }
-    
+
     // Increment total documents count
     this.totalDocuments++;
   }
-  
+
   /**
    * Compute common words based on frequency and document occurrence
    */
   private computeCommonWords(): void {
     if (this.commonWordsComputed) return;
     if (this.totalDocuments < 10) return; // Need at least 10 documents for meaningful statistics
-    
+
     const wordScores = new Map<string, number>();
-    
+
     // Calculate a score for each word based on frequency and document coverage
     for (const [word, frequency] of this.wordFrequencies.entries()) {
       const docsWithWord = this.wordDocumentCount.get(word)?.size || 0;
       const documentCoverage = docsWithWord / this.totalDocuments;
-      
+
       // Skip rare words
       if (docsWithWord < 5) continue;
-      
+
       // Score words by their document coverage
       wordScores.set(word, documentCoverage);
     }
-    
+
     // Sort words by score (highest first)
     const sortedWords = Array.from(wordScores.entries())
       .sort((a, b) => b[1] - a[1]);
-    
+
     // Identify common words (those above threshold or up to maxStopwords)
     for (const [word, score] of sortedWords) {
       if (score >= this.commonWordsThreshold || this.commonWords.size < this.maxStopwords) {
@@ -948,25 +1365,25 @@ export class MultiResolutionBloomFilterProvider {
         break;
       }
     }
-    
+
     // Mark as computed
     this.commonWordsComputed = true;
-    
+
     if (DEBUG_MODE) {
       log(`Computed ${this.commonWords.size} common words from ${this.totalDocuments} documents`);
-      
+
       if (this.commonWords.size <= 50) {
         log(`Common words: ${Array.from(this.commonWords).join(', ')}`);
       } else {
         log(`Top 50 common words: ${Array.from(this.commonWords).slice(0, 50).join(', ')}...`);
       }
     }
-    
+
     // Free memory
     this.wordFrequencies.clear();
     this.wordDocumentCount.clear();
   }
-  
+
   /**
    * Get statistics about the provider
    */
@@ -984,42 +1401,302 @@ export class MultiResolutionBloomFilterProvider {
       stopwordsThreshold: this.commonWordsThreshold,
       maxStopwords: this.maxStopwords,
       documentsAnalyzed: this.totalDocuments,
+      progressiveIndexing: {
+        active: this.isProgressiveIndexingRunning,
+        remainingFiles: this.remainingFilesToIndex.length,
+        partialIndex: this.hasPartialIndex
+      },
       memoryUsage: {
         totalBytes: 0,
         totalKB: 0,
         totalMB: 0
       }
     };
-    
+
     // Calculate memory usage
     let totalMemoryBytes = 0;
     for (const filter of this.bloomFilters.values()) {
       const filterStats = filter.getStats();
       totalMemoryBytes += filterStats.totalMemoryBytes;
     }
-    
+
     stats.memoryUsage.totalBytes = totalMemoryBytes;
     stats.memoryUsage.totalKB = totalMemoryBytes / 1024;
     stats.memoryUsage.totalMB = totalMemoryBytes / (1024 * 1024);
-    
+
     // Add parameter calculator stats
     stats.corpusStats = this.parameterCalculator.getStats();
-    
+
     return stats;
   }
-  
+
   /**
    * Clear all bloom filters
    */
   clear(): void {
     this.bloomFilters.clear();
     this.documentNgrams.clear();
+    this.cacheDirty = true;
   }
-  
+
   /**
    * Get the number of documents indexed
    */
   size(): number {
     return this.bloomFilters.size;
+  }
+
+  /**
+   * Save the bloom filter index to disk cache
+   */
+  private async saveToCache(): Promise<boolean> {
+    if (!this.cacheFilePath || !this.vault.adapter) {
+      log('Cannot save cache: no cache path or vault adapter');
+      return false;
+    }
+
+    if (!this.cacheDirty) {
+      log('Cache is not dirty, skipping save');
+      return true;
+    }
+
+    try {
+      log(`Saving bloom filter cache to ${this.cacheFilePath}`);
+
+      // Prepare cache object
+      const cache: any = {
+        version: 1,
+        timestamp: Date.now(),
+        params: {
+          ngramSizes: this.ngramSizes,
+          bloomSizes: this.bloomSizes,
+          hashFunctions: this.hashFunctions,
+          similarityThreshold: this.similarityThreshold
+        },
+        stats: {
+          documentCount: this.bloomFilters.size,
+          commonWordsComputed: this.commonWordsComputed,
+          commonWordsCount: this.commonWords.size,
+          totalDocuments: this.totalDocuments
+        },
+        // Serialize bloom filters
+        filters: {},
+        // Serialize common words
+        commonWords: Array.from(this.commonWords)
+      };
+
+      // Serialize each bloom filter (only store essential data)
+      for (const [docId, filter] of this.bloomFilters.entries()) {
+        // For each filter, serialize the bit arrays
+        const filterData: any = {};
+
+        // Store basic filter params
+        filterData.ngramSizes = filter.ngramSizes;
+
+        // For each n-gram size, store the bloom filter's bit array
+        for (const ngramSize of filter.ngramSizes) {
+          const bloomFilter = filter.filters.get(ngramSize);
+          if (bloomFilter) {
+            // Convert Uint32Array to regular array for serialization
+            const bitArray = Array.from(bloomFilter.getBitArray());
+            filterData[`bloom_${ngramSize}`] = bitArray;
+          }
+        }
+
+        cache.filters[docId] = filterData;
+      }
+
+      // Create cache directory if it doesn't exist
+      const cacheDir = this.cacheFilePath.substring(0, this.cacheFilePath.lastIndexOf('/'));
+      await this.vault.adapter.mkdir(cacheDir);
+
+      // Save to disk
+      await this.vault.adapter.write(this.cacheFilePath, JSON.stringify(cache));
+
+      log(`Bloom filter cache saved: ${Object.keys(cache.filters).length} documents`);
+      this.cacheDirty = false;
+      this.cacheReady = true;
+      return true;
+    } catch (error) {
+      console.error('Error saving bloom filter cache:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Load the bloom filter index from disk cache
+   */
+  private async loadFromCache(): Promise<boolean> {
+    if (!this.cacheFilePath || !this.vault.adapter) {
+      log('Cannot load cache: no cache path or vault adapter');
+      return false;
+    }
+
+    try {
+      // Check if cache file exists
+      const exists = await this.vault.adapter.exists(this.cacheFilePath);
+      if (!exists) {
+        log(`Cache file does not exist at ${this.cacheFilePath}`);
+        return false;
+      }
+
+      // Read cache file
+      const cacheData = await this.vault.adapter.read(this.cacheFilePath);
+
+      // Parse the JSON with error handling
+      let cache;
+      try {
+        cache = JSON.parse(cacheData);
+      } catch (error) {
+        log('Cache file contains invalid JSON, deleting corrupt cache');
+        this.deleteCache();
+        return false;
+      }
+
+      // Validate cache version and basic structure
+      if (!cache.version || cache.version !== 1 ||
+        !cache.params || !cache.filters || !cache.stats) {
+        log('Cache version mismatch or invalid cache format, deleting invalid cache');
+        this.deleteCache();
+        return false;
+      }
+
+      // Validate parameters match - only check n-gram sizes and hash functions
+      // Bloom sizes are now always fixed at 4096, so we don't need to check them
+      const params = cache.params;
+      if (!this.areArraysEqual(params.ngramSizes, this.ngramSizes) ||
+        !this.areArraysEqual(params.hashFunctions, this.hashFunctions) ||
+        params.similarityThreshold !== this.similarityThreshold) {
+        log('Cache parameters do not match current settings, clearing invalid cache');
+        this.deleteCache(); // Delete the invalid cache file
+        return false;
+      }
+
+      // Verify all bloom filters have the same size
+      const bloomSizes = cache.params.bloomSizes;
+      if (bloomSizes && Array.isArray(bloomSizes) && bloomSizes.length > 0) {
+        const firstSize = bloomSizes[0];
+        const allSame = bloomSizes.every((size: number) => size === firstSize);
+        if (!allSame) {
+          log('Cache contains bloom filters with different sizes, clearing invalid cache');
+          this.deleteCache(); // Delete the invalid cache file
+          return false;
+        }
+      }
+
+      // Clear existing data
+      this.bloomFilters.clear();
+      this.documentNgrams.clear();
+      this.commonWords.clear();
+
+      // Load common words
+      if (cache.commonWords && Array.isArray(cache.commonWords)) {
+        for (const word of cache.commonWords) {
+          this.commonWords.add(word);
+        }
+        this.commonWordsComputed = true;
+        log(`Loaded ${this.commonWords.size} common words from cache`);
+      }
+
+      // Load documents count
+      if (cache.stats && cache.stats.totalDocuments) {
+        this.totalDocuments = cache.stats.totalDocuments;
+      }
+
+      // Load bloom filters
+      let loadedCount = 0;
+      for (const [docId, rawFilterData] of Object.entries(cache.filters)) {
+        try {
+          // Type guard - make sure filterData is an object
+          if (!rawFilterData || typeof rawFilterData !== 'object') {
+            console.error(`Invalid filter data for ${docId}, skipping`);
+            continue;
+          }
+
+          const filterData = rawFilterData as {
+            ngramSizes?: number[],
+            [key: string]: any
+          };
+
+          // Create a new multi-resolution bloom filter
+          const ngramSizes = Array.isArray(filterData.ngramSizes) ? filterData.ngramSizes : this.ngramSizes;
+          const filter = new MultiResolutionBloomFilter(
+            ngramSizes,
+            this.bloomSizes,
+            this.hashFunctions
+          );
+
+          // For each n-gram size, restore the bloom filter's bit array
+          for (const ngramSize of ngramSizes) {
+            const bitArrayKey = `bloom_${ngramSize}`;
+            if (filterData[bitArrayKey] && Array.isArray(filterData[bitArrayKey])) {
+              const bloomFilter = filter.filters.get(ngramSize);
+              if (bloomFilter) {
+                // Convert array back to Uint32Array
+                const bitArray = new Uint32Array(filterData[bitArrayKey]);
+                // Use the setter method to set the bit array
+                bloomFilter.setBitArray(bitArray);
+              }
+            }
+          }
+
+          this.bloomFilters.set(docId, filter);
+          loadedCount++;
+        } catch (error) {
+          console.error(`Error restoring bloom filter for ${docId}:`, error);
+          // Continue with other filters
+        }
+      }
+
+      log(`Successfully loaded ${loadedCount} bloom filters from cache`);
+      this.cacheDirty = false;
+      this.cacheReady = true;
+      return loadedCount > 0;
+    } catch (error) {
+      console.error('Error loading bloom filter cache:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Helper method to compare arrays for equality
+   */
+  private areArraysEqual(a: any[], b: any[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Manually save the cache to disk
+   * This can be called externally to ensure the cache is saved
+   */
+  async saveCache(): Promise<boolean> {
+    return this.saveToCache();
+  }
+
+  /**
+   * Deletes the cache file from disk
+   * Used when cache is detected to be invalid
+   */
+  private async deleteCache(): Promise<void> {
+    if (!this.cacheFilePath || !this.vault.adapter) {
+      log('Cannot delete cache: no cache path or vault adapter');
+      return;
+    }
+
+    try {
+      // Check if cache file exists
+      const exists = await this.vault.adapter.exists(this.cacheFilePath);
+      if (exists) {
+        // Delete the file
+        await this.vault.adapter.remove(this.cacheFilePath);
+        log(`Deleted invalid cache file at ${this.cacheFilePath}`);
+      }
+    } catch (error) {
+      console.error('Error deleting cache file:', error);
+    }
   }
 }

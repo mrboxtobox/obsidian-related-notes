@@ -134,23 +134,6 @@ export class RelatedNotesView extends ItemView {
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
     headerEl.createEl('h4', { text: 'Related Notes' });
 
-    // Add algorithm badge for bloom filter
-    const badgeEl = headerEl.createEl('span', { 
-      cls: 'related-notes-algorithm-badge',
-      text: 'Bloom Filter'
-    });
-    badgeEl.title = 'Using multi-resolution bloom filter algorithm for similarity';
-      
-      // Get corpus stats if available
-      if (this.plugin.similarityProvider.isCorpusSampled) {
-        const totalFiles = this.app.vault.getMarkdownFiles().length;
-        const stats = this.plugin.similarityProvider.getStats();
-        const indexedFiles = stats.documentsIndexed || 0;
-        const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
-        
-        badgeEl.setText(`Bloom Filter (${percentIndexed}%)`);
-      }
-
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;
 
@@ -275,35 +258,10 @@ export class RelatedNotesView extends ItemView {
       // Add the actions container to the item container
       itemContainer.appendChild(actionsContainer);
 
-      // Add similarity score display if enabled
-      if (this.plugin.settings.showStats) {
-        const scoreEl = document.createElement('div');
-        scoreEl.className = 'related-note-score';
-        scoreEl.textContent = `${Math.round(note.similarity * 100)}%`;
-        scoreEl.title = 'Similarity score';
-        itemContainer.appendChild(scoreEl);
-      }
-
       // Add the item container to the list item
       listItemEl.appendChild(itemContainer);
 
-      // Add common terms section if available
-      if (note.commonTerms && note.commonTerms.length > 0) {
-        const termsContainer = document.createElement('div');
-        termsContainer.className = 'related-note-terms';
-        
-        const termsLabel = document.createElement('span');
-        termsLabel.className = 'related-note-terms-label';
-        termsLabel.textContent = 'Common terms: ';
-        termsContainer.appendChild(termsLabel);
-        
-        const termsList = document.createElement('span');
-        termsList.className = 'related-note-terms-list';
-        termsList.textContent = note.commonTerms.join(', ');
-        termsContainer.appendChild(termsList);
-        
-        listItemEl.appendChild(termsContainer);
-      }
+      // Common terms section removed
 
       return listItemEl;
     });
