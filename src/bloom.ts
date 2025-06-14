@@ -261,16 +261,27 @@ export class BloomFilterSimilarityProvider {
     this.hashFunctions = hashFunctions;
     this.config = config;
     
+    // Configure adaptive stopwords parameters from config if provided
+    if (config.commonWordsThreshold) {
+      this.commonWordsThreshold = config.commonWordsThreshold;
+    }
+    if (config.maxStopwords) {
+      this.maxStopwords = config.maxStopwords;
+    }
+    if (config.minWordLength) {
+      this.minWordLength = config.minWordLength;
+    }
+    
     log(`Created BloomFilterSimilarityProvider with:
       - n-gram size: ${ngramSize}
       - bloom filter size: ${bloomFilterSize} bits
       - hash functions: ${hashFunctions}
       - memory per document: ${bloomFilterSize / 8} bytes
-      - stopwords list: ${this.commonWords.size} common words excluded`);
+      - adaptive stopwords: true (max: ${this.maxStopwords}, threshold: ${this.commonWordsThreshold * 100}%)`);
     
-    // Note: This implementation filters out extremely common words (stopwords)
-    // before generating n-grams. This focuses similarity matching on the most
-    // meaningful terms, improving relevance by ignoring words like "the", "and", etc.
+    // Note: This implementation adaptively identifies and filters out common words
+    // by analyzing their frequency across documents. This works across any language 
+    // and adapts to the specific content of the vault.
   }
   
   /**
@@ -291,8 +302,12 @@ export class BloomFilterSimilarityProvider {
       ngramSize: this.ngramSize,
       bloomFilterSize: this.bloomFilterSize,
       hashFunctions: this.hashFunctions,
+      adaptiveStopwords: true,
+      stopwordsComputed: this.commonWordsComputed,
       stopwordsCount: this.commonWords.size,
-      stopwordsEnabled: true,
+      stopwordsThreshold: this.commonWordsThreshold,
+      maxStopwords: this.maxStopwords,
+      documentsAnalyzed: this.totalDocuments,
       totalNgrams,
       avgNgramsPerDoc,
       memoryUsageBytes: memoryUsage,
@@ -303,11 +318,22 @@ export class BloomFilterSimilarityProvider {
 
   /**
    * Process a document and create a bloom filter of its n-grams
+   * First phase: track word frequencies
+   * Second phase: compute and apply bloom filters
    * @param docId Document identifier
    * @param text Document text
    */
   processDocument(docId: string, text: string): void {
     const startTime = performance.now();
+    
+    // Track word frequencies for adaptive stopwords detection
+    this.trackWordFrequencies(docId, text);
+    
+    // If we've processed enough documents and haven't computed common words yet,
+    // compute them now
+    if (this.totalDocuments >= 100 && !this.commonWordsComputed) {
+      this.computeCommonWords();
+    }
     
     // Create a bloom filter with the specified size and hash functions
     const filter = new BloomFilter(this.bloomFilterSize, this.hashFunctions);
@@ -333,43 +359,110 @@ export class BloomFilterSimilarityProvider {
         - Extracted ${ngrams.size} unique n-grams
         - Filter size: ${this.bloomFilterSize} bits (${this.bloomFilterSize / 8} bytes)
         - Filter saturation: ${filter.getFalsePositiveRate().toFixed(4)}
-        - Processing time: ${(endTime - startTime).toFixed(2)}ms`);
+        - Processing time: ${(endTime - startTime).toFixed(2)}ms
+        - Common words: ${this.commonWordsComputed ? this.commonWords.size : 'not yet computed'}`);
     }
   }
 
+  // Adaptive stopwords tracking
+  private readonly wordFrequencies = new Map<string, number>();
+  private readonly wordDocumentCount = new Map<string, Set<string>>();
+  private readonly commonWords = new Set<string>();
+  private totalDocuments = 0;
+  private commonWordsThreshold = 0.5; // Words occurring in >50% of documents are considered common
+  private commonWordsComputed = false;
+  private minWordLength = 2; // Minimum word length to consider
+  private maxStopwords = 200; // Maximum number of stopwords to identify
+  
   /**
-   * List of extremely common words to exclude from n-gram generation
-   * These words occur so frequently that they don't provide meaningful similarity information
+   * Track word frequencies and document occurrences to identify common words
+   * @param docId Document identifier
+   * @param text Document text
    */
-  private readonly commonWords = new Set([
-    // Articles
-    'the', 'a', 'an',
-    // Conjunctions
-    'and', 'but', 'or', 'nor', 'so', 'yet', 'for',
-    // Prepositions
-    'in', 'on', 'at', 'by', 'to', 'of', 'with', 'from', 'about',
-    // Common verbs
-    'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being',
-    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
-    'can', 'could', 'may', 'might', 'must', 'should',
-    // Pronouns
-    'i', 'me', 'my', 'mine', 'myself',
-    'you', 'your', 'yours', 'yourself',
-    'he', 'him', 'his', 'himself',
-    'she', 'her', 'hers', 'herself',
-    'it', 'its', 'itself',
-    'we', 'us', 'our', 'ours', 'ourselves',
-    'they', 'them', 'their', 'theirs', 'themselves',
-    'this', 'that', 'these', 'those', 'which', 'who', 'whom', 'whose',
-    // Common adverbs
-    'not', 'very', 'too', 'also', 'even', 'just', 'only', 'then',
-    // Numbers and quantities
-    'one', 'two', 'three', 'first', 'second', 'third', 'many', 'some', 'any', 'all', 'most',
-    // Time-related
-    'now', 'when', 'while', 'after', 'before', 'during',
-    // Other high-frequency words
-    'what', 'why', 'how', 'where', 'there', 'here', 'than', 'like'
-  ]);
+  private trackWordFrequencies(docId: string, text: string): void {
+    if (this.commonWordsComputed) return; // Skip if we've already computed common words
+    
+    // Use the tokenize function from core
+    const processed = tokenize(text);
+    
+    // Get unique words from the document
+    const words = processed.toLowerCase().split(/\s+/);
+    const uniqueWords = new Set<string>();
+    
+    // Count word frequencies
+    for (const word of words) {
+      if (word.length <= this.minWordLength) continue; // Skip very short words
+      
+      // Update overall word frequency
+      this.wordFrequencies.set(word, (this.wordFrequencies.get(word) || 0) + 1);
+      
+      // Track unique words in this document
+      uniqueWords.add(word);
+    }
+    
+    // Track which documents each word appears in
+    for (const word of uniqueWords) {
+      if (!this.wordDocumentCount.has(word)) {
+        this.wordDocumentCount.set(word, new Set());
+      }
+      this.wordDocumentCount.get(word)?.add(docId);
+    }
+    
+    // Increment total documents count
+    this.totalDocuments++;
+  }
+  
+  /**
+   * Compute common words based on frequency and document occurrence
+   */
+  private computeCommonWords(): void {
+    if (this.commonWordsComputed) return;
+    if (this.totalDocuments < 10) return; // Need at least 10 documents for meaningful statistics
+    
+    const wordScores = new Map<string, number>();
+    
+    // Calculate a score for each word based on frequency and document coverage
+    for (const [word, frequency] of this.wordFrequencies.entries()) {
+      const docsWithWord = this.wordDocumentCount.get(word)?.size || 0;
+      const documentCoverage = docsWithWord / this.totalDocuments;
+      
+      // Skip rare words
+      if (docsWithWord < 5) continue;
+      
+      // Score words by their document coverage
+      wordScores.set(word, documentCoverage);
+    }
+    
+    // Sort words by score (highest first)
+    const sortedWords = Array.from(wordScores.entries())
+      .sort((a, b) => b[1] - a[1]);
+    
+    // Identify common words (those above threshold or up to maxStopwords)
+    for (const [word, score] of sortedWords) {
+      if (score >= this.commonWordsThreshold || this.commonWords.size < this.maxStopwords) {
+        this.commonWords.add(word);
+      } else {
+        break;
+      }
+    }
+    
+    // Mark as computed
+    this.commonWordsComputed = true;
+    
+    if (DEBUG_MODE) {
+      log(`Computed ${this.commonWords.size} common words from ${this.totalDocuments} documents`);
+      
+      if (this.commonWords.size <= 50) {
+        log(`Common words: ${Array.from(this.commonWords).join(', ')}`);
+      } else {
+        log(`Top 50 common words: ${Array.from(this.commonWords).slice(0, 50).join(', ')}...`);
+      }
+    }
+    
+    // Free memory
+    this.wordFrequencies.clear();
+    this.wordDocumentCount.clear();
+  }
 
   /**
    * Extract character n-grams from text
@@ -388,15 +481,27 @@ export class BloomFilterSimilarityProvider {
     // Split into words
     const words = processed.toLowerCase().split(/\s+/);
     
-    // Filter out extremely common words
-    const meaningfulWords = words.filter(word => 
-      word.length > 1 && !this.commonWords.has(word)
-    );
+    // Filter out common words if we've computed them
+    // Otherwise, just filter by word length
+    let meaningfulWords: string[];
+    let excludedCount = 0;
+    
+    if (this.commonWordsComputed) {
+      // Use adaptive stopwords
+      meaningfulWords = words.filter(word => 
+        word.length > this.minWordLength && !this.commonWords.has(word)
+      );
+      excludedCount = words.length - meaningfulWords.length;
+    } else {
+      // Just filter by length until we have enough data
+      meaningfulWords = words.filter(word => word.length > this.minWordLength);
+      excludedCount = words.length - meaningfulWords.length;
+    }
     
     if (DEBUG_MODE) {
-      const excludedCount = words.length - meaningfulWords.length;
-      const excludedPercent = (excludedCount / words.length * 100).toFixed(1);
-      log(`Filtered out ${excludedCount} common words (${excludedPercent}% of total)`);
+      const excludedPercent = words.length > 0 ? (excludedCount / words.length * 100).toFixed(1) : '0';
+      const method = this.commonWordsComputed ? 'adaptive stopwords' : 'length filter';
+      log(`Filtered out ${excludedCount} words (${excludedPercent}% of total) using ${method}`);
     }
     
     // Create n-grams from the filtered words
