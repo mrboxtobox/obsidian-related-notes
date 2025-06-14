@@ -10,8 +10,6 @@ import RelatedNotesPlugin from './main';
 
 export interface RelatedNotesSettings {
   maxSuggestions: number;
-  advancedSettingsEnabled: boolean;
-  similarityProvider: 'auto' | 'bm25' | 'minhash' | 'bloom' | 'multi-bloom';
   debugMode: boolean;
   similarityThreshold: number;
   batchSize: number;
@@ -20,42 +18,28 @@ export interface RelatedNotesSettings {
   disableIncrementalUpdates: boolean;
   showStats: boolean;
   // Bloom filter settings
-  useBloomFilter: boolean;
-  bloomFilterSize: number;
-  bloomFilterHashFunctions: number;
-  ngramSize: number;
-  // Multi-resolution bloom filter settings
-  useMultiResolutionBloom: boolean;
   adaptiveParameters: boolean;
-  multiResolutionNgramSizes: number[];
-  multiResolutionBloomSizes: number[];
-  multiResolutionHashFunctions: number[];
+  ngramSizes: number[];
+  bloomSizes: number[];
+  hashFunctions: number[];
   commonWordsThreshold: number;
   maxStopwords: number;
 }
 
 export const DEFAULT_SETTINGS: RelatedNotesSettings = {
   maxSuggestions: 5,
-  advancedSettingsEnabled: false,
-  similarityProvider: 'auto',
   debugMode: false,
   similarityThreshold: 0.3,
-  batchSize: 1,
+  batchSize: 10,
   priorityIndexSize: 10000,
   onDemandComputationEnabled: true,
   disableIncrementalUpdates: false,
   showStats: false,
   // Bloom filter settings (defaults)
-  useBloomFilter: false,
-  bloomFilterSize: 1024,
-  bloomFilterHashFunctions: 3,
-  ngramSize: 3,
-  // Multi-resolution bloom filter settings
-  useMultiResolutionBloom: false,
   adaptiveParameters: true,
-  multiResolutionNgramSizes: [2, 3, 4],
-  multiResolutionBloomSizes: [512, 1024, 512],
-  multiResolutionHashFunctions: [2, 3, 2],
+  ngramSizes: [2, 3, 4],
+  bloomSizes: [512, 1024, 512],
+  hashFunctions: [2, 3, 2],
   commonWordsThreshold: 0.5,
   maxStopwords: 200
 };
@@ -104,211 +88,107 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    // Similarity Provider Section
+    // Similarity Algorithm Section
     containerEl.createEl('h3', { text: 'Similarity Algorithm' });
 
     new Setting(containerEl)
-      .setName('Use Multi-Resolution Bloom Filter')
-      .setDesc('Uses adaptive multi-resolution bloom filters for enhanced similarity. Works in any language and automatically adapts to your vault.')
+      .setName('Use Adaptive Parameters')
+      .setDesc('Automatically optimize bloom filter parameters based on your vault characteristics.')
       .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.useMultiResolutionBloom)
+        .setValue(this.plugin.settings.adaptiveParameters)
         .onChange(async (value) => {
-          this.plugin.settings.useMultiResolutionBloom = value;
-          if (value) {
-            // If enabling multi-resolution, disable regular bloom filter
-            this.plugin.settings.useBloomFilter = false;
-          }
+          this.plugin.settings.adaptiveParameters = value;
           await this.plugin.saveSettings();
-          // Show/hide bloom filter settings based on toggle state
           this.display();
         }));
 
-    // Only show multi-resolution bloom filter settings if enabled
-    if (this.plugin.settings.useMultiResolutionBloom) {
+    // Only show manual parameter settings if adaptive parameters are disabled
+    if (!this.plugin.settings.adaptiveParameters) {
+      // N-gram sizes setting
       new Setting(containerEl)
-        .setName('Use Adaptive Parameters')
-        .setDesc('Automatically optimize parameters based on your vault characteristics.')
-        .addToggle(toggle => toggle
-          .setValue(this.plugin.settings.adaptiveParameters)
+        .setName('N-gram Sizes')
+        .setDesc('Comma-separated list of n-gram sizes (2-5)')
+        .addText(text => text
+          .setValue(this.plugin.settings.ngramSizes.join(', '))
           .onChange(async (value) => {
-            this.plugin.settings.adaptiveParameters = value;
-            await this.plugin.saveSettings();
-            this.display();
-          }));
-
-      // Only show manual parameter settings if adaptive parameters are disabled
-      if (!this.plugin.settings.adaptiveParameters) {
-        // N-gram sizes setting
-        new Setting(containerEl)
-          .setName('N-gram Sizes')
-          .setDesc('Comma-separated list of n-gram sizes (2-5)')
-          .addText(text => text
-            .setValue(this.plugin.settings.multiResolutionNgramSizes.join(', '))
-            .onChange(async (value) => {
-              try {
-                const sizes = value.split(',').map(s => parseInt(s.trim()));
-                if (sizes.every(s => s >= 2 && s <= 5)) {
-                  this.plugin.settings.multiResolutionNgramSizes = sizes;
-                  await this.plugin.saveSettings();
-                }
-              } catch (e) {
-                // Invalid input, don't update
+            try {
+              const sizes = value.split(',').map(s => parseInt(s.trim()));
+              if (sizes.every(s => s >= 2 && s <= 5)) {
+                this.plugin.settings.ngramSizes = sizes;
+                await this.plugin.saveSettings();
               }
-            }));
+            } catch (e) {
+              // Invalid input, don't update
+            }
+          }));
 
-        // Bloom filter sizes setting
-        new Setting(containerEl)
-          .setName('Bloom Filter Sizes')
-          .setDesc('Comma-separated list of bloom filter sizes (128-4096)')
-          .addText(text => text
-            .setValue(this.plugin.settings.multiResolutionBloomSizes.join(', '))
-            .onChange(async (value) => {
-              try {
-                const sizes = value.split(',').map(s => parseInt(s.trim()));
-                if (sizes.every(s => s >= 128 && s <= 4096)) {
-                  this.plugin.settings.multiResolutionBloomSizes = sizes;
-                  await this.plugin.saveSettings();
-                }
-              } catch (e) {
-                // Invalid input, don't update
+      // Bloom filter sizes setting
+      new Setting(containerEl)
+        .setName('Bloom Filter Sizes')
+        .setDesc('Comma-separated list of bloom filter sizes (128-4096)')
+        .addText(text => text
+          .setValue(this.plugin.settings.bloomSizes.join(', '))
+          .onChange(async (value) => {
+            try {
+              const sizes = value.split(',').map(s => parseInt(s.trim()));
+              if (sizes.every(s => s >= 128 && s <= 4096)) {
+                this.plugin.settings.bloomSizes = sizes;
+                await this.plugin.saveSettings();
               }
-            }));
+            } catch (e) {
+              // Invalid input, don't update
+            }
+          }));
 
-        // Hash functions setting
-        new Setting(containerEl)
-          .setName('Hash Functions')
-          .setDesc('Comma-separated list of hash function counts (1-5)')
-          .addText(text => text
-            .setValue(this.plugin.settings.multiResolutionHashFunctions.join(', '))
-            .onChange(async (value) => {
-              try {
-                const counts = value.split(',').map(s => parseInt(s.trim()));
-                if (counts.every(c => c >= 1 && c <= 5)) {
-                  this.plugin.settings.multiResolutionHashFunctions = counts;
-                  await this.plugin.saveSettings();
-                }
-              } catch (e) {
-                // Invalid input, don't update
+      // Hash functions setting
+      new Setting(containerEl)
+        .setName('Hash Functions')
+        .setDesc('Comma-separated list of hash function counts (1-5)')
+        .addText(text => text
+          .setValue(this.plugin.settings.hashFunctions.join(', '))
+          .onChange(async (value) => {
+            try {
+              const counts = value.split(',').map(s => parseInt(s.trim()));
+              if (counts.every(c => c >= 1 && c <= 5)) {
+                this.plugin.settings.hashFunctions = counts;
+                await this.plugin.saveSettings();
               }
-            }));
-      }
-
-      // Common words settings
-      new Setting(containerEl)
-        .setName('Common Words Threshold')
-        .setDesc('Words appearing in this percentage of documents are considered common (0.1-0.9)')
-        .addSlider(slider => slider
-          .setLimits(0.1, 0.9, 0.1)
-          .setValue(this.plugin.settings.commonWordsThreshold)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.commonWordsThreshold = value;
-            await this.plugin.saveSettings();
+            } catch (e) {
+              // Invalid input, don't update
+            }
           }));
-
-      new Setting(containerEl)
-        .setName('Maximum Stopwords')
-        .setDesc('Maximum number of common words to exclude (50-500)')
-        .addSlider(slider => slider
-          .setLimits(50, 500, 50)
-          .setValue(this.plugin.settings.maxStopwords)
-          .setDynamicTooltip()
-          .onChange(async (value) => {
-            this.plugin.settings.maxStopwords = value;
-            await this.plugin.saveSettings();
-          }));
-
-      // Add multi-resolution explanation
-      const multiResExplanation = containerEl.createEl('div', { 
-        cls: 'setting-item-description',
-        text: 'Multi-resolution bloom filters combine multiple n-gram sizes for better accuracy. They automatically identify common words in your vault and work in any language.'
-      });
-    } else {
-      // Show regular bloom filter toggle if multi-resolution is not enabled
-      new Setting(containerEl)
-        .setName('Use Bloom Filter Similarity')
-        .setDesc('Uses a lightweight bloom filter algorithm for similarity calculation. Better for large vaults and mobile devices.')
-        .addToggle(toggle => toggle
-          .setValue(this.plugin.settings.useBloomFilter)
-          .onChange(async (value) => {
-            this.plugin.settings.useBloomFilter = value;
-            await this.plugin.saveSettings();
-            // Show/hide bloom filter settings based on toggle state
-            this.display();
-          }));
-
-      // Only show bloom filter settings if enabled
-      if (this.plugin.settings.useBloomFilter) {
-        new Setting(containerEl)
-          .setName('Bloom Filter Size')
-          .setDesc('Size of the bloom filter in bits (128-4096). Larger filters use more memory but reduce false positives.')
-          .addSlider(slider => slider
-            .setLimits(128, 4096, 128)
-            .setValue(this.plugin.settings.bloomFilterSize)
-            .setDynamicTooltip()
-            .onChange(async (value) => {
-              this.plugin.settings.bloomFilterSize = value;
-              await this.plugin.saveSettings();
-            }));
-          
-        // Add memory usage information
-        const memoryUsage = containerEl.createEl('div', { 
-          cls: 'setting-item-description',
-          text: `Memory usage: ${this.plugin.settings.bloomFilterSize / 8} bytes per document (${(this.plugin.settings.bloomFilterSize / 8 / 1024).toFixed(2)} KB)`
-        });
-
-        new Setting(containerEl)
-          .setName('Hash Functions')
-          .setDesc('Number of hash functions (1-5). More functions improve accuracy but increase computation time.')
-          .addSlider(slider => slider
-            .setLimits(1, 5, 1)
-            .setValue(this.plugin.settings.bloomFilterHashFunctions)
-            .setDynamicTooltip()
-            .onChange(async (value) => {
-              this.plugin.settings.bloomFilterHashFunctions = value;
-              await this.plugin.saveSettings();
-            }));
-        
-        // Add hash function explanation
-        const hashExplanation = containerEl.createEl('div', { 
-          cls: 'setting-item-description',
-          text: `With ${this.plugin.settings.bloomFilterHashFunctions} hash functions, false positive rate is approximately ${(this.estimateFalsePositiveRate(this.plugin.settings.bloomFilterSize, this.plugin.settings.bloomFilterHashFunctions, 100) * 100).toFixed(2)}% for 100 n-grams`
-        });
-
-        new Setting(containerEl)
-          .setName('N-gram Size')
-          .setDesc('Size of character n-grams (2-5). Larger n-grams capture more context but increase memory usage.')
-          .addSlider(slider => slider
-            .setLimits(2, 5, 1)
-            .setValue(this.plugin.settings.ngramSize)
-            .setDynamicTooltip()
-            .onChange(async (value) => {
-              this.plugin.settings.ngramSize = value;
-              await this.plugin.saveSettings();
-            }));
-            
-        // Add n-gram explanation
-        const ngramExplanation = containerEl.createEl('div', { 
-          cls: 'setting-item-description' 
-        });
-        
-        // Different explanations based on n-gram size
-        switch (this.plugin.settings.ngramSize) {
-          case 2:
-            ngramExplanation.setText("2-grams (bigrams) are best for small documents or when speed is critical. Example: 'hello' → 'he', 'el', 'll', 'lo'");
-            break;
-          case 3:
-            ngramExplanation.setText("3-grams (trigrams) offer a good balance between accuracy and performance. Example: 'hello' → 'hel', 'ell', 'llo'");
-            break;
-          case 4:
-            ngramExplanation.setText("4-grams (quadgrams) provide better specificity but require more memory. Example: 'hello' → 'hell', 'ello'");
-            break;
-          case 5:
-            ngramExplanation.setText("5-grams (pentagrams) capture more context but generate fewer matches. Example: 'hello' → 'hello'");
-            break;
-        }
-      }
     }
+
+    // Common words settings
+    new Setting(containerEl)
+      .setName('Common Words Threshold')
+      .setDesc('Words appearing in this percentage of documents are considered common (0.1-0.9)')
+      .addSlider(slider => slider
+        .setLimits(0.1, 0.9, 0.1)
+        .setValue(this.plugin.settings.commonWordsThreshold)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.commonWordsThreshold = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Maximum Stopwords')
+      .setDesc('Maximum number of common words to exclude (50-500)')
+      .addSlider(slider => slider
+        .setLimits(50, 500, 50)
+        .setValue(this.plugin.settings.maxStopwords)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.maxStopwords = value;
+          await this.plugin.saveSettings();
+        }));
+
+    // Add multi-resolution explanation
+    const multiResExplanation = containerEl.createEl('div', { 
+      cls: 'setting-item-description',
+      text: 'Related Notes uses multi-resolution bloom filters that combine multiple n-gram sizes for better accuracy. The plugin automatically identifies common words in your vault and works in any language.'
+    });
 
     // Reindexing Section
     containerEl.createEl('h3', { text: 'Indexing' });

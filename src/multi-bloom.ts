@@ -427,6 +427,10 @@ export class MultiResolutionBloomFilterProvider {
   private stopRequested = false;
   private isInitialized = false;
   
+  // Required properties for SimilarityProvider interface
+  public isCorpusSampled = false;
+  public onDemandComputationEnabled = true;
+  
   // Adaptive stopwords (reusing from BloomFilterSimilarityProvider)
   private readonly wordFrequencies = new Map<string, number>();
   private readonly wordDocumentCount = new Map<string, Set<string>>();
@@ -465,6 +469,9 @@ export class MultiResolutionBloomFilterProvider {
       this.minWordLength = config.minWordLength;
     }
     
+    // Set interface properties
+    this.onDemandComputationEnabled = config.onDemandComputationEnabled !== false;
+    
     log(`Created MultiResolutionBloomFilterProvider with:
       - n-gram sizes: [${this.ngramSizes.join(', ')}]
       - bloom sizes: [${this.bloomSizes.join(', ')}]
@@ -472,7 +479,8 @@ export class MultiResolutionBloomFilterProvider {
       - similarity threshold: ${this.similarityThreshold}
       - adaptive parameters: ${this.adaptiveParameters}
       - parameter update interval: ${this.parameterUpdateInterval} documents
-      - adaptive stopwords: true (max: ${this.maxStopwords}, threshold: ${this.commonWordsThreshold * 100}%)`);
+      - adaptive stopwords: true (max: ${this.maxStopwords}, threshold: ${this.commonWordsThreshold * 100}%)
+      - on-demand computation: ${this.onDemandComputationEnabled}`);
   }
   
   /**
@@ -537,6 +545,57 @@ export class MultiResolutionBloomFilterProvider {
    */
   stop(): void {
     this.stopRequested = true;
+  }
+  
+  /**
+   * Force a complete reindexing of all files
+   * @param onProgress Progress callback
+   */
+  async forceReindex(onProgress: (processed: number, total: number) => void): Promise<void> {
+    // Clear existing data
+    this.bloomFilters.clear();
+    this.documentNgrams.clear();
+    
+    // Reset stopwords detection
+    this.commonWords.clear();
+    this.commonWordsComputed = false;
+    this.totalDocuments = 0;
+    
+    // Reinitialize
+    this.isInitialized = false;
+    return this.initialize(onProgress);
+  }
+  
+  /**
+   * Check if a file is indexed
+   * @param file File to check
+   */
+  isFileIndexed(file: any): boolean {
+    return this.bloomFilters.has(file.path);
+  }
+  
+  /**
+   * Compute related notes on demand for a file
+   * @param file File to find related notes for
+   */
+  async computeRelatedNotesOnDemand(file: any): Promise<any[]> {
+    if (!this.isInitialized) {
+      return [];
+    }
+    
+    try {
+      // Process the file if not already indexed
+      if (!this.bloomFilters.has(file.path)) {
+        const content = await this.vault.cachedRead(file);
+        this.processDocument(file.path, content);
+      }
+      
+      // Get candidate files
+      return this.getCandidateFiles(file);
+    } catch (error) {
+      console.error(`Error computing related notes for ${file.path}:`, error);
+      return [];
+    }
   }
   
   /**

@@ -5,7 +5,7 @@
 
 import { ItemView, WorkspaceLeaf, TFile, MarkdownView } from 'obsidian';
 import RelatedNotesPlugin from './main';
-import { RelatedNote, SimilarityProviderV2 } from './core';
+import { RelatedNote } from './core';
 
 'use strict';
 
@@ -134,26 +134,22 @@ export class RelatedNotesView extends ItemView {
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
     headerEl.createEl('h4', { text: 'Related Notes' });
 
-    // Add algorithm badge if bloom filter is enabled
-    if (this.plugin.settings.useBloomFilter) {
-      const badgeEl = headerEl.createEl('span', { 
-        cls: 'related-notes-algorithm-badge',
-        text: 'Bloom Filter'
-      });
-      badgeEl.title = 'Using lightweight bloom filter algorithm for similarity';
+    // Add algorithm badge for bloom filter
+    const badgeEl = headerEl.createEl('span', { 
+      cls: 'related-notes-algorithm-badge',
+      text: 'Bloom Filter'
+    });
+    badgeEl.title = 'Using multi-resolution bloom filter algorithm for similarity';
       
       // Get corpus stats if available
-      if (this.plugin.similarityProvider instanceof SimilarityProviderV2) {
-        const provider = this.plugin.similarityProvider as SimilarityProviderV2;
-        if (provider.isCorpusSampled()) {
-          const totalFiles = this.app.vault.getMarkdownFiles().length;
-          const indexedFiles = provider.getFileVectorsCount();
-          const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
-          
-          badgeEl.setText(`Bloom Filter (${percentIndexed}%)`);
-        }
+      if (this.plugin.similarityProvider.isCorpusSampled) {
+        const totalFiles = this.app.vault.getMarkdownFiles().length;
+        const stats = this.plugin.similarityProvider.getStats();
+        const indexedFiles = stats.documentsIndexed || 0;
+        const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
+        
+        badgeEl.setText(`Bloom Filter (${percentIndexed}%)`);
       }
-    }
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;
@@ -209,34 +205,13 @@ export class RelatedNotesView extends ItemView {
     const isLargeVault = this.app.vault.getMarkdownFiles().length > 1000;
     
     // Show appropriate info banners
-    if (hasOnDemandNotes || (isLargeVault && !this.plugin.settings.useBloomFilter)) {
+    if (hasOnDemandNotes) {
       const infoEl = contentEl.createDiv({ cls: 'related-notes-info' });
       
-      if (hasOnDemandNotes) {
-        infoEl.createEl('p', {
-          text: 'Some notes were computed on-the-fly for better relevance',
-          cls: 'related-notes-info-text'
-        });
-      }
-      
-      // Show recommendation for large vaults not using bloom filter
-      if (isLargeVault && !this.plugin.settings.useBloomFilter) {
-        const recommendEl = infoEl.createEl('p', {
-          cls: 'related-notes-recommendation',
-          text: 'Large vault detected: Consider enabling the bloom filter in settings for better performance'
-        });
-        
-        // Add a settings button
-        const settingsBtn = recommendEl.createEl('button', {
-          cls: 'related-notes-settings-button',
-          text: 'Open Settings'
-        });
-        
-        settingsBtn.addEventListener('click', () => {
-          // Open plugin settings
-          this.plugin.openSettings();
-        });
-      }
+      infoEl.createEl('p', {
+        text: 'Some notes were computed on-the-fly for better relevance',
+        cls: 'related-notes-info-text'
+      });
     }
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
