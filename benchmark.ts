@@ -109,7 +109,18 @@ async function runBenchmark() {
         shingleSize: 2,
         batchSize: 10,
         priorityIndexSize: vaultSize, // Index all files
-        useBloomFilter: false
+        cacheFilePath: 'test-cache.json',
+        largeBands: 8,
+        largeRowsPerBand: 1,
+        largeCorpusThreshold: 1000,
+        minSimilarityThreshold: 0.15,
+        onDemandCacheSize: 1000,
+        onDemandComputationEnabled: true,
+        disableIncrementalUpdates: false,
+        useBloomFilter: false,
+        bloomFilterSize: 256,
+        bloomFilterHashFunctions: 3,
+        ngramSize: 3
       });
       
       const minhashStartTime = Date.now();
@@ -148,6 +159,14 @@ async function runBenchmark() {
         shingleSize: 2,
         batchSize: 10,
         priorityIndexSize: vaultSize, // Index all files
+        cacheFilePath: 'test-cache.json',
+        largeBands: 8,
+        largeRowsPerBand: 1,
+        largeCorpusThreshold: 1000,
+        minSimilarityThreshold: 0.15,
+        onDemandCacheSize: 1000,
+        onDemandComputationEnabled: true,
+        disableIncrementalUpdates: false,
         useBloomFilter: true,
         bloomFilterSize: 256,
         bloomFilterHashFunctions: 3,
@@ -201,7 +220,18 @@ async function runBenchmark() {
     shingleSize: 2,
     batchSize: 10,
     priorityIndexSize: 5000, // Index half the vault
-    useBloomFilter: false
+    cacheFilePath: 'test-cache.json',
+    largeBands: 8,
+    largeRowsPerBand: 1,
+    largeCorpusThreshold: 1000,
+    minSimilarityThreshold: 0.15,
+    onDemandCacheSize: 1000,
+    onDemandComputationEnabled: true,
+    disableIncrementalUpdates: false,
+    useBloomFilter: false,
+    bloomFilterSize: 256,
+    bloomFilterHashFunctions: 3,
+    ngramSize: 3
   });
   
   await minhashProvider.initialize(() => {});
@@ -220,6 +250,14 @@ async function runBenchmark() {
     shingleSize: 2,
     batchSize: 10,
     priorityIndexSize: 5000, // Index half the vault
+    cacheFilePath: 'test-cache.json',
+    largeBands: 8,
+    largeRowsPerBand: 1,
+    largeCorpusThreshold: 1000,
+    minSimilarityThreshold: 0.15,
+    onDemandCacheSize: 1000,
+    onDemandComputationEnabled: true,
+    disableIncrementalUpdates: false,
     useBloomFilter: true,
     bloomFilterSize: 256,
     bloomFilterHashFunctions: 3,

@@ -265,7 +265,12 @@ export class BloomFilterSimilarityProvider {
       - n-gram size: ${ngramSize}
       - bloom filter size: ${bloomFilterSize} bits
       - hash functions: ${hashFunctions}
-      - memory per document: ${bloomFilterSize / 8} bytes`);
+      - memory per document: ${bloomFilterSize / 8} bytes
+      - stopwords list: ${this.commonWords.size} common words excluded`);
+    
+    // Note: This implementation filters out extremely common words (stopwords)
+    // before generating n-grams. This focuses similarity matching on the most
+    // meaningful terms, improving relevance by ignoring words like "the", "and", etc.
   }
   
   /**
@@ -286,6 +291,8 @@ export class BloomFilterSimilarityProvider {
       ngramSize: this.ngramSize,
       bloomFilterSize: this.bloomFilterSize,
       hashFunctions: this.hashFunctions,
+      stopwordsCount: this.commonWords.size,
+      stopwordsEnabled: true,
       totalNgrams,
       avgNgramsPerDoc,
       memoryUsageBytes: memoryUsage,
@@ -331,6 +338,40 @@ export class BloomFilterSimilarityProvider {
   }
 
   /**
+   * List of extremely common words to exclude from n-gram generation
+   * These words occur so frequently that they don't provide meaningful similarity information
+   */
+  private readonly commonWords = new Set([
+    // Articles
+    'the', 'a', 'an',
+    // Conjunctions
+    'and', 'but', 'or', 'nor', 'so', 'yet', 'for',
+    // Prepositions
+    'in', 'on', 'at', 'by', 'to', 'of', 'with', 'from', 'about',
+    // Common verbs
+    'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+    'can', 'could', 'may', 'might', 'must', 'should',
+    // Pronouns
+    'i', 'me', 'my', 'mine', 'myself',
+    'you', 'your', 'yours', 'yourself',
+    'he', 'him', 'his', 'himself',
+    'she', 'her', 'hers', 'herself',
+    'it', 'its', 'itself',
+    'we', 'us', 'our', 'ours', 'ourselves',
+    'they', 'them', 'their', 'theirs', 'themselves',
+    'this', 'that', 'these', 'those', 'which', 'who', 'whom', 'whose',
+    // Common adverbs
+    'not', 'very', 'too', 'also', 'even', 'just', 'only', 'then',
+    // Numbers and quantities
+    'one', 'two', 'three', 'first', 'second', 'third', 'many', 'some', 'any', 'all', 'most',
+    // Time-related
+    'now', 'when', 'while', 'after', 'before', 'during',
+    // Other high-frequency words
+    'what', 'why', 'how', 'where', 'there', 'here', 'than', 'like'
+  ]);
+
+  /**
    * Extract character n-grams from text
    * @param text Input text
    * @returns Set of n-grams
@@ -341,9 +382,26 @@ export class BloomFilterSimilarityProvider {
     // Use the existing tokenize function from core
     const processed = tokenize(text);
     
-    // Extract character n-grams
+    // Extract character n-grams from meaningful words only
     const ngrams = new Set<string>();
-    const chars = processed.replace(/\s+/g, ' ').toLowerCase();
+    
+    // Split into words
+    const words = processed.toLowerCase().split(/\s+/);
+    
+    // Filter out extremely common words
+    const meaningfulWords = words.filter(word => 
+      word.length > 1 && !this.commonWords.has(word)
+    );
+    
+    if (DEBUG_MODE) {
+      const excludedCount = words.length - meaningfulWords.length;
+      const excludedPercent = (excludedCount / words.length * 100).toFixed(1);
+      log(`Filtered out ${excludedCount} common words (${excludedPercent}% of total)`);
+    }
+    
+    // Create n-grams from the filtered words
+    const filteredText = meaningfulWords.join(' ');
+    const chars = filteredText.replace(/\s+/g, ' ');
     
     for (let i = 0; i <= chars.length - this.ngramSize; i++) {
       ngrams.add(chars.substring(i, i + this.ngramSize));
