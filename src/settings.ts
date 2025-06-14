@@ -39,7 +39,7 @@ export const DEFAULT_SETTINGS: RelatedNotesSettings = {
   showStats: false,
   // Bloom filter settings (defaults)
   useBloomFilter: false,
-  bloomFilterSize: 256,
+  bloomFilterSize: 1024,
   bloomFilterHashFunctions: 3,
   ngramSize: 3
 };
