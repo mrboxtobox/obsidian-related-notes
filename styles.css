@@ -177,6 +177,35 @@ button:disabled {
   font-style: italic;
 }
 
+.related-notes-recommendation {
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--text-accent);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background-color: var(--background-modifier-border);
+  border-radius: 6px;
+}
+
+.related-notes-settings-button {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  white-space: nowrap;
+}
+
+.related-notes-settings-button:hover {
+  background-color: var(--interactive-accent-hover);
+}
+
 /* Item container styles */
 .related-note-item-container {
   display: flex;

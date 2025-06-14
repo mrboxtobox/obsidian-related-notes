@@ -141,6 +141,18 @@ export class RelatedNotesView extends ItemView {
         text: 'Bloom Filter'
       });
       badgeEl.title = 'Using lightweight bloom filter algorithm for similarity';
+      
+      // Get corpus stats if available
+      if (this.plugin.similarityProvider instanceof SimilarityProviderV2) {
+        const provider = this.plugin.similarityProvider as SimilarityProviderV2;
+        if (provider.isCorpusSampled()) {
+          const totalFiles = this.app.vault.getMarkdownFiles().length;
+          const indexedFiles = provider.getFileVectorsCount();
+          const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
+          
+          badgeEl.setText(`Bloom Filter (${percentIndexed}%)`);
+        }
+      }
     }
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
@@ -193,12 +205,39 @@ export class RelatedNotesView extends ItemView {
     // Check if we have any on-demand computed notes
     const hasOnDemandNotes = notes.some(note => note.isPreIndexed === false || note.computedOnDemand);
 
-    if (hasOnDemandNotes) {
+    // Check if we're working with a large vault
+    const isLargeVault = this.app.vault.getMarkdownFiles().length > 1000;
+    
+    // Show appropriate info banners
+    if (hasOnDemandNotes || (isLargeVault && !this.plugin.settings.useBloomFilter)) {
       const infoEl = contentEl.createDiv({ cls: 'related-notes-info' });
-      infoEl.createEl('p', {
-        text: 'Some notes were computed on-the-fly for better relevance',
-        cls: 'related-notes-info-text'
-      });
+      
+      if (hasOnDemandNotes) {
+        infoEl.createEl('p', {
+          text: 'Some notes were computed on-the-fly for better relevance',
+          cls: 'related-notes-info-text'
+        });
+      }
+      
+      // Show recommendation for large vaults not using bloom filter
+      if (isLargeVault && !this.plugin.settings.useBloomFilter) {
+        const recommendEl = infoEl.createEl('p', {
+          cls: 'related-notes-recommendation',
+          text: 'Large vault detected: Consider enabling the bloom filter in settings for better performance'
+        });
+        
+        // Add a settings button
+        const settingsBtn = recommendEl.createEl('button', {
+          cls: 'related-notes-settings-button',
+          text: 'Open Settings'
+        });
+        
+        settingsBtn.addEventListener('click', () => {
+          // Open plugin settings
+          const settingsTabId = this.plugin.id;
+          this.app.setting.openTabById(settingsTabId);
+        });
+      }
     }
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });

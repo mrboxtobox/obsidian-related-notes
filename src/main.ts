@@ -148,11 +148,43 @@ export default class RelatedNotesPlugin extends Plugin {
       }
     }
 
-    if (this.similarityProvider instanceof SimilarityProviderV2 && this.similarityProvider.isCorpusSampled()) {
-      this.statusBarItem.setText("⚠️ Using a sample of your notes");
-      this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
-      this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
+    if (this.similarityProvider instanceof SimilarityProviderV2) {
+      const provider = this.similarityProvider as SimilarityProviderV2;
+      
+      if (provider.isCorpusSampled()) {
+        // For very large vaults using sampling
+        const totalFiles = this.app.vault.getMarkdownFiles().length;
+        const indexedFiles = provider.getFileVectorsCount();
+        const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
+        
+        if (this.settings.useBloomFilter) {
+          // Using bloom filter (optimized for large vaults)
+          this.statusBarItem.setText(`📊 Using bloom filter (${percentIndexed}% indexed)`);
+          this.statusBarItem.setAttribute('aria-label', 
+            `Bloom filter enabled: Using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
+          this.statusBarItem.setAttribute('title', 
+            `Bloom filter is optimized for large vaults. Currently using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes.`);
+        } else {
+          // Using MinHash with sampling
+          this.statusBarItem.setText(`⚠️ Using a sample of your notes (${percentIndexed}%)`);
+          this.statusBarItem.setAttribute('aria-label', 
+            `For better performance, Related Notes is using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
+          this.statusBarItem.setAttribute('title', 
+            `Your vault is large. For better performance, only ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes are indexed. Enable bloom filter in settings for better large vault support.`);
+        }
+      } else if (this.settings.useBloomFilter) {
+        // Using bloom filter with full indexing
+        this.statusBarItem.setText("🔍 Bloom filter ready");
+        this.statusBarItem.setAttribute('aria-label', 'Using efficient bloom filter algorithm');
+        this.statusBarItem.setAttribute('title', 'Using bloom filter algorithm for lightweight similarity calculations');
+      } else {
+        // Normal operation
+        this.statusBarItem.setText("Ready to find related notes");
+        this.statusBarItem.removeAttribute('aria-label');
+        this.statusBarItem.removeAttribute('title');
+      }
     } else {
+      // Fallback for other providers
       this.statusBarItem.setText("Ready to find related notes");
       this.statusBarItem.removeAttribute('aria-label');
       this.statusBarItem.removeAttribute('title');
@@ -242,13 +274,65 @@ export default class RelatedNotesPlugin extends Plugin {
         this.statusBarItem.setText(message);
       });
 
-      // Update status bar after re-indexing
-      if (this.similarityProvider.isCorpusSampled()) {
-        this.statusBarItem.setText("⚠️ Using a sample of your notes");
-        this.statusBarItem.setAttribute('aria-label', 'For better performance, Related Notes is using a sample of up to 10000 notes');
-        this.statusBarItem.setAttribute('title', 'For better performance, Related Notes is using a sample of up to 10000 notes');
+      // Update status bar after re-indexing with detailed information
+      if (this.similarityProvider instanceof SimilarityProviderV2) {
+        const provider = this.similarityProvider as SimilarityProviderV2;
+        
+        if (provider.isCorpusSampled()) {
+          // For very large vaults using sampling
+          const totalFiles = this.app.vault.getMarkdownFiles().length;
+          const indexedFiles = provider.getFileVectorsCount();
+          const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
+          
+          if (this.settings.useBloomFilter) {
+            // Using bloom filter with sampling
+            this.statusBarItem.setText(`📊 Re-indexed with bloom filter (${percentIndexed}%)`);
+            setTimeout(() => {
+              this.statusBarItem.setText(`📊 Using bloom filter (${percentIndexed}% indexed)`);
+            }, 3000);
+            
+            this.statusBarItem.setAttribute('aria-label', 
+              `Bloom filter enabled: Using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
+            this.statusBarItem.setAttribute('title', 
+              `Bloom filter is optimized for large vaults. Currently using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes.`);
+          } else {
+            // Using MinHash with sampling
+            this.statusBarItem.setText(`⚠️ Re-indexed ${percentIndexed}% of notes`);
+            setTimeout(() => {
+              this.statusBarItem.setText(`⚠️ Using a sample of your notes (${percentIndexed}%)`);
+            }, 3000);
+            
+            this.statusBarItem.setAttribute('aria-label', 
+              `For better performance, Related Notes is using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
+            this.statusBarItem.setAttribute('title', 
+              `Your vault is large. For better performance, only ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes are indexed. Enable bloom filter in settings for better large vault support.`);
+          }
+        } else if (this.settings.useBloomFilter) {
+          // Using bloom filter with full indexing
+          this.statusBarItem.setText("✅ Re-indexed with bloom filter");
+          setTimeout(() => {
+            this.statusBarItem.setText("🔍 Bloom filter ready");
+          }, 3000);
+          
+          this.statusBarItem.setAttribute('aria-label', 'Using efficient bloom filter algorithm');
+          this.statusBarItem.setAttribute('title', 'Using bloom filter algorithm for lightweight similarity calculations');
+        } else {
+          // Normal operation
+          this.statusBarItem.setText("✅ Re-indexing complete");
+          setTimeout(() => {
+            this.statusBarItem.setText("Ready to find related notes");
+          }, 3000);
+          
+          this.statusBarItem.removeAttribute('aria-label');
+          this.statusBarItem.removeAttribute('title');
+        }
       } else {
-        this.statusBarItem.setText("Ready to find related notes");
+        // Fallback for other providers
+        this.statusBarItem.setText("Re-indexing complete");
+        setTimeout(() => {
+          this.statusBarItem.setText("Ready to find related notes");
+        }, 3000);
+        
         this.statusBarItem.removeAttribute('aria-label');
         this.statusBarItem.removeAttribute('title');
       }
