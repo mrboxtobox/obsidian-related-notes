@@ -7,6 +7,15 @@
 
 import { tokenize } from './core';
 
+// Logger for bloom filter operations
+const DEBUG_MODE = true;
+
+function log(...args: any[]) {
+  if (DEBUG_MODE) {
+    console.log('[BloomFilter]', ...args);
+  }
+}
+
 /**
  * BloomFilter class that implements a lightweight bloom filter
  * Optimized for memory efficiency while maintaining reasonable accuracy
@@ -15,6 +24,7 @@ export class BloomFilter {
   private readonly bitArray: Uint32Array;
   private readonly size: number;
   private readonly hashFunctions: number;
+  private readonly addedItems: Set<string> = new Set(); // Track added items for debugging
 
   /**
    * Creates a new bloom filter
@@ -26,6 +36,44 @@ export class BloomFilter {
     this.size = Math.ceil(size / 32) * 32;
     this.bitArray = new Uint32Array(this.size / 32);
     this.hashFunctions = hashFunctions;
+    
+    log(`Created bloom filter with ${this.size} bits and ${hashFunctions} hash functions`);
+    log(`Memory usage: ${this.size / 8} bytes (${this.size / 8 / 1024} KB)`);
+  }
+  
+  /**
+   * Gets the actual size of the bloom filter in bits
+   */
+  public getSize(): number {
+    return this.size;
+  }
+  
+  /**
+   * Gets the number of hash functions
+   */
+  public getHashFunctions(): number {
+    return this.hashFunctions;
+  }
+  
+  /**
+   * Gets the memory usage in bytes
+   */
+  public getMemoryUsage(): number {
+    return this.size / 8;
+  }
+  
+  /**
+   * Gets the estimated false positive rate based on current usage
+   */
+  public getFalsePositiveRate(): number {
+    const m = this.size; // Filter size in bits
+    const k = this.hashFunctions; // Number of hash functions
+    const n = this.addedItems.size; // Number of items added
+    
+    // False positive probability formula: (1 - e^(-k*n/m))^k
+    const power = -k * n / m;
+    const innerTerm = 1 - Math.exp(power);
+    return Math.pow(innerTerm, k);
   }
 
   /**
@@ -33,7 +81,13 @@ export class BloomFilter {
    * @param item The item to add
    */
   add(item: string): void {
+    this.addedItems.add(item); // Track for debugging
+    
     const hashes = this.getHashes(item);
+    if (DEBUG_MODE && item.length < 10) { // Only log short items to avoid spam
+      log(`Adding item: "${item}" with hashes:`, hashes.map(h => h % this.size));
+    }
+    
     for (const hash of hashes) {
       const bitIndex = hash % this.size;
       const arrayIndex = Math.floor(bitIndex / 32);
@@ -131,17 +185,48 @@ export class BloomFilter {
 
     let intersectionBits = 0;
     let unionBits = 0;
+    let thisBits = 0;
+    let otherBits = 0;
 
     for (let i = 0; i < this.bitArray.length; i++) {
       const intersection = this.bitArray[i] & other.bitArray[i];
       const union = this.bitArray[i] | other.bitArray[i];
       
+      // Count bits in each array
+      const thisCount = countBits(this.bitArray[i]);
+      const otherCount = countBits(other.bitArray[i]);
+      
       // Count bits in intersection and union
       intersectionBits += countBits(intersection);
       unionBits += countBits(union);
+      
+      thisBits += thisCount;
+      otherBits += otherCount;
     }
 
-    return unionBits === 0 ? 0 : intersectionBits / unionBits;
+    const similarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
+    
+    if (DEBUG_MODE) {
+      log(
+        `Similarity details:
+        - Filter 1: ${thisBits} bits set (${thisBits / this.size * 100}% of capacity)
+        - Filter 2: ${otherBits} bits set (${otherBits / this.size * 100}% of capacity)
+        - Intersection: ${intersectionBits} bits
+        - Union: ${unionBits} bits
+        - Items in filter 1: ${this.addedItems.size}
+        - Items in filter 2: ${other.addedItems.size}
+        - Common items (estimated): ${Math.round(intersectionBits / (this.hashFunctions + other.hashFunctions) * 2)}
+        - Jaccard similarity: ${(similarity * 100).toFixed(2)}%`
+      );
+      
+      // Log a sample of items that were added to both filters
+      const commonItems = [...this.addedItems].filter(item => other.addedItems.has(item));
+      if (commonItems.length > 0) {
+        log(`First 5 common items: ${commonItems.slice(0, 5).join(', ')}`);
+      }
+    }
+
+    return similarity;
   }
 }
 
@@ -162,15 +247,51 @@ export class BloomFilterSimilarityProvider {
   private readonly ngramSize: number;
   private readonly bloomFilterSize: number;
   private readonly hashFunctions: number;
+  private readonly documentNgrams = new Map<string, Set<string>>(); // Track n-grams for debugging
+  private readonly config: any;
 
   constructor(
     ngramSize: number = 3,
     bloomFilterSize: number = 256,
-    hashFunctions: number = 3
+    hashFunctions: number = 3,
+    config: any = {}
   ) {
     this.ngramSize = ngramSize;
     this.bloomFilterSize = bloomFilterSize;
     this.hashFunctions = hashFunctions;
+    this.config = config;
+    
+    log(`Created BloomFilterSimilarityProvider with:
+      - n-gram size: ${ngramSize}
+      - bloom filter size: ${bloomFilterSize} bits
+      - hash functions: ${hashFunctions}
+      - memory per document: ${bloomFilterSize / 8} bytes`);
+  }
+  
+  /**
+   * Get statistics about the bloom filter similarity provider
+   */
+  public getStats(): any {
+    const totalNgrams = Array.from(this.documentNgrams.values())
+      .reduce((sum, ngrams) => sum + ngrams.size, 0);
+    
+    const avgNgramsPerDoc = this.documentNgrams.size > 0 
+      ? totalNgrams / this.documentNgrams.size 
+      : 0;
+      
+    const memoryUsage = this.bloomFilters.size * this.bloomFilterSize / 8;
+    
+    return {
+      documentsIndexed: this.bloomFilters.size,
+      ngramSize: this.ngramSize,
+      bloomFilterSize: this.bloomFilterSize,
+      hashFunctions: this.hashFunctions,
+      totalNgrams,
+      avgNgramsPerDoc,
+      memoryUsageBytes: memoryUsage,
+      memoryUsageKB: memoryUsage / 1024,
+      memoryUsageMB: memoryUsage / (1024 * 1024)
+    };
   }
 
   /**
@@ -179,14 +300,34 @@ export class BloomFilterSimilarityProvider {
    * @param text Document text
    */
   processDocument(docId: string, text: string): void {
+    const startTime = performance.now();
+    
+    // Create a bloom filter with the specified size and hash functions
     const filter = new BloomFilter(this.bloomFilterSize, this.hashFunctions);
     const ngrams = this.extractNgrams(text);
     
+    // Store n-grams for debugging
+    this.documentNgrams.set(docId, ngrams);
+    
+    // Add each n-gram to the bloom filter
     for (const ngram of ngrams) {
       filter.add(ngram);
     }
     
+    // Store the bloom filter
     this.bloomFilters.set(docId, filter);
+    
+    // Log processing time and stats
+    const endTime = performance.now();
+    
+    if (DEBUG_MODE) {
+      log(`Processed document ${docId}:
+        - Length: ${text.length} characters
+        - Extracted ${ngrams.size} unique n-grams
+        - Filter size: ${this.bloomFilterSize} bits (${this.bloomFilterSize / 8} bytes)
+        - Filter saturation: ${filter.getFalsePositiveRate().toFixed(4)}
+        - Processing time: ${(endTime - startTime).toFixed(2)}ms`);
+    }
   }
 
   /**
@@ -195,6 +336,8 @@ export class BloomFilterSimilarityProvider {
    * @returns Set of n-grams
    */
   private extractNgrams(text: string): Set<string> {
+    const startTime = performance.now();
+    
     // Use the existing tokenize function from core
     const processed = tokenize(text);
     
@@ -204,6 +347,19 @@ export class BloomFilterSimilarityProvider {
     
     for (let i = 0; i <= chars.length - this.ngramSize; i++) {
       ngrams.add(chars.substring(i, i + this.ngramSize));
+    }
+    
+    const endTime = performance.now();
+    
+    if (DEBUG_MODE) {
+      // Only log if we have few enough n-grams to display
+      const sampleSize = Math.min(10, ngrams.size);
+      if (ngrams.size < 100) {
+        const sample = Array.from(ngrams).slice(0, sampleSize);
+        log(`Extracted ${ngrams.size} n-grams in ${(endTime - startTime).toFixed(2)}ms. Sample: ${sample.join(', ')}`);
+      } else {
+        log(`Extracted ${ngrams.size} n-grams in ${(endTime - startTime).toFixed(2)}ms`);
+      }
     }
     
     return ngrams;
@@ -216,14 +372,49 @@ export class BloomFilterSimilarityProvider {
    * @returns Similarity score between 0 and 1
    */
   calculateSimilarity(docId1: string, docId2: string): number {
+    const startTime = performance.now();
+    
+    // Get the bloom filters for both documents
     const filter1 = this.bloomFilters.get(docId1);
     const filter2 = this.bloomFilters.get(docId2);
     
+    // If either filter is missing, return 0
     if (!filter1 || !filter2) {
+      if (DEBUG_MODE) {
+        if (!filter1) log(`Document ${docId1} not found`);
+        if (!filter2) log(`Document ${docId2} not found`);
+      }
       return 0;
     }
     
-    return filter1.similarity(filter2);
+    // Calculate the actual Jaccard similarity
+    const similarity = filter1.similarity(filter2);
+    
+    const endTime = performance.now();
+    
+    if (DEBUG_MODE) {
+      // Calculate the actual n-gram overlap for comparison with the bloom filter estimation
+      const ngrams1 = this.documentNgrams.get(docId1);
+      const ngrams2 = this.documentNgrams.get(docId2);
+      
+      if (ngrams1 && ngrams2) {
+        // Calculate actual Jaccard similarity of n-grams
+        const intersection = new Set([...ngrams1].filter(x => ngrams2.has(x)));
+        const union = new Set([...ngrams1, ...ngrams2]);
+        const actualSimilarity = intersection.size / union.size;
+        
+        log(`Similarity calculation for ${docId1} and ${docId2}:
+          - Bloom filter similarity: ${(similarity * 100).toFixed(2)}%
+          - Actual n-gram Jaccard similarity: ${(actualSimilarity * 100).toFixed(2)}%
+          - Estimation error: ${Math.abs(similarity - actualSimilarity).toFixed(4)}
+          - Common n-grams: ${intersection.size} of ${ngrams1.size}/${ngrams2.size}
+          - Calculation time: ${(endTime - startTime).toFixed(2)}ms`);
+      } else {
+        log(`Similarity calculation for ${docId1} and ${docId2}: ${(similarity * 100).toFixed(2)}%`);
+      }
+    }
+    
+    return similarity;
   }
 
   /**
@@ -238,23 +429,47 @@ export class BloomFilterSimilarityProvider {
     limit: number = 10,
     threshold: number = 0.1
   ): [string, number][] {
+    const startTime = performance.now();
+    
+    // Get the bloom filter for the query document
     const queryFilter = this.bloomFilters.get(queryDocId);
-    if (!queryFilter) return [];
+    if (!queryFilter) {
+      if (DEBUG_MODE) log(`Query document ${queryDocId} not found`);
+      return [];
+    }
     
     const results: [string, number][] = [];
+    let comparisons = 0;
     
+    // Compare with all other documents
     for (const [docId, filter] of this.bloomFilters.entries()) {
-      if (docId === queryDocId) continue;
+      if (docId === queryDocId) continue; // Skip self-comparison
       
+      comparisons++;
       const similarity = queryFilter.similarity(filter);
+      
       if (similarity >= threshold) {
         results.push([docId, similarity]);
       }
     }
     
-    return results
+    // Sort by similarity and limit results
+    const sortedResults = results
       .sort((a, b) => b[1] - a[1])
       .slice(0, limit);
+    
+    const endTime = performance.now();
+    
+    if (DEBUG_MODE) {
+      log(`Found ${sortedResults.length} similar documents to ${queryDocId}:
+        - Compared with ${comparisons} documents
+        - Threshold: ${threshold}
+        - Time: ${(endTime - startTime).toFixed(2)}ms
+        - Top matches: ${sortedResults.map(([id, sim]) => 
+            `${id} (${(sim * 100).toFixed(1)}%)`).join(', ')}`);
+    }
+    
+    return sortedResults;
   }
 
   /**

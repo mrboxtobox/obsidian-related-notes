@@ -52,6 +52,20 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
+  
+  /**
+   * Estimates the false positive rate of a bloom filter
+   * @param m Size of the filter in bits
+   * @param k Number of hash functions
+   * @param n Number of elements in the filter
+   * @returns Estimated false positive rate (0-1)
+   */
+  private estimateFalsePositiveRate(m: number, k: number, n: number): number {
+    // False positive probability formula: (1 - e^(-k*n/m))^k
+    const power = -k * n / m;
+    const innerTerm = 1 - Math.exp(power);
+    return Math.pow(innerTerm, k);
+  }
 
   display(): void {
     const { containerEl } = this;
@@ -93,15 +107,21 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     if (this.plugin.settings.useBloomFilter) {
       new Setting(containerEl)
         .setName('Bloom Filter Size')
-        .setDesc('Size of the bloom filter in bits (128-1024). Larger filters use more memory but reduce false positives.')
+        .setDesc('Size of the bloom filter in bits (128-4096). Larger filters use more memory but reduce false positives.')
         .addSlider(slider => slider
-          .setLimits(128, 1024, 128)
+          .setLimits(128, 4096, 128)
           .setValue(this.plugin.settings.bloomFilterSize)
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.bloomFilterSize = value;
             await this.plugin.saveSettings();
           }));
+          
+      // Add memory usage information
+      const memoryUsage = containerEl.createEl('div', { 
+        cls: 'setting-item-description',
+        text: `Memory usage: ${this.plugin.settings.bloomFilterSize / 8} bytes per document (${(this.plugin.settings.bloomFilterSize / 8 / 1024).toFixed(2)} KB)`
+      });
 
       new Setting(containerEl)
         .setName('Hash Functions')
@@ -114,6 +134,12 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
             this.plugin.settings.bloomFilterHashFunctions = value;
             await this.plugin.saveSettings();
           }));
+      
+      // Add hash function explanation
+      const hashExplanation = containerEl.createEl('div', { 
+        cls: 'setting-item-description',
+        text: `With ${this.plugin.settings.bloomFilterHashFunctions} hash functions, false positive rate is approximately ${(this.estimateFalsePositiveRate(this.plugin.settings.bloomFilterSize, this.plugin.settings.bloomFilterHashFunctions, 100) * 100).toFixed(2)}% for 100 n-grams`
+      });
 
       new Setting(containerEl)
         .setName('N-gram Size')
@@ -126,6 +152,27 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
             this.plugin.settings.ngramSize = value;
             await this.plugin.saveSettings();
           }));
+          
+      // Add n-gram explanation
+      const ngramExplanation = containerEl.createEl('div', { 
+        cls: 'setting-item-description' 
+      });
+      
+      // Different explanations based on n-gram size
+      switch (this.plugin.settings.ngramSize) {
+        case 2:
+          ngramExplanation.setText("2-grams (bigrams) are best for small documents or when speed is critical. Example: 'hello' → 'he', 'el', 'll', 'lo'");
+          break;
+        case 3:
+          ngramExplanation.setText("3-grams (trigrams) offer a good balance between accuracy and performance. Example: 'hello' → 'hel', 'ell', 'llo'");
+          break;
+        case 4:
+          ngramExplanation.setText("4-grams (quadgrams) provide better specificity but require more memory. Example: 'hello' → 'hell', 'ello'");
+          break;
+        case 5:
+          ngramExplanation.setText("5-grams (pentagrams) capture more context but generate fewer matches. Example: 'hello' → 'hello'");
+          break;
+      }
     }
 
     // Reindexing Section
