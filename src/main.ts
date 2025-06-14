@@ -1,5 +1,5 @@
 import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace, App } from 'obsidian';
-import { RelatedNote, SimilarityProvider, SimilarityProviderV2 } from './core';
+import { RelatedNote, SimilarityProvider } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
 import { MultiResolutionBloomFilterProvider } from './multi-bloom';
@@ -90,49 +90,33 @@ export default class RelatedNotesPlugin extends Plugin {
     this.isInitialized = false;
     const configDir = this.app.vault.configDir;
 
-    // Determine which similarity provider to use
-    if (this.settings.useMultiResolutionBloom || 
-        this.settings.similarityProvider === 'multi-bloom') {
-      // Use multi-resolution bloom filter provider
-      this.similarityProvider = new MultiResolutionBloomFilterProvider(this.app.vault, {
-        ngramSizes: this.settings.multiResolutionNgramSizes,
-        bloomSizes: this.settings.multiResolutionBloomSizes,
-        hashFunctions: this.settings.multiResolutionHashFunctions,
-        adaptiveParameters: this.settings.adaptiveParameters,
-        similarityThreshold: this.settings.similarityThreshold,
-        commonWordsThreshold: this.settings.commonWordsThreshold,
-        maxStopwords: this.settings.maxStopwords,
-        priorityIndexSize: this.settings.priorityIndexSize,
-        batchSize: this.settings.batchSize,
-        onDemandComputationEnabled: this.settings.onDemandComputationEnabled
+    // Delete any old cache files from previous implementations
+    try {
+      const oldCachePath = `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`;
+      await this.app.vault.adapter.remove(oldCachePath).catch(() => {
+        // Ignore error if file doesn't exist
       });
-    } else {
-      // Use original similarity provider
-      this.similarityProvider = new SimilarityProviderV2(this.app.vault, {
-        numBands: 5,
-        rowsPerBand: 2,
-        shingleSize: 2,
-        batchSize: this.settings.batchSize,
-        priorityIndexSize: this.settings.priorityIndexSize,
-        cacheFilePath: `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
-        // Adaptive parameters for large corpora
-        largeBands: 8,       // More bands for large corpora = more candidates
-        largeRowsPerBand: 1, // Fewer rows per band = more lenient matching
-        largeCorpusThreshold: 1000, // When to consider a corpus "large"
-        minSimilarityThreshold: this.settings.similarityThreshold / 2, // Lower threshold for large corpora
-        onDemandCacheSize: 1000, // Number of on-demand computations to cache
-        onDemandComputationEnabled: this.settings.onDemandComputationEnabled,
-        disableIncrementalUpdates: this.settings.disableIncrementalUpdates,
-        // Bloom filter settings
-        useBloomFilter: this.settings.useBloomFilter,
-        bloomFilterSize: this.settings.bloomFilterSize,
-        bloomFilterHashFunctions: this.settings.bloomFilterHashFunctions,
-        ngramSize: this.settings.ngramSize
-      });
+      console.log('Removed old similarity cache (if it existed)');
+    } catch (error) {
+      // Ignore errors when trying to delete old cache
     }
 
+    // Use multi-resolution bloom filter provider
+    this.similarityProvider = new MultiResolutionBloomFilterProvider(this.app.vault, {
+      ngramSizes: this.settings.ngramSizes,
+      bloomSizes: this.settings.bloomSizes,
+      hashFunctions: this.settings.hashFunctions,
+      adaptiveParameters: this.settings.adaptiveParameters,
+      similarityThreshold: this.settings.similarityThreshold,
+      commonWordsThreshold: this.settings.commonWordsThreshold,
+      maxStopwords: this.settings.maxStopwords,
+      priorityIndexSize: this.settings.priorityIndexSize,
+      batchSize: this.settings.batchSize,
+      onDemandComputationEnabled: this.settings.onDemandComputationEnabled
+    });
+
     // Show initial status
-    this.statusBarItem.setText("Ready (indexing in background)");
+    this.statusBarItem.setText("Indexing notes with bloom filter...");
 
     // Use setTimeout to defer heavy initialization to the next event loop
     // This prevents UI blocking during startup
@@ -147,7 +131,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Initialize with progress reporting and smooth transitions
     await this.similarityProvider.initialize((processed, total) => {
-      const percentage = processed;
+      const percentage = Math.round((processed / total) * 100);
       let message = "";
       let phase = "";
 
@@ -168,58 +152,16 @@ export default class RelatedNotesPlugin extends Plugin {
       this.statusBarItem.setText(message);
     });
 
-    // Clear on-demand cache after initialization to ensure fresh data
-    if (this.similarityProvider instanceof SimilarityProviderV2) {
-      const provider = this.similarityProvider as SimilarityProviderV2;
-      // The on-demand cache is already cleared during initialization, but we'll ensure it's clean
-      // by updating file access times for all files to prioritize them correctly
-      const allFiles = this.app.vault.getMarkdownFiles();
-      for (const file of allFiles) {
-        provider.updateFileAccessTime(file);
-      }
-    }
-
-    if (this.similarityProvider instanceof SimilarityProviderV2) {
-      const provider = this.similarityProvider as SimilarityProviderV2;
-      
-      if (provider.isCorpusSampled()) {
-        // For very large vaults using sampling
-        const totalFiles = this.app.vault.getMarkdownFiles().length;
-        const indexedFiles = provider.getFileVectorsCount();
-        const percentIndexed = Math.round((indexedFiles / totalFiles) * 100);
-        
-        if (this.settings.useBloomFilter) {
-          // Using bloom filter (optimized for large vaults)
-          this.statusBarItem.setText(`Using bloom filter (${percentIndexed}% indexed)`);
-          this.statusBarItem.setAttribute('aria-label', 
-            `Bloom filter enabled: Using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
-          this.statusBarItem.setAttribute('title', 
-            `Bloom filter is optimized for large vaults. Currently using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes.`);
-        } else {
-          // Using MinHash with sampling
-          this.statusBarItem.setText(`Using a sample of your notes (${percentIndexed}%)`);
-          this.statusBarItem.setAttribute('aria-label', 
-            `For better performance, Related Notes is using ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes`);
-          this.statusBarItem.setAttribute('title', 
-            `Your vault is large. For better performance, only ${indexedFiles.toLocaleString()} of ${totalFiles.toLocaleString()} notes are indexed. Enable bloom filter in settings for better large vault support.`);
-        }
-      } else if (this.settings.useBloomFilter) {
-        // Using bloom filter with full indexing
-        this.statusBarItem.setText("Bloom filter ready");
-        this.statusBarItem.setAttribute('aria-label', 'Using efficient bloom filter algorithm');
-        this.statusBarItem.setAttribute('title', 'Using bloom filter algorithm for lightweight similarity calculations');
-      } else {
-        // Normal operation
-        this.statusBarItem.setText("Ready to find related notes");
-        this.statusBarItem.removeAttribute('aria-label');
-        this.statusBarItem.removeAttribute('title');
-      }
-    } else {
-      // Fallback for other providers
-      this.statusBarItem.setText("Ready to find related notes");
-      this.statusBarItem.removeAttribute('aria-label');
-      this.statusBarItem.removeAttribute('title');
-    }
+    // Get stats for status bar
+    const stats = this.similarityProvider.getStats();
+    const totalFiles = this.app.vault.getMarkdownFiles().length;
+    const indexedFiles = stats.documentsIndexed || 0;
+    
+    // Set status bar with bloom filter info
+    this.statusBarItem.setText("Bloom filter ready");
+    this.statusBarItem.setAttribute('aria-label', 'Using efficient bloom filter algorithm');
+    this.statusBarItem.setAttribute('title', 'Using multi-resolution bloom filter for accurate similarity calculations');
+    
     this.isInitialized = true;
   }
 
@@ -229,9 +171,6 @@ export default class RelatedNotesPlugin extends Plugin {
    * @throws Error if indexing is cancelled
    */
   public async forceReindex(): Promise<void> {
-    if (!(this.similarityProvider instanceof SimilarityProviderV2)) {
-      return;
-    }
 
     // Check if already reindexing or initial indexing is still in progress
     if (this.isReindexing) {

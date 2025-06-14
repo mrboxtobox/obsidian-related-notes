@@ -198,21 +198,8 @@ export class RelatedNotesView extends ItemView {
       return;
     }
 
-    // Check if we have any on-demand computed notes
-    const hasOnDemandNotes = notes.some(note => note.isPreIndexed === false || note.computedOnDemand);
-
     // Check if we're working with a large vault
     const isLargeVault = this.app.vault.getMarkdownFiles().length > 1000;
-    
-    // Show appropriate info banners
-    if (hasOnDemandNotes) {
-      const infoEl = contentEl.createDiv({ cls: 'related-notes-info' });
-      
-      infoEl.createEl('p', {
-        text: 'Some notes were computed on-the-fly for better relevance',
-        cls: 'related-notes-info-text'
-      });
-    }
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
 
@@ -236,14 +223,7 @@ export class RelatedNotesView extends ItemView {
       nameEl.textContent = relatedFile.basename;
       linkContainer.appendChild(nameEl);
 
-      // Add indicator for on-demand computed notes
-      if (note.isPreIndexed === false || note.computedOnDemand) {
-        const indicatorEl = document.createElement('span');
-        indicatorEl.className = 'related-note-indicator';
-        indicatorEl.textContent = '(on-demand)';
-        indicatorEl.title = 'This note was computed on-the-fly';
-        linkContainer.appendChild(indicatorEl);
-      }
+      // No on-demand indicator needed anymore
 
       // Add click handler to open the related file
       linkContainer.addEventListener('click', async () => {

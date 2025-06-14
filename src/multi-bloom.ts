@@ -196,11 +196,17 @@ export class MultiResolutionBloomFilter {
     const ngrams = new Set<string>();
     
     // Prepare text by removing extra spaces
-    const chars = processed.toLowerCase().replace(/\s+/g, ' ');
+    // Use a Unicode-aware normalization to ensure consistent handling across languages
+    const chars = processed.toLowerCase().normalize('NFC').replace(/\s+/g, ' ');
     
-    // Extract character n-grams
-    for (let i = 0; i <= chars.length - ngramSize; i++) {
-      ngrams.add(chars.substring(i, i + ngramSize));
+    // Extract character n-grams with Unicode awareness
+    // This will properly handle multi-byte characters in languages like Chinese, Japanese, etc.
+    for (let i = 0; i <= [...chars].length - ngramSize; i++) {
+      // Use Array.from to properly handle Unicode characters
+      const ngram = [...chars].slice(i, i + ngramSize).join('');
+      if (ngram.length === ngramSize) {
+        ngrams.add(ngram);
+      }
     }
     
     return ngrams;

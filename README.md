@@ -4,15 +4,15 @@ Uncover connections between notes in your vault using this plugin.
 
 ## Features
 
-- 🔍 Automatically analyzes note content using proven similarity algorithms
-- 📊 MinHash LSH + BM25 (Best Matching 25) for fast term-frequency based matching
-- 🔄 Adaptive similarity detection for large note collections
+- 🔍 Automatically analyzes note content using multi-resolution Bloom filters
+- 🌏 Works with any language, including full Unicode support for CJK and other non-Latin scripts
+- 🧠 Adaptive stopwords detection that automatically identifies common words in any language
+- 🔄 Self-tuning parameters that adjust to your vault's characteristics
 - 🔗 One-click linking between related notes
 - 📈 Visual quality indicators for similarity matches
 - ⚡ Fully local processing with complete data privacy
-- 🚀 Hybrid indexing for handling large vaults with tens of thousands of notes
-- 🧠 Smart prioritization of frequently accessed and recently created notes
-- ⏱️ On-demand computation for comprehensive coverage of your entire vault
+- 🚀 Efficient indexing for handling large vaults with tens of thousands of notes
+- 💡 Multi-resolution n-gram sizes for better accuracy across different document styles
 
 ## Installation
 
@@ -73,87 +73,87 @@ Enable to view detailed statistics about the plugin's operation:
 
 The re-indexing process now includes a visual progress indicator below the button, showing the current phase and completion percentage.
 
-### Similarity Providers
+### Multi-Resolution Bloom Filter
 
-The plugin automatically selects the optimal similarity provider based on your vault size:
+The plugin uses a multi-resolution bloom filter approach for efficient similarity detection:
 
-#### BM25+ (For Small-Medium Vaults)
-- Local processing, no data leaves your device
-- Fast and privacy-focused
-- Works well for keyword-based similarity
-- Uses bidirectional BM25+ scoring for better accuracy
-- Efficient sparse vector representation
-- Simple but effective word stemming
-- Smart vector caching for improved performance
-- Ideal for vaults with fewer than 10,000 notes
-- No setup required
+#### How It Works
+- **Bloom Filters**: Probabilistic data structures for efficient similarity detection
+- **Multiple N-gram Sizes**: Combines different character sequence lengths (2, 3, and 4-grams by default)
+- **Weighted Similarity**: Different resolutions contribute differently to the final similarity score
+- **Unicode Support**: Properly handles multi-byte characters in all languages
+- **Adaptive Parameters**: Self-tunes based on your vault's characteristics
 
-#### MinHash LSH + BM25 (For Large Vaults)
-- Automatically selected for vaults with 10,000+ notes
-- Three-stage hybrid approach for optimal performance:
-  1. LSH for fast candidate retrieval
-  2. MinHash for efficient similarity estimation
-  3. BM25 for term-frequency based scoring
-- Efficient memory usage and sub-linear search time
-- Advanced configuration available in settings
-- No external dependencies or setup required
+#### Advantages
+- **Memory Efficiency**: Uses just a fraction of the memory of traditional algorithms
+- **Language Agnostic**: Works equally well with English, Chinese, Japanese, Arabic, etc.
+- **Automatic Stopword Detection**: Identifies common words in any language
+- **Fast Similarity Calculation**: Quick Jaccard similarity computation
+- **No Training Required**: Works immediately without model training
+- **Privacy-Focused**: All processing happens locally on your device
+- **Customizable**: Advanced users can fine-tune parameters in settings
 
-### Hybrid Indexing for Large Vaults
+### Efficient Indexing for Large Vaults
 
-For users with extensive note collections (tens of thousands of notes), the plugin now implements a hybrid indexing approach:
+For users with extensive note collections (tens of thousands of notes), the plugin implements an efficient indexing strategy:
 
-- **Priority-Based Indexing**: The plugin intelligently prioritizes which notes to pre-index based on:
-  - **Access Frequency**: Notes you open frequently are prioritized
-  - **Creation Time**: Recently created notes are given higher priority
-  - **Configurable Limit**: Up to 10,000 notes are pre-indexed (increased from previous 5,000 limit)
+- **Optimized Memory Usage**: 
+  - The multi-resolution bloom filter uses minimal memory per document
+  - A 1000-document vault might use only ~1MB of memory total
+  - Even large vaults with 50,000+ notes remain performant
 
-- **On-Demand Computation**: For notes outside the priority index:
-  - **Real-Time Processing**: Similarity is computed when you view the note
-  - **Smart Caching**: Results are cached to improve performance on subsequent views
-  - **Visual Indicators**: UI shows which notes were computed on-demand
-  - **Balanced Approach**: Combines performance with comprehensive coverage
+- **Adaptive Parameters**:
+  - Automatically detects common words in your vault to exclude from similarity calculations
+  - Adjusts n-gram sizes based on your document characteristics
+  - Tunes bloom filter sizes and hash functions for optimal performance
+  - All adaptations happen automatically without user intervention
 
-This hybrid approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
+- **Fast Similarity Calculation**:
+  - Bloom filter comparison is extremely fast (O(1) complexity)
+  - Jaccard similarity provides reliable relevance ranking
+  - Works equally well across all languages and writing styles
 
-### Adaptive Similarity for Large Corpora
+This approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
 
-For users with large note collections, the plugin also features an adaptive similarity system:
+### Unicode Support for All Languages
 
-- **Automatic Detection**: Identifies when you're working with a large corpus
-- **Expanded Results**: Shows up to 10 related notes (instead of 5) for large collections
-- **Quality Indicators**: Visual percentage indicators show the estimated relevance of each match
-- **Lenient Matching**: Adjusts LSH parameters to find more potential matches in large collections
-- **Similarity Boosting**: Applies a small boost to similarity scores to ensure you see relevant connections
-- **Transparent UI**: Clear indication when approximate matches are being shown
+The plugin provides excellent support for all languages:
 
-This feature helps ensure you can still discover meaningful connections even when working with thousands of notes, where traditional exact matching might miss important relationships due to the scale and diversity of content.
+- **Full Unicode Compliance**: Proper handling of all Unicode characters
+- **CJK Support**: Works with Chinese, Japanese, Korean and other scripts without special configuration
+- **Normalized Processing**: Text is normalized for consistent handling of accents and diacritics
+- **No Language Detection**: Works with mixed-language documents without special configuration
+- **No Dictionary Dependence**: Does not rely on language-specific dictionaries or stopword lists
+- **Self-Adapting**: Automatically detects common words in your specific corpus, regardless of language
+
+The multi-resolution bloom filter approach is inherently language-agnostic, working equally well across all scripts and writing systems without any language-specific tuning required.
 
 ### File Type Support
 
 The plugin currently processes Markdown (.md) files only, as these are the primary content files in Obsidian. Other file types are automatically skipped to optimize performance and maintain focus on note relationships.
 
-### Caching System
+### Memory-Efficient Design
 
-The plugin uses an intelligent caching system to improve performance:
-- Document signatures and BM25+ vectors are cached in memory using sparse representation
-- LSH index structures are maintained for efficient retrieval
-- Cache invalidation based on file modification time
-- Indexes and scores are only recomputed when content changes
-- Smart cache management to prevent unnecessary recomputation
+The plugin is designed for minimal memory usage:
+- Bloom filters require only a small fixed amount of memory per document
+- No need to store full document vectors or term frequencies
+- Memory usage scales sub-linearly with vault size
+- Efficient bit operations for fast similarity calculations
+- In-memory structure with no disk cache needed
+- Recomputes only when document content changes
 - Progress bar shows indexing status for better user feedback
-- Drift tolerance allows approximate results with configurable threshold
 
 ### Debug Logging
 
 When Debug Mode is enabled, the plugin provides detailed logging about its operations:
 
 - Text processing and tokenization details
-- BM25 calculations and similarity scores
-- MinHash signature generation
-- LSH index operations
-- File processing events and timing
-- UI updates and user interactions
-- Cache operations and performance metrics
+- Bloom filter operations and bit array manipulations
+- N-gram extraction and processing
+- Adaptive parameter tuning decisions
+- Common word detection process
+- Similarity calculation metrics
+- Memory usage statistics and performance measurements
 
 To view the logs:
 1. Enable Debug Mode in settings
