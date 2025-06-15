@@ -229,25 +229,6 @@ export default class RelatedNotesPlugin extends Plugin {
         this.statusBarItem.style.display = 'block';
       });
 
-<<<<<<< HEAD
-      // Simple progress message with percentage
-      message = `${phase}... ${percentage}%`;
-
-      this.statusBarItem.setText(message);
-    });
-
-    // Get stats for status bar
-    const stats = this.similarityProvider.getStats();
-    const totalFiles = this.app.vault.getMarkdownFiles().length;
-    const indexedFiles = stats.documentsIndexed || 0;
-    
-    // Set status bar with bloom filter info
-    this.statusBarItem.setText("Bloom filter ready");
-    this.statusBarItem.setAttribute('aria-label', 'Using efficient bloom filter algorithm');
-    this.statusBarItem.setAttribute('title', 'Using multi-resolution bloom filter for accurate similarity calculations');
-    
-    this.isInitialized = true;
-=======
       // Get stats for status bar
       const stats = this.similarityProvider.getStats();
       const totalFiles = this.app.vault.getMarkdownFiles().length;
@@ -303,7 +284,6 @@ export default class RelatedNotesPlugin extends Plugin {
         this.isInitialized = true;
       }
     }
->>>>>>> 23150b0 (Improve Unicode support and remove MinHash references)
   }
 
   /**
@@ -312,10 +292,6 @@ export default class RelatedNotesPlugin extends Plugin {
    * @throws Error if indexing is cancelled
    */
   public async forceReindex(): Promise<void> {
-<<<<<<< HEAD
-
-=======
->>>>>>> 23150b0 (Improve Unicode support and remove MinHash references)
     // Check if already reindexing or initial indexing is still in progress
     if (this.isReindexing) {
       this.statusBarItem.setText("Already indexing");

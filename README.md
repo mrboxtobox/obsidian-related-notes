@@ -2,14 +2,18 @@
 
 Uncover connections between notes in your vault using this plugin.
 
+![Preview of the Related Notes plugin on the right pane](<screenshot.png>)
+
+![alt text](<settings_screenshot.png>)
+
+![alt text](<non_readme_screenshot.png>)
+
+Uncover connections between notes in your vault using this plugin.
+
 ## Features
 
 - 🔍 Automatically analyzes note content using multi-resolution Bloom filters
-- 🌏 Works with any language, including full Unicode support for CJK and other non-Latin scripts
-- 🧠 Adaptive stopwords detection that automatically identifies common words in any language
-- 🔄 Self-tuning parameters that adjust to your vault's characteristics
 - 🔗 One-click linking between related notes
-- 📈 Visual quality indicators for similarity matches
 - ⚡ Fully local processing with complete data privacy
 - 🚀 Efficient indexing for handling large vaults with tens of thousands of notes
 - 💡 Multi-resolution n-gram sizes for better accuracy across different document styles
@@ -86,7 +90,6 @@ The plugin uses a multi-resolution bloom filter approach for efficient similarit
 - **Fast Similarity Calculation**: Quick Jaccard similarity computation
 - **No Training Required**: Works immediately without model training
 - **Privacy-Focused**: All processing happens locally on your device
-- **Customizable**: Advanced users can fine-tune parameters in settings
 
 ### Efficient Indexing for Large Vaults
 
@@ -109,56 +112,6 @@ For users with extensive note collections (tens of thousands of notes), the plug
   - Works equally well across all languages and writing styles
 
 This approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
-
-### Unicode Support for All Languages
-
-The plugin provides excellent support for all languages:
-
-- **Full Unicode Compliance**: Proper handling of all Unicode characters
-- **CJK Support**: Works with Chinese, Japanese, Korean and other scripts without special configuration
-- **Normalized Processing**: Text is normalized for consistent handling of accents and diacritics
-- **No Language Detection**: Works with mixed-language documents without special configuration
-- **No Dictionary Dependence**: Does not rely on language-specific dictionaries or stopword lists
-- **Self-Adapting**: Automatically detects common words in your specific corpus, regardless of language
-The multi-resolution bloom filter approach is inherently language-agnostic, working equally well across all scripts and writing systems without any language-specific tuning required.
-
-### File Type Support
-
-The plugin currently processes Markdown (.md) files only, as these are the primary content files in Obsidian. Other file types are automatically skipped to optimize performance and maintain focus on note relationships.
-
-### Memory-Efficient Design
-
-The plugin is designed for minimal memory usage:
-- Bloom filters require only a small fixed amount of memory per document
-- No need to store full document vectors or term frequencies
-- Memory usage scales sub-linearly with vault size
-- Efficient bit operations for fast similarity calculations
-- In-memory structure with no disk cache needed
-- Recomputes only when document content changes
-- Progress bar shows indexing status for better user feedback
-
-### Debug Logging
-
-When Debug Mode is enabled, the plugin provides detailed logging about its operations:
-
-- Text processing and tokenization details
-- Bloom filter operations and bit array manipulations
-- N-gram extraction and processing
-- Adaptive parameter tuning decisions
-- Common word detection process
-- Similarity calculation metrics
-- Memory usage statistics and performance measurements
-
-To view the logs:
-1. Enable Debug Mode in settings
-2. Open the Developer Console (View -> Toggle Developer Tools)
-3. Look for entries prefixed with `[Related Notes]`
-
-This can be helpful for:
-- Understanding how the plugin processes your notes
-- Troubleshooting unexpected behavior
-- Performance optimization
-- Development and debugging
 
 ## Development
 
@@ -194,13 +147,16 @@ npm run build
 
 ### Project Structure
 
-- `main.ts` - Main plugin file with core functionality and event handling
-- `core.ts` - Core similarity algorithms and providers
-- `settings.ts` - Settings tab implementation
-- `utils.ts` - Utility functions including logging, date formatting, and helper functions
+- `src/main.ts` - Main plugin file with core functionality and event handling
+- `src/core.ts` - Core similarity algorithms and interfaces
+- `src/bloom.ts` - Bloom filter implementation for efficient similarity calculation
+- `src/multi-bloom.ts` - Multi-resolution bloom filter with adaptive parameters
+- `src/settings.ts` - Settings tab implementation
+- `src/ui.ts` - User interface components for related notes view
 - `styles.css` - Custom CSS styles
 - `manifest.json` - Plugin manifest
 - `package.json` - Project configuration and dependencies
+- `esbuild.config.mjs` - Build configuration for esbuild
 
 ### Key Dependencies
 
@@ -208,80 +164,32 @@ npm run build
 
 ## Building From Source
 
-1. Clone the repository as described in the Development section
-2. Install dependencies: `npm install`
-3. Build the plugin: `npm run build`
-4. Copy the following files to your Obsidian plugins folder:
-   - main.js
-   - manifest.json
-   - styles.css
+1. Clone the repository
+```bash
+git clone https://github.com/yourusername/obsidian-related-notes.git
+cd obsidian-related-notes
+```
 
-## Performance Benchmarks
+2. Install dependencies
+```bash
+npm install
+```
 
-Recent optimizations have significantly improved the plugin's performance, especially for large vaults.
+3. Build the plugin
+```bash
+npm run build
+```
 
-### Overview
+4. Copy the built files to your Obsidian plugins folder
+```bash
+# For testing with a local vault
+npm run dev
+```
 
-The Related Notes plugin now supports two similarity calculation methods:
-
-1. **MinHash LSH** (Original): Uses locality-sensitive hashing with MinHash to find similar documents
-2. **Bloom Filter** (New): Uses bloom filters to efficiently compute text similarity
-
-Both methods support lazy indexing where:
-- Frequently accessed notes are pre-indexed
-- Other notes are computed on-demand when requested
-- Results are cached for future use
-
-### Benchmark Results
-
-Benchmarks were run on a 2021 MacBook Pro with M1 Pro processor and 16GB RAM.
-
-#### Indexing Performance
-
-| Vault Size  | MinHash LSH | Bloom Filter | Improvement  |
-| ----------- | ----------- | ------------ | ------------ |
-| 100 files   | 1,523 ms    | 783 ms       | 48.6% faster |
-| 500 files   | 8,321 ms    | 3,429 ms     | 58.8% faster |
-| 1,000 files | 17,835 ms   | 6,842 ms     | 61.6% faster |
-| 5,000 files | 95,732 ms   | 33,127 ms    | 65.4% faster |
-
-#### Similarity Calculation Performance
-
-| Vault Size  | MinHash LSH | Bloom Filter | Improvement  |
-| ----------- | ----------- | ------------ | ------------ |
-| 100 files   | 42 ms       | 17 ms        | 59.5% faster |
-| 500 files   | 57 ms       | 21 ms        | 63.2% faster |
-| 1,000 files | 68 ms       | 24 ms        | 64.7% faster |
-| 5,000 files | 124 ms      | 39 ms        | 68.5% faster |
-
-#### Memory Usage
-
-| Configuration | Memory Usage | Notes                            |
-| ------------- | ------------ | -------------------------------- |
-| MinHash LSH   | 287 MB       | 10,000 file vault, 5,000 indexed |
-| Bloom Filter  | 105 MB       | 10,000 file vault, 5,000 indexed |
-
-Memory reduction: **63.4%**
-
-### Analysis
-
-The Bloom Filter implementation provides significant performance improvements:
-
-1. **Faster Indexing**: 48-65% faster depending on vault size
-2. **Faster Similarity Calculation**: 59-68% faster depending on vault size
-3. **Lower Memory Usage**: 63% reduction in memory footprint
-
-These improvements make the Related Notes plugin much more efficient for large vaults, reducing both CPU and memory usage.
-
-### Lazy Indexing Effectiveness
-
-The lazy indexing system prioritizes frequently accessed notes for pre-indexing while computing others on demand. This approach provides several benefits:
-
-1. **Faster Startup**: Only indexing the most important notes initially
-2. **Lower Memory Usage**: Not storing all similarity data in memory
-3. **Adaptive Performance**: Learning which notes are important to the user over time
-
-Our testing shows that for typical usage patterns (where users frequently access a subset of their notes), lazy indexing significantly improves perceived performance.
+Alternatively, you can manually copy the following files to your Obsidian plugins folder:
+- `main.js`
+- `manifest.json`
+- `styles.css`
 
 ## License
 
