@@ -7,14 +7,7 @@
 
 import { tokenize } from './core';
 
-// Logger for bloom filter operations
-const DEBUG_MODE = true;
-
-function log(...args: any[]) {
-  if (DEBUG_MODE) {
-    console.log('[BloomFilter]', ...args);
-  }
-}
+// No logging
 
 /**
  * BloomFilter class that implements a lightweight bloom filter

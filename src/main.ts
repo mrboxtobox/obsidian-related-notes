@@ -24,7 +24,7 @@ export default class RelatedNotesPlugin extends Plugin {
     appWithSettings.setting.open();
     appWithSettings.setting.openTabById(this.id);
   }
-  
+
   /**
    * Clears the cache files
    * This removes all cached data and allows starting fresh
@@ -34,12 +34,12 @@ export default class RelatedNotesPlugin extends Plugin {
       // Get config directory
       const configDir = this.app.vault.configDir;
       const adapter = this.app.vault.adapter;
-      
+
       if (!configDir || !adapter) {
         console.error('Could not access vault config directory');
         throw new Error('Could not access vault configuration');
       }
-      
+
       // Define all potential cache paths to clear
       const cachePaths = [
         // Current cache file
@@ -49,7 +49,7 @@ export default class RelatedNotesPlugin extends Plugin {
         `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
         `${configDir}/plugins/obsidian-related-notes/.index-cache.json`,
       ];
-      
+
       // Attempt to remove each cache file
       let deletedCount = 0;
       for (const cachePath of cachePaths) {
@@ -58,14 +58,14 @@ export default class RelatedNotesPlugin extends Plugin {
           if (exists) {
             await adapter.remove(cachePath);
             deletedCount++;
-            console.log(`Deleted cache file: ${cachePath}`);
+            // File deleted
           }
         } catch (err) {
           // Log but continue with other files
           console.error(`Failed to delete cache file ${cachePath}:`, err);
         }
       }
-      
+
       // Also clear the in-memory cache by resetting the similarity provider
       if (this.similarityProvider) {
         // For MultiResolutionBloomFilterProvider, we can clear its internal cache
@@ -73,28 +73,28 @@ export default class RelatedNotesPlugin extends Plugin {
           this.similarityProvider.clear();
         }
       }
-      
-      console.log(`Cache cleared: ${deletedCount} files deleted`);
-      
+
+      // Cache cleared
+
       // Update status bar temporarily
       this.statusBarItem.setText('Cache cleared');
       this.statusBarItem.style.display = 'block';
-      
+
       // Hide status bar after 3 seconds
       setTimeout(() => {
         this.statusBarItem.setText('');
         this.statusBarItem.style.display = 'none';
       }, 3000);
-      
+
       // Set as uninitialized to trigger reindexing on next use
       this.isInitialized = false;
-      
+
       // Reinitialize the similarity provider
       // Use setTimeout to defer to next event loop cycle
       setTimeout(() => {
         this.initializeSimilarityProvider();
       }, 1000);
-      
+
     } catch (error) {
       console.error('Error clearing cache:', error);
       throw error;
@@ -165,7 +165,7 @@ export default class RelatedNotesPlugin extends Plugin {
       this.settings.lastKnownVersion = this.manifest.version;
       await this.saveSettings();
 
-      console.log('Removed old cache files (if they existed)');
+      // Removed old cache files
     } catch (error) {
       // Ignore errors when trying to delete old cache
     }
@@ -233,20 +233,20 @@ export default class RelatedNotesPlugin extends Plugin {
       const stats = this.similarityProvider.getStats();
       const totalFiles = this.app.vault.getMarkdownFiles().length;
       const indexedFiles = stats.documentsIndexed || 0;
-      
+
       // Check if progressive indexing is active
       if (stats.progressiveIndexing && stats.progressiveIndexing.active) {
-        const remaining = stats.progressiveIndexing.remainingFiles;
-        const total = totalFiles;
-        const indexed = total - remaining;
-        const percent = Math.round((indexed / total) * 100);
-        
+        const remaining = stats.progressiveIndexing.remainingFiles || 0;
+        const total = Math.max(totalFiles, 1); // Avoid division by zero
+        const indexed = Math.max(0, Math.min(total - remaining, total)); // Ensure value is between 0 and total
+        const percent = Math.max(0, Math.min(100, Math.round((indexed / total) * 100))); // Bound between 0-100
+
         // Show a subtle indicator that progressive indexing is active
         this.statusBarItem.setText(`Indexing: ${percent}%`);
         this.statusBarItem.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
         this.statusBarItem.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
         this.statusBarItem.style.display = 'block';
-        
+
         // Set a timer to periodically update the status
         setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
       } else {
@@ -261,25 +261,23 @@ export default class RelatedNotesPlugin extends Plugin {
     } catch (error) {
       // Handle cancellation error explicitly
       if (error instanceof Error && error.message === 'Indexing cancelled') {
-        console.log('Initial indexing was cancelled');
         // Set a proper status message
         this.statusBarItem.setText("Indexing cancelled");
         setTimeout(() => {
           this.statusBarItem.setText("");
           this.statusBarItem.style.display = 'none';
         }, 2000);
-        
+
         // Even if cancelled, mark as initialized to prevent blocking the UI
         this.isInitialized = true;
       } else {
-        // For other errors, log and show error message
-        console.error('Error during initialization:', error);
+        // For other errors, show error message
         this.statusBarItem.setText("Indexing error");
         setTimeout(() => {
           this.statusBarItem.setText("");
           this.statusBarItem.style.display = 'none';
         }, 3000);
-        
+
         // Mark as initialized even on error to prevent perpetual loading state
         this.isInitialized = true;
       }
@@ -414,12 +412,9 @@ export default class RelatedNotesPlugin extends Plugin {
 
         // Restore initialized state
         this.isInitialized = true;
-
-        // Do not rethrow the cancellation error - it's an expected condition
-        console.log("Re-indexing was cancelled by user");
       } else {
         // For other errors, log and update status bar
-        console.error("Error during re-indexing:", error);
+        console.error('Error during re-indexing:', error);
         this.statusBarItem.setText("Error during re-indexing");
         setTimeout(() => {
           this.statusBarItem.setText("");
@@ -506,7 +501,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Add file to queue
     this.fileUpdateQueue.add(file.path);
-    
+
     // Start queue processing if not already running
     if (!this.processingQueue) {
       this.processingQueue = true;
@@ -518,30 +513,30 @@ export default class RelatedNotesPlugin extends Plugin {
     // Respect minimum interval between processing batches
     const now = Date.now();
     const timeSinceLastProcess = now - this.lastProcessTime;
-    
+
     if (timeSinceLastProcess < this.PROCESS_INTERVAL && this.lastProcessTime > 0) {
       // Wait until interval has passed
-      await new Promise(resolve => 
+      await new Promise(resolve =>
         setTimeout(resolve, this.PROCESS_INTERVAL - timeSinceLastProcess)
       );
     }
-    
+
     // Nothing to process
     if (this.fileUpdateQueue.size === 0) {
       this.processingQueue = false;
       return;
     }
-    
+
     this.lastProcessTime = Date.now();
-    
+
     // Process a batch of files
     const batch = Array.from(this.fileUpdateQueue).slice(0, this.MAX_BATCH_SIZE);
-    
+
     // Remove processed files from queue
     for (const filePath of batch) {
       this.fileUpdateQueue.delete(filePath);
     }
-    
+
     // Process each file in the batch
     for (const filePath of batch) {
       try {
@@ -562,7 +557,7 @@ export default class RelatedNotesPlugin extends Plugin {
         console.error(`Error updating index for file ${filePath}:`, error);
       }
     }
-    
+
     // Continue processing if there are more files
     if (this.fileUpdateQueue.size > 0) {
       this.processFileQueue();
@@ -642,7 +637,7 @@ export default class RelatedNotesPlugin extends Plugin {
   public isReindexingInProgress(): boolean {
     return this.isReindexing;
   }
-  
+
   /**
    * Updates the status bar with progressive indexing information
    * Called periodically to refresh the status
@@ -650,23 +645,23 @@ export default class RelatedNotesPlugin extends Plugin {
   private updateProgressiveIndexingStatus(): void {
     // Only update if we're initialized
     if (!this.isInitialized) return;
-    
+
     // Get the latest stats
     const stats = this.similarityProvider.getStats();
-    
+
     // Check if progressive indexing is still active
     if (stats.progressiveIndexing && stats.progressiveIndexing.active) {
-      const remaining = stats.progressiveIndexing.remainingFiles;
-      const totalFiles = this.app.vault.getMarkdownFiles().length;
-      const indexed = totalFiles - remaining;
-      const percent = Math.round((indexed / totalFiles) * 100);
-      
+      const remaining = stats.progressiveIndexing.remainingFiles || 0;
+      const totalFiles = Math.max(this.app.vault.getMarkdownFiles().length, 1); // Avoid division by zero
+      const indexed = Math.max(0, Math.min(totalFiles - remaining, totalFiles)); // Ensure value is between 0 and total
+      const percent = Math.max(0, Math.min(100, Math.round((indexed / totalFiles) * 100))); // Bound between 0-100
+
       // Update the status bar
       this.statusBarItem.setText(`Indexing: ${percent}%`);
       this.statusBarItem.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
       this.statusBarItem.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
       this.statusBarItem.style.display = 'block';
-      
+
       // Schedule another update
       setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
     } else {
@@ -696,23 +691,23 @@ export default class RelatedNotesPlugin extends Plugin {
     // Use sampling for large vaults
     const markdownFiles = this.app.vault.getMarkdownFiles();
     const totalFiles = markdownFiles.length;
-    
+
     // Get sampling settings from plugin settings
     const { enableSampling, sampleSizeThreshold, maxSampleSize } = this.settings;
-    
+
     // Calculate adaptive sample size if sampling is enabled
     const sampleSize = enableSampling && totalFiles > sampleSizeThreshold
       ? Math.min(Math.ceil(totalFiles * 0.2), maxSampleSize)
       : undefined; // undefined means no sampling
-    
+
     // Get candidates, potentially with sampling
     const candidates = this.similarityProvider.getCandidateFiles(file);
-    
+
     // Add informational message to status bar if sampling is active
     if (sampleSize && totalFiles > sampleSizeThreshold) {
       this.statusBarItem.setText(`Large vault detected - sampling ${sampleSize} of ${totalFiles} files`);
       this.statusBarItem.style.display = 'block';
-      
+
       // Hide status bar after 3 seconds
       setTimeout(() => {
         this.statusBarItem.setText("");

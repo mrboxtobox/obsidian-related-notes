@@ -9,14 +9,7 @@ import { tokenize, SimilarityProvider, SimilarityInfo } from './core';
 import { BloomFilter } from './bloom';
 import { TFile, TAbstractFile } from 'obsidian';
 
-// Logger for multi-bloom filter operations
-const DEBUG_MODE = true;
-
-function log(...args: any[]) {
-  if (DEBUG_MODE) {
-    console.log('[MultiBloom]', ...args);
-  }
-}
+// No logging
 
 /**
  * Optimal bloom filter size calculation
@@ -118,7 +111,7 @@ export class MultiResolutionBloomFilter {
       // Direct comparison of the underlying bloom filters
       return this.filter.similarity(other.filter);
     } catch (error) {
-      console.error(`Error comparing filters:`, error);
+      console.error('Error comparing filters:', error);
       return 0;
     }
   }
@@ -801,11 +794,9 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     } catch (error) {
       // If it's a cancellation error, properly propagate it
       if (error instanceof Error && error.message === 'Indexing cancelled') {
-        log('Reindexing was cancelled by user');
         throw error; // Re-throw the cancellation error
       }
-      // For other errors, log and re-throw
-      log(`Error during reindexing: ${error instanceof Error ? error.message : String(error)}`);
+      // For other errors, re-throw
       throw error;
     }
   }
@@ -1528,7 +1519,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
    */
   private async loadFromCache(): Promise<boolean> {
     if (!this.cacheFilePath || !this.vault.adapter) {
-      log('Cannot load cache: no cache path or vault adapter');
+      // Cannot load cache: no cache path or vault adapter
       return false;
     }
 
@@ -1536,7 +1527,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       // Check if cache file exists
       const exists = await this.vault.adapter.exists(this.cacheFilePath);
       if (!exists) {
-        log(`Cache file does not exist at ${this.cacheFilePath}`);
+        // Cache file does not exist
         return false;
       }
 
@@ -1548,7 +1539,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       try {
         cache = JSON.parse(cacheData);
       } catch (error) {
-        log('Cache file contains invalid JSON, deleting corrupt cache');
+        // Cache file contains invalid JSON, deleting corrupt cache
         this.deleteCache();
         return false;
       }
@@ -1556,7 +1547,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       // Validate cache version and basic structure
       if (!cache.version || cache.version !== 1 ||
         !cache.params || !cache.filters || !cache.stats) {
-        log('Cache version mismatch or invalid cache format, deleting invalid cache');
+        // Cache version mismatch or invalid cache format, deleting invalid cache
         this.deleteCache();
         return false;
       }
@@ -1567,7 +1558,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       if (!this.areArraysEqual(params.ngramSizes, this.ngramSizes) ||
         !this.areArraysEqual(params.hashFunctions, this.hashFunctions) ||
         params.similarityThreshold !== this.similarityThreshold) {
-        log('Cache parameters do not match current settings, clearing invalid cache');
+        // Cache parameters do not match current settings, clearing invalid cache
         this.deleteCache(); // Delete the invalid cache file
         return false;
       }
@@ -1578,7 +1569,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         const firstSize = bloomSizes[0];
         const allSame = bloomSizes.every((size: number) => size === firstSize);
         if (!allSame) {
-          log('Cache contains bloom filters with different sizes, clearing invalid cache');
+          // Cache contains bloom filters with different sizes, clearing invalid cache
           this.deleteCache(); // Delete the invalid cache file
           return false;
         }
@@ -1595,7 +1586,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           this.commonWords.add(word);
         }
         this.commonWordsComputed = true;
-        log(`Loaded ${this.commonWords.size} common words from cache`);
+        // Loaded common words from cache
       }
 
       // Load documents count
@@ -1609,7 +1600,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         try {
           // Type guard - make sure filterData is an object
           if (!rawFilterData || typeof rawFilterData !== 'object') {
-            console.error(`Invalid filter data for ${docId}, skipping`);
+            // Invalid filter data, skipping
             continue;
           }
 
@@ -1648,7 +1639,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         }
       }
 
-      log(`Successfully loaded ${loadedCount} bloom filters from cache`);
+      // Successfully loaded bloom filters from cache
       this.cacheDirty = false;
       this.cacheReady = true;
       return loadedCount > 0;
@@ -1693,7 +1684,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       if (exists) {
         // Delete the file
         await this.vault.adapter.remove(this.cacheFilePath);
-        log(`Deleted invalid cache file at ${this.cacheFilePath}`);
+        // Deleted invalid cache file
       }
     } catch (error) {
       console.error('Error deleting cache file:', error);
