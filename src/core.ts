@@ -152,7 +152,7 @@ export function tokenize(text: string): string {
 
     // Replace inline code and code blocks with placeholders
     let processed = text.replace(/`([^`]+)`|```[\s\S]+?```/g, (match) => {
-      const placeholder = `__CODE_BLOCK_${codeBlockCounter}__`;
+      const placeholder = `__code_block_${codeBlockCounter}__`;
       codeBlocks.push(match);
       codeBlockCounter++;
       return placeholder;
@@ -162,33 +162,17 @@ export function tokenize(text: string): string {
     const urls: string[] = [];
     let urlCounter = 0;
     
-    // Use safer URL replacement with timeout protection
-    try {
-      const urlReplacementStart = Date.now();
-      processed = processed.replace(
-        /https?:\/\/[^\s]{1,2000}(?:\s|$)|file:\/\/[^\s]{1,1000}(?:\s|$)|[\w\/\.-]+\.(md|txt|js|ts|html|css|json|py|java|rb|c|cpp|h|go|rs|php)\b/g, 
-        (match) => {
-          // Check for timeout to prevent ReDoS
-          if (Date.now() - urlReplacementStart > 1000) { // 1 second timeout
-            console.warn('URL replacement timeout, stopping processing');
-            return match;
-          }
-          
-          // Additional validation to prevent processing malicious patterns
-          const trimmedMatch = match.trim();
-          if (isValidUrlPattern(trimmedMatch)) {
-            const placeholder = `__URL_${urlCounter}__`;
-            urls.push(trimmedMatch);
-            urlCounter++;
-            return placeholder;
-          }
-          return match; // Return original if validation fails
-        }
-      );
-    } catch (error) {
-      console.error('Error during URL replacement:', error);
-      // Continue with original text if URL replacement fails
-    }
+    // Simplified URL replacement - much faster
+    processed = processed.replace(
+      /https?:\/\/\S+|file:\/\/\S+|\S+\.(md|txt|js|ts|html|css|json|py|java|rb|c|cpp|h|go|rs|php)\b/g, 
+      (match) => {
+        if (match.length > 500) return match; // Skip very long matches
+        const placeholder = `__url_${urlCounter}__`;
+        urls.push(match);
+        urlCounter++;
+        return placeholder;
+      }
+    );
 
     // Step 3: Handle contractions
     processed = processed.replace(
@@ -262,13 +246,13 @@ export function tokenize(text: string): string {
 
     // Step 6: Restore code blocks and URLs
     tokens = tokens.map(token => {
-      if (token.startsWith('__CODE_BLOCK_')) {
-        const index = parseInt(token.replace('__CODE_BLOCK_', '').replace('__', ''));
-        return codeBlocks[index].replace(/`|```/g, '').trim();
+      if (token.startsWith('__code_block_')) {
+        const index = parseInt(token.replace('__code_block_', '').replace('__', ''));
+        return codeBlocks[index] ? codeBlocks[index].replace(/`|```/g, '').trim() : token;
       }
-      if (token.startsWith('__URL_')) {
-        const index = parseInt(token.replace('__URL_', '').replace('__', ''));
-        return urls[index];
+      if (token.startsWith('__url_')) {
+        const index = parseInt(token.replace('__url_', '').replace('__', ''));
+        return urls[index] || token;
       }
       return token;
     });

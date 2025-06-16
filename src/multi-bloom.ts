@@ -50,11 +50,10 @@ export function calculateOptimalHashFunctions(size: number, itemCount: number): 
 }
 
 /**
- * Simplified bloom filter that uses word-based tokenization
- * Optimized for better latency
- * Note: Despite the name, this uses a single resolution approach for performance
+ * Single bloom filter that uses word-based tokenization
+ * Optimized for better latency using a single resolution approach
  */
-export class SimplifiedBloomFilter {
+export class SingleBloomFilter {
   // Single bloom filter for simplicity
   readonly filter: BloomFilter;
 
@@ -120,7 +119,7 @@ export class SimplifiedBloomFilter {
    * @param other The other filter
    * @returns Similarity score between 0 and 1
    */
-  similarity(other: SimplifiedBloomFilter): number {
+  similarity(other: SingleBloomFilter): number {
     try {
       // Direct comparison of the underlying bloom filters
       return this.filter.similarity(other.filter);
@@ -368,7 +367,7 @@ export class AdaptiveParameterCalculator {
  * Implements the SimilarityProvider interface from core.ts
  */
 export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
-  private readonly bloomFilters = new Map<string, SimplifiedBloomFilter>();
+  private readonly bloomFilters = new Map<string, SingleBloomFilter>();
   private readonly documentNgrams = new Map<string, Map<number, Set<string>>>();
   private readonly config: any;
   private readonly parameterCalculator = new AdaptiveParameterCalculator();
@@ -1049,7 +1048,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     }
 
     // Create a simplified bloom filter (word-based, single resolution)
-    const filter = new SimplifiedBloomFilter(
+    const filter = new SingleBloomFilter(
       [3], // Single n-gram size (kept as array for backward compatibility)
       [2048], // Reduced bloom filter size for word-level indexing
       [3] // Hash functions
@@ -1260,10 +1259,10 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
    * @returns Array of sampled [docId, filter] pairs
    */
   private sampleDocuments(
-    documents: [string, SimplifiedBloomFilter][],
+    documents: [string, SingleBloomFilter][],
     sampleSize: number,
     queryDocId: string
-  ): [string, SimplifiedBloomFilter][] {
+  ): [string, SingleBloomFilter][] {
     // Skip the query document
     const filteredDocs = documents.filter(([docId]) => docId !== queryDocId);
 
@@ -1652,7 +1651,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
           // Create a new multi-resolution bloom filter
           const ngramSizes = Array.isArray(filterData.ngramSizes) ? filterData.ngramSizes : this.ngramSizes;
-          const filter = new SimplifiedBloomFilter(
+          const filter = new SingleBloomFilter(
             ngramSizes,
             this.bloomSizes,
             this.hashFunctions

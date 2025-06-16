@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { 
-  SimplifiedBloomFilter,
+  SingleBloomFilter,
   MultiResolutionBloomFilterProvider,
   calculateOptimalBloomSize,
   calculateOptimalHashFunctions
@@ -69,11 +69,11 @@ describe('Optimal Size Calculations', () => {
   });
 });
 
-describe('SimplifiedBloomFilter', () => {
-  let filter: SimplifiedBloomFilter;
+describe('SingleBloomFilter', () => {
+  let filter: SingleBloomFilter;
 
   beforeEach(() => {
-    filter = new SimplifiedBloomFilter([3], [2048], [3]);
+    filter = new SingleBloomFilter([3], [2048], [3]);
   });
 
   describe('Construction', () => {
@@ -83,7 +83,7 @@ describe('SimplifiedBloomFilter', () => {
     });
 
     it('should handle custom settings', () => {
-      const customFilter = new SimplifiedBloomFilter([4], [4096], [4]);
+      const customFilter = new SingleBloomFilter([4], [4096], [4]);
       expect(customFilter).toBeDefined();
     });
   });
@@ -93,8 +93,8 @@ describe('SimplifiedBloomFilter', () => {
       const text1 = 'artificial intelligence machine learning deep learning';
       const text2 = 'machine learning algorithms artificial intelligence';
       
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText(text1);
       filter2.addText(text2);
@@ -105,8 +105,8 @@ describe('SimplifiedBloomFilter', () => {
     });
 
     it('should handle empty text', () => {
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText('');
       filter2.addText('');
@@ -117,8 +117,8 @@ describe('SimplifiedBloomFilter', () => {
 
     it('should handle very large documents', () => {
       const largeText = 'word '.repeat(5000);
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText(largeText);
       filter2.addText(largeText);
@@ -129,7 +129,7 @@ describe('SimplifiedBloomFilter', () => {
 
     it('should respect character limits', () => {
       const veryLargeText = 'word '.repeat(20000); // Large text
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText(veryLargeText);
       
@@ -143,8 +143,8 @@ describe('SimplifiedBloomFilter', () => {
       const chineseText1 = '人工智能机器学习深度学习神经网络';
       const chineseText2 = '机器学习人工智能算法神经网络';
       
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText(chineseText1);
       filter2.addText(chineseText2);
@@ -155,8 +155,8 @@ describe('SimplifiedBloomFilter', () => {
 
     it('should handle Japanese text', () => {
       const japaneseText = 'これは日本語のテストです。機械学習について説明します。';
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText(japaneseText);
       filter2.addText(japaneseText);
@@ -167,8 +167,8 @@ describe('SimplifiedBloomFilter', () => {
 
     it('should handle mixed language content', () => {
       const mixedText = 'Hello 世界 machine learning 机器学习 test テスト';
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText(mixedText);
       filter2.addText(mixedText);
@@ -183,10 +183,10 @@ describe('SimplifiedBloomFilter', () => {
       const englishText = 'artificial intelligence';
       const chineseText = '人工智能';
       
-      const enFilter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const enFilter2 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const zhFilter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const zhFilter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const enFilter1 = new SingleBloomFilter([3], [2048], [3]);
+      const enFilter2 = new SingleBloomFilter([3], [2048], [3]);
+      const zhFilter1 = new SingleBloomFilter([3], [2048], [3]);
+      const zhFilter2 = new SingleBloomFilter([3], [2048], [3]);
       
       enFilter1.addText(englishText);
       enFilter2.addText(englishText);
@@ -205,8 +205,8 @@ describe('SimplifiedBloomFilter', () => {
       const shortText = 'AI';
       const singleChar = 'A';
       
-      const shortFilter = new SimplifiedBloomFilter([3], [2048], [3]);
-      const singleFilter = new SimplifiedBloomFilter([3], [2048], [3]);
+      const shortFilter = new SingleBloomFilter([3], [2048], [3]);
+      const singleFilter = new SingleBloomFilter([3], [2048], [3]);
       
       shortFilter.addText(shortText);
       singleFilter.addText(singleChar);
@@ -223,8 +223,8 @@ describe('SimplifiedBloomFilter', () => {
     });
 
     it('should handle similarity computation safely', () => {
-      const filter1 = new SimplifiedBloomFilter([3], [2048], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [2048], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText('test');
       filter2.addText('different');
@@ -236,8 +236,8 @@ describe('SimplifiedBloomFilter', () => {
     });
 
     it('should handle size mismatches gracefully', () => {
-      const filter1 = new SimplifiedBloomFilter([3], [1024], [3]);
-      const filter2 = new SimplifiedBloomFilter([3], [2048], [3]);
+      const filter1 = new SingleBloomFilter([3], [1024], [3]);
+      const filter2 = new SingleBloomFilter([3], [2048], [3]);
       
       filter1.addText('test');
       filter2.addText('test');
@@ -260,11 +260,11 @@ describe('SimplifiedBloomFilter', () => {
     });
 
     it('should compute similarities efficiently', () => {
-      const filters: SimplifiedBloomFilter[] = [];
+      const filters: SingleBloomFilter[] = [];
       
       // Create multiple filters with different content
       for (let i = 0; i < 10; i++) {
-        const testFilter = new SimplifiedBloomFilter([3], [2048], [3]);
+        const testFilter = new SingleBloomFilter([3], [2048], [3]);
         testFilter.addText(`Document ${i} with some shared content`);
         filters.push(testFilter);
       }
