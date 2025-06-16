@@ -68,13 +68,31 @@ export const WORD_FILTERING = {
 } as const;
 
 /**
- * Timing and performance constants
+ * Memory safety constants - hard limits to prevent crashes
+ */
+export const MEMORY_LIMITS = {
+  /** Maximum documents to process before forced cleanup */
+  MAX_DOCUMENTS_BEFORE_CLEANUP: 10000,
+  /** Maximum memory usage estimate (MB) before cleanup */
+  MAX_MEMORY_MB: 256,
+  /** Maximum cache file size (MB) */
+  MAX_CACHE_SIZE_MB: 50,
+  /** Maximum single document size to process (MB) */
+  MAX_DOCUMENT_SIZE_MB: 10,
+} as const;
+
+/**
+ * Timing and performance constants - tuned to prevent CPU hogging
  */
 export const TIMING = {
-  /** Yield duration for async processing (ms) */
-  YIELD_DURATION_MS: 10,
+  /** Yield duration for async processing (ms) - generous to prevent blocking */
+  YIELD_DURATION_MS: 16, // ~60fps frame budget
   /** Extended yield duration for heavy operations (ms) */
-  EXTENDED_YIELD_DURATION_MS: 15,
+  EXTENDED_YIELD_DURATION_MS: 50,
+  /** CPU throttling: max operations before mandatory yield */
+  MAX_OPERATIONS_BEFORE_YIELD: 10,
+  /** CPU throttling: minimum yield time during intensive operations */
+  MIN_YIELD_TIME_MS: 16,
   /** Cache age threshold (30 days in milliseconds) */
   CACHE_AGE_THRESHOLD_MS: 30 * 24 * 60 * 60 * 1000,
   /** Milliseconds in one minute */
@@ -82,19 +100,23 @@ export const TIMING = {
 } as const;
 
 /**
- * File operation retry constants
+ * File operation retry constants - tuned for different system speeds
  */
 export const FILE_OPERATIONS = {
   /** Maximum retry attempts for file operations */
   MAX_RETRIES: 3,
-  /** Base timeout for file operations (ms) */
-  TIMEOUT_MS: 10000,
-  /** File read timeout (ms) */
-  READ_TIMEOUT_MS: 5000,
+  /** Base timeout for file operations (ms) - increased for slow systems */
+  TIMEOUT_MS: 15000,
+  /** File read timeout (ms) - adaptive based on file size */
+  READ_TIMEOUT_MS: 8000,
+  /** Cache operation timeout (ms) - longer for complex cache writes */
+  CACHE_TIMEOUT_MS: 20000,
   /** Base backoff delay (ms) */
   BASE_BACKOFF_MS: 1000,
   /** Maximum backoff delay (ms) */
-  MAX_BACKOFF_MS: 5000,
+  MAX_BACKOFF_MS: 8000,
+  /** Timeout multiplier for large files (>1MB) */
+  LARGE_FILE_TIMEOUT_MULTIPLIER: 2,
 } as const;
 
 /**

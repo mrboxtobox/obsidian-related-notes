@@ -16,7 +16,8 @@ import {
   WORD_FILTERING,
   TIMING,
   FILE_OPERATIONS,
-  CACHE
+  CACHE,
+  MEMORY_LIMITS
 } from './constants';
 import {
   handleFileError,
@@ -386,6 +387,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private cacheDirty = false;
   private cacheFilePath: string | undefined;
   private yieldInterval = 1; // Changed to yield after every document for smoother UI responsiveness
+  private isSaving = false; // Prevent concurrent cache saves
 
   // Progressive indexing properties
   private remainingFilesToIndex: TFile[] = [];
@@ -840,7 +842,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
    * @param file The file to find candidates for
    * @returns Array of potential similar files
    */
-  getCandidateFiles(file: TFile): TFile[] {
+  async getCandidateFiles(file: TFile): Promise<TFile[]> {
     if (!this.isInitialized) {
       if (isDebugMode()) {
         logIfDebugModeEnabled(`Provider not initialized yet, returning empty candidates list for ${file.path}`);
@@ -881,7 +883,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           : undefined; // undefined means no sampling
 
         // Get similar documents with potential sampling
-        const similarDocuments = this.getSimilarDocuments(file.path, maxResults, sampleSize);
+        const similarDocuments = await this.getSimilarDocuments(file.path, maxResults, sampleSize);
 
         // Convert paths to files
         const markdownFiles = this.vault.getMarkdownFiles();
@@ -1008,11 +1010,24 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
-   * Process a document and create bloom filters
+   * Process a document and create bloom filters with memory safety
    * @param docId Document identifier
    * @param text Document text
    */
   async processDocument(docId: string, text: string): Promise<void> {
+    // Memory circuit breaker - check if we should trigger cleanup
+    if (this.documentsProcessed > 0 && this.documentsProcessed % MEMORY_LIMITS.MAX_DOCUMENTS_BEFORE_CLEANUP === 0) {
+      logIfDebugModeEnabled(`Memory circuit breaker: triggering cleanup after ${this.documentsProcessed} documents`);
+      this.performMemoryCleanup();
+    }
+
+    // Skip documents that are too large to prevent memory issues
+    const maxDocSize = MEMORY_LIMITS.MAX_DOCUMENT_SIZE_MB * 1024 * 1024;
+    if (text.length > maxDocSize) {
+      logIfDebugModeEnabled(`Skipping document ${docId} - too large: ${text.length} chars (max: ${maxDocSize})`);
+      return;
+    }
+
     this.cacheDirty = true;
     const startTime = performance.now();
 
@@ -1059,18 +1074,16 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     const processed = this.preprocessText(limitedText);
     await yieldWithDuration(TIMING.YIELD_DURATION_MS);
 
-    // Add text to the filter with smaller chunks to prevent UI blocking
+    // CPU throttling: process in small chunks with mandatory yields
     const words = processed.split(/\s+/);
-    const CHUNK_SIZE = 100; // Process words in chunks
+    const CHUNK_SIZE = TIMING.MAX_OPERATIONS_BEFORE_YIELD; // Small chunks to prevent CPU hogging
     
     for (let i = 0; i < words.length; i += CHUNK_SIZE) {
       const chunk = words.slice(i, i + CHUNK_SIZE).join(' ');
       filter.addText(chunk);
       
-      // Yield more frequently for better UI responsiveness
-      if (i % CHUNK_SIZE === 0) {
-        await yieldWithDuration(5);
-      }
+      // Mandatory yield after every chunk to keep UI responsive
+      await yieldWithDuration(TIMING.MIN_YIELD_TIME_MS);
     }
 
     // Store the filter
@@ -1177,17 +1190,17 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
-   * Get most similar documents to a query document
+   * Get most similar documents to a query document with CPU throttling
    * @param queryDocId Query document ID
    * @param limit Maximum number of results
    * @param sampleSize Optional: Number of documents to sample when corpus is large
    * @returns Array of [docId, similarity] pairs, sorted by similarity
    */
-  getSimilarDocuments(
+  async getSimilarDocuments(
     queryDocId: string,
     limit: number = 10,
     sampleSize?: number
-  ): [string, number][] {
+  ): Promise<[string, number][]> {
     const startTime = performance.now();
 
     // Get the filter for the query document
@@ -1200,6 +1213,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     const results: [string, number][] = [];
     let comparisons = 0;
     let skippedComparisons = 0;
+    let operationsSinceYield = 0;
 
     // Determine if we should sample based on corpus size
     const corpusSize = this.bloomFilters.size;
@@ -1219,9 +1233,15 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       logIfDebugModeEnabled(`Large corpus detected (${corpusSize} documents), sampling ${sampleSize} documents`);
     }
 
-    // Compare with sampled documents or all documents
+    // Compare with sampled documents or all documents with CPU throttling
     for (const [docId, filter] of samplesToProcess) {
       if (docId === queryDocId) continue; // Skip self-comparison
+
+      // CPU throttling: yield control after processing a batch
+      if (++operationsSinceYield >= TIMING.MAX_OPERATIONS_BEFORE_YIELD) {
+        await new Promise(resolve => setTimeout(resolve, TIMING.MIN_YIELD_TIME_MS));
+        operationsSinceYield = 0;
+      }
 
       comparisons++;
 
@@ -1481,6 +1501,46 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
+   * Perform memory cleanup - called by circuit breaker
+   */
+  private performMemoryCleanup(): void {
+    try {
+      // Clear word frequency tracking to free memory
+      if (this.wordFrequencies.size > 1000) {
+        this.wordFrequencies.clear();
+        logIfDebugModeEnabled('Cleared word frequencies to save memory');
+      }
+
+      if (this.wordDocumentCount.size > 1000) {
+        this.wordDocumentCount.clear();
+        logIfDebugModeEnabled('Cleared word document count to save memory');
+      }
+
+      // Force garbage collection hint (if available)
+      if (typeof global !== 'undefined' && global.gc) {
+        global.gc();
+        logIfDebugModeEnabled('Triggered garbage collection');
+      }
+
+      // Log memory stats if available
+      if (typeof process !== 'undefined' && process.memoryUsage) {
+        const memUsage = process.memoryUsage();
+        const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+        logIfDebugModeEnabled(`Memory usage after cleanup: ${memMB}MB`);
+        
+        // If still using too much memory, be more aggressive
+        if (memMB > MEMORY_LIMITS.MAX_MEMORY_MB) {
+          logIfDebugModeEnabled('Memory usage still high, performing aggressive cleanup');
+          this.clear(); // Clear everything if needed
+        }
+      }
+    } catch (error) {
+      console.error('Error during memory cleanup:', error);
+      // Never let cleanup crash the app
+    }
+  }
+
+  /**
    * Get the number of documents indexed
    */
   size(): number {
@@ -1488,7 +1548,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
-   * Save the bloom filter index to disk cache
+   * Save the bloom filter index to disk cache with corruption prevention
    */
   private async saveToCache(): Promise<boolean> {
     if (!this.cacheFilePath || !this.vault.adapter) {
@@ -1507,6 +1567,13 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       logIfDebugModeEnabled('Cache is not dirty, skipping save');
       return true;
     }
+
+    // Simple duplicate save prevention - just skip if already saving
+    if (this.isSaving) {
+      logIfDebugModeEnabled('Cache save already in progress, skipping duplicate save');
+      return true; // Return success to avoid errors in calling code
+    }
+    this.isSaving = true;
 
     try {
       logIfDebugModeEnabled(`Saving bloom filter cache to ${this.cacheFilePath}`);
@@ -1558,10 +1625,54 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       const cacheDir = this.cacheFilePath.substring(0, this.cacheFilePath.lastIndexOf('/'));
       await this.vault.adapter.mkdir(cacheDir);
 
-      // Save to disk with retry logic
+      // Write to temporary file first to prevent corruption
+      const tempCachePath = `${this.cacheFilePath}.tmp`;
+      const cacheContent = JSON.stringify(cache);
+      
+      // Validate JSON serialization before writing
+      try {
+        JSON.parse(cacheContent); // Validate that we can parse what we just serialized
+      } catch (parseError) {
+        throw new Error(`Cache serialization validation failed: ${parseError}`);
+      }
+
+      // Save to temporary file with retry logic
       await this.executeFileOperationWithRetry(
-        () => this.vault.adapter.write(this.cacheFilePath, JSON.stringify(cache)),
-        'Cache save operation'
+        () => this.vault.adapter.write(tempCachePath, cacheContent),
+        'Cache temp save operation'
+      );
+
+      // Verify temp file integrity
+      const tempContent = await this.executeFileOperationWithRetry(
+        () => this.vault.adapter.read(tempCachePath),
+        'Cache temp verification'
+      );
+      
+      try {
+        const verifyCache = JSON.parse(tempContent as string);
+        if (verifyCache.version !== cache.version || 
+            Object.keys(verifyCache.filters).length !== Object.keys(cache.filters).length) {
+          throw new Error('Cache verification failed: data mismatch');
+        }
+      } catch (verifyError) {
+        await this.vault.adapter.remove(tempCachePath).catch(() => {}); // Cleanup temp file
+        throw new Error(`Cache verification failed: ${verifyError}`);
+      }
+
+      // Atomic move: rename temp file to final cache file
+      await this.executeFileOperationWithRetry(
+        async () => {
+          // Remove old cache if it exists
+          const exists = await this.vault.adapter.exists(this.cacheFilePath);
+          if (exists) {
+            await this.vault.adapter.remove(this.cacheFilePath);
+          }
+          // Copy temp to final location (some adapters don't support rename)
+          await this.vault.adapter.write(this.cacheFilePath, tempContent as string);
+          // Remove temp file
+          await this.vault.adapter.remove(tempCachePath);
+        },
+        'Cache atomic move operation'
       );
 
       logIfDebugModeEnabled(`Bloom filter cache saved: ${Object.keys(cache.filters).length} documents`);
@@ -1570,7 +1681,18 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       return true;
     } catch (error) {
       handleCacheError(error as Error, 'save cache', { cacheFilePath: this.cacheFilePath });
+      
+      // Cleanup temp file on error
+      try {
+        const tempCachePath = `${this.cacheFilePath}.tmp`;
+        await this.vault.adapter.remove(tempCachePath);
+      } catch (cleanupError) {
+        // Ignore cleanup errors
+      }
+      
       return false;
+    } finally {
+      this.isSaving = false;
     }
   }
 

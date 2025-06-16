@@ -4,7 +4,7 @@ import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import type { RelatedNotesSettings } from './settings';
 import { DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
 import { MultiResolutionBloomFilterProvider } from './multi-bloom';
-import { setDebugMode } from './logging';
+import { setDebugMode, logIfDebugModeEnabled } from './logging';
 import { BATCH_PROCESSING, BLOOM_FILTER, FILE_OPERATIONS } from './constants';
 import { handleFileError, handleIndexingError, handleUIError } from './error-handling';
 import type { AppWithSettings } from './types';
@@ -18,26 +18,30 @@ export default class RelatedNotesPlugin extends Plugin {
   private isInitialized = false;
   private isReindexing = false;
   private reindexCancelled = false;
-  private readonly reindexLock = { value: false }; // Atomic lock for reindexing
   public id: string = 'obsidian-related-notes'; // Plugin ID for settings
 
   /**
-   * Read file content with timeout and retry logic
+   * Read file content with adaptive timeout and retry logic
    * @param file The file to read
    * @param maxRetries Maximum number of retry attempts
-   * @param timeoutMs Timeout in milliseconds for each attempt
+   * @param timeoutMs Timeout in milliseconds for each attempt (adaptive based on file size)
    * @returns Promise that resolves to file content
    */
   private async readFileWithRetry(
     file: TFile,
     maxRetries: number = FILE_OPERATIONS.MAX_RETRIES,
-    timeoutMs: number = FILE_OPERATIONS.READ_TIMEOUT_MS
+    timeoutMs?: number
   ): Promise<string> {
+    // Adaptive timeout based on file size
+    const baseTimeout = timeoutMs || FILE_OPERATIONS.READ_TIMEOUT_MS;
+    const adaptiveTimeout = file.stat.size > 1024 * 1024 ? // 1MB
+      baseTimeout * FILE_OPERATIONS.LARGE_FILE_TIMEOUT_MULTIPLIER :
+      baseTimeout;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Create a timeout promise
+        // Create a timeout promise with adaptive timeout
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error(`File read timeout after ${timeoutMs}ms`)), timeoutMs);
+          setTimeout(() => reject(new Error(`File read timeout after ${adaptiveTimeout}ms (file size: ${file.stat.size} bytes)`)), adaptiveTimeout);
         });
 
         // Race between file reading and timeout
@@ -358,22 +362,12 @@ export default class RelatedNotesPlugin extends Plugin {
 
   /**
    * Forces a complete re-indexing of all notes
-   * This is useful when the user wants to ensure the index is up-to-date
-   * @throws Error if indexing is cancelled
+   * Simple implementation focused on not crashing
    */
   public async forceReindex(): Promise<void> {
-    // Use atomic lock to prevent race conditions
-    if (this.reindexLock.value) {
-      this.statusBarItem?.setText("Already indexing");
-      if (this.statusBarItem) {
-        this.statusBarItem.style.display = 'block';
-      }
-      setTimeout(() => {
-        this.statusBarItem?.setText("Indexing in progress");
-        if (this.statusBarItem) {
-          this.statusBarItem.style.display = 'block';
-        }
-      }, 1000);
+    // Simple check - if already reindexing, just return
+    if (this.isReindexing) {
+      logIfDebugModeEnabled("Reindex already in progress, skipping duplicate request");
       return;
     }
 
@@ -392,8 +386,7 @@ export default class RelatedNotesPlugin extends Plugin {
       return;
     }
 
-    // Set reindexing state with atomic lock
-    this.reindexLock.value = true;
+    // Set reindexing state
     this.isReindexing = true;
     this.reindexCancelled = false;
 
@@ -516,8 +509,7 @@ export default class RelatedNotesPlugin extends Plugin {
         this.isInitialized = true;
       }
     } finally {
-      // Reset reindexing state and release lock
-      this.reindexLock.value = false;
+      // Always reset reindexing state, no matter what happens
       this.isReindexing = false;
     }
   }
@@ -722,7 +714,6 @@ export default class RelatedNotesPlugin extends Plugin {
     this.isInitialized = false;
     this.isReindexing = false;
     this.reindexCancelled = false;
-    this.reindexLock.value = false;
 
     // Obsidian automatically detaches leaves when a plugin is unloaded
     // Note: We don't manually detach leaves here to avoid breaking user experience
@@ -840,7 +831,7 @@ export default class RelatedNotesPlugin extends Plugin {
       : undefined; // undefined means no sampling
 
     // Get candidates, potentially with sampling
-    const candidates = this.similarityProvider?.getCandidateFiles(file) || [];
+    const candidates = await this.similarityProvider?.getCandidateFiles(file) || [];
 
     // Calculate similarities for all candidates
     const similarityPromises = candidates.map(async (candidate) => {

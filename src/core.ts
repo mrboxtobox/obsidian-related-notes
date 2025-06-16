@@ -8,9 +8,6 @@ import { TFile } from 'obsidian';
 
 'use strict';
 
-// const FREQUENCY_CAP = 10; // Currently unused
-// const CACHE_VERSION = 1; // Currently unused
-
 export interface RelatedNote {
   file: TFile;
   similarity: number;
@@ -34,7 +31,7 @@ export interface SimilarityProvider {
   processDocument(docId: string, text: string): Promise<void>;
   
   // Similarity computation
-  getCandidateFiles(file: TFile): TFile[];
+  getCandidateFiles(file: TFile): Promise<TFile[]>;
   computeCappedCosineSimilarity(file1: TFile, file2: TFile): Promise<SimilarityInfo>;
   
   // Stats and metadata

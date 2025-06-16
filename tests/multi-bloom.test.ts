@@ -337,9 +337,9 @@ describe('MultiResolutionBloomFilterProvider', () => {
       expect(provider.isFileIndexed(mockFile)).toBe(true);
     });
 
-    it('should get candidate files', () => {
+    it('should get candidate files', async () => {
       const mockFile = { path: 'test.md' } as any;
-      const candidates = provider.getCandidateFiles(mockFile);
+      const candidates = await provider.getCandidateFiles(mockFile);
       
       expect(Array.isArray(candidates)).toBe(true);
     });

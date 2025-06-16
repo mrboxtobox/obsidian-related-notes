@@ -292,3 +292,47 @@ export function createError(message: string, context?: Record<string, any>): Err
   }
   return error;
 }
+
+/**
+ * Universal error wrapper - ensures no uncaught errors crash the app
+ * Use this for any operation that could potentially fail
+ */
+export async function safeAsync<T>(
+  operation: () => Promise<T>,
+  fallbackValue: T,
+  context?: string
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    const contextInfo = context ? ` (${context})` : '';
+    console.error(`[RelatedNotes] Safe operation failed${contextInfo}:`, error);
+    
+    // Log structured error if we have the handler
+    try {
+      handleUIError(error as Error, 'safe operation', context);
+    } catch (logError) {
+      // Even logging failed - just use console
+      console.error('[RelatedNotes] Error logging failed:', logError);
+    }
+    
+    return fallbackValue;
+  }
+}
+
+/**
+ * Synchronous version of safeAsync
+ */
+export function safeSync<T>(
+  operation: () => T,
+  fallbackValue: T,
+  context?: string
+): T {
+  try {
+    return operation();
+  } catch (error) {
+    const contextInfo = context ? ` (${context})` : '';
+    console.error(`[RelatedNotes] Safe sync operation failed${contextInfo}:`, error);
+    return fallbackValue;
+  }
+}
