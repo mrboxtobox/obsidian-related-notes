@@ -294,8 +294,8 @@ export default class RelatedNotesPlugin extends Plugin {
       const totalFiles = this.app.vault.getMarkdownFiles().length;
 
       // Check if progressive indexing is active
-      if (stats?.progressiveIndexing && stats.progressiveIndexing.active) {
-        const remaining = stats.progressiveIndexing.remainingFiles || 0;
+      if (stats?.progressiveIndexing && typeof stats.progressiveIndexing === 'object' && stats.progressiveIndexing !== null && 'active' in stats.progressiveIndexing && (stats.progressiveIndexing as any).active) {
+        const remaining = (stats.progressiveIndexing as any).remainingFiles || 0;
         const total = Math.max(totalFiles, 1); // Avoid division by zero
         const indexed = Math.max(0, Math.min(total - remaining, total)); // Ensure value is between 0 and total
         const percent = Math.max(0, Math.min(100, Math.round((indexed / total) * 100))); // Bound between 0-100
@@ -763,8 +763,8 @@ export default class RelatedNotesPlugin extends Plugin {
     const stats = this.similarityProvider?.getStats();
 
     // Check if progressive indexing is still active
-    if (stats?.progressiveIndexing && stats.progressiveIndexing.active) {
-      const remaining = stats.progressiveIndexing.remainingFiles || 0;
+    if (stats?.progressiveIndexing && typeof stats.progressiveIndexing === 'object' && stats.progressiveIndexing !== null && 'active' in stats.progressiveIndexing && (stats.progressiveIndexing as any).active) {
+      const remaining = (stats.progressiveIndexing as any).remainingFiles || 0;
       const totalFiles = Math.max(this.app.vault.getMarkdownFiles().length, 1); // Avoid division by zero
       const indexed = Math.max(0, Math.min(totalFiles - remaining, totalFiles)); // Ensure value is between 0 and total
       const percent = Math.max(0, Math.min(100, Math.round((indexed / totalFiles) * 100))); // Bound between 0-100
