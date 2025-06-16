@@ -281,11 +281,31 @@ export class BloomFilter {
       - Union: ${unionBits} bits
       - Items in filter 1: ${this.addedItems.size}
       - Items in filter 2: ${other.addedItems.size}
-      - Raw similarity: ${(rawSimilarity * 100).toFixed(2)}%
-      - Adjusted similarity: ${(similarity * 100).toFixed(2)}%`
+      - Raw similarity: ${(rawSimilarity * 100).toFixed(2)}%`
     );
 
     return similarity;
+  }
+
+  /**
+   * Fast intersection count for candidate selection
+   * @param other The other bloom filter to compare with
+   * @returns Number of intersecting bits (higher = more similar)
+   */
+  intersectionCount(other: BloomFilter): number {
+    // Check if filters have the same size
+    if (this.size !== other.size) {
+      return 0;
+    }
+
+    let intersectionBits = 0;
+
+    // Count intersecting bits efficiently
+    for (let i = 0; i < this.bitArray.length; i++) {
+      intersectionBits += countBits(this.bitArray[i] & other.bitArray[i]);
+    }
+
+    return intersectionBits;
   }
 }
 

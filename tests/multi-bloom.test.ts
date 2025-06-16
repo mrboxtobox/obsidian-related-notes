@@ -345,6 +345,37 @@ describe('MultiResolutionBloomFilterProvider', () => {
     });
   });
 
+  describe('Smart Candidate Selection', () => {
+    it('should select candidates for similarity comparison', async () => {
+      // Create a provider with several documents
+      for (let i = 0; i < 20; i++) {
+        const category = i % 3 === 0 ? 'science' : i % 3 === 1 ? 'history' : 'fiction';
+        const content = `This is a ${category} document about ${category} topics with ${category} content and research.`;
+        await provider.processDocument(`doc_${i}_${category}`, content);
+      }
+
+      // Add a query document 
+      await provider.processDocument('query_doc', 'This is a test document about research topics with content.');
+
+      // Test smart candidate selection
+      const smartCandidates = await provider.getSmartCandidates('query_doc', 10);
+      
+      expect(smartCandidates.length).toBeLessThanOrEqual(10);
+      expect(smartCandidates.length).toBeGreaterThan(0);
+      
+      // All candidates should be valid document IDs
+      smartCandidates.forEach(candidate => {
+        expect(typeof candidate).toBe('string');
+        expect(candidate.length).toBeGreaterThan(0);
+      });
+    }, 10000); // 10 second timeout
+
+    it('should handle empty result gracefully', async () => {
+      const candidates = await provider.getSmartCandidates('nonexistent', 10);
+      expect(candidates).toEqual([]);
+    });
+  });
+
   describe('Stats', () => {
     it('should provide comprehensive stats', () => {
       const stats = provider.getStats();

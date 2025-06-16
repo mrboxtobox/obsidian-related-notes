@@ -131,6 +131,21 @@ export class SingleBloomFilter {
   }
 
   /**
+   * Fast intersection count estimate for candidate selection
+   * @param other The other filter
+   * @returns Approximate intersection count (higher = more similar)
+   */
+  fastIntersectionCount(other: SingleBloomFilter): number {
+    try {
+      // Use the underlying bloom filter's intersection method
+      return this.filter.intersectionCount(other.filter);
+    } catch (error) {
+      console.error('Error calculating fast intersection:', error);
+      return 0;
+    }
+  }
+
+  /**
    * Extract words from text, with special handling for CJK scripts
    * @param text Input text
    * @returns Set of words and word pairs
@@ -877,13 +892,19 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         const sampleSizeThreshold = this.config.sampleSizeThreshold || 5000;
         const maxSampleSize = this.config.maxSampleSize || 1000;
 
-        // Calculate adaptive sample size if sampling is enabled
-        const sampleSize = enableSampling && corpusSize > sampleSizeThreshold
-          ? Math.min(Math.ceil(corpusSize * 0.2), maxSampleSize)
-          : undefined; // undefined means no sampling
+        // For large corpora, use smart candidate selection instead of random sampling
+        let candidateDocuments: string[];
+        
+        if (enableSampling && corpusSize > sampleSizeThreshold) {
+          // Smart candidate selection for large vaults
+          candidateDocuments = await this.getSmartCandidates(file.path, maxSampleSize);
+        } else {
+          // Small vault - use all documents
+          candidateDocuments = Array.from(this.bloomFilters.keys()).filter(path => path !== file.path);
+        }
 
-        // Get similar documents with potential sampling
-        const similarDocuments = await this.getSimilarDocuments(file.path, maxResults, sampleSize);
+        // Get similar documents from the candidate set
+        const similarDocuments = await this.getSimilarDocuments(file.path, maxResults, undefined, candidateDocuments);
 
         // Convert paths to files
         const markdownFiles = this.vault.getMarkdownFiles();
@@ -907,8 +928,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           .filter(f => f !== null);
 
         if (isDebugMode()) {
-          logIfDebugModeEnabled(`Found ${result.length} candidate files for ${file.path}${sampleSize ? ` (sampled ${sampleSize} of ${corpusSize} docs)` : ''
-            }`);
+          logIfDebugModeEnabled(`Found ${result.length} candidate files for ${file.path}`);
         }
 
         return result;
@@ -1190,16 +1210,87 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
+   * Get smart candidates for similarity comparison in large vaults
+   * Uses multiple strategies to find the most likely similar documents
+   * @param queryDocId Query document ID  
+   * @param maxCandidates Maximum number of candidates to return
+   * @returns Array of candidate document IDs
+   */
+  async getSmartCandidates(queryDocId: string, maxCandidates: number): Promise<string[]> {
+    const queryFilter = this.bloomFilters.get(queryDocId);
+    if (!queryFilter) {
+      return [];
+    }
+
+    const allDocIds = Array.from(this.bloomFilters.keys()).filter(id => id !== queryDocId);
+    const candidates = new Set<string>();
+
+    // Strategy 1: Fast bloom filter intersection check (top 70% most promising)
+    const fastCandidates: Array<[string, number]> = [];
+    
+    for (const docId of allDocIds) {
+      const otherFilter = this.bloomFilters.get(docId);
+      if (otherFilter) {
+        // Quick intersection estimate using hamming distance
+        const intersection = queryFilter.fastIntersectionCount(otherFilter);
+        if (intersection > 0) {
+          fastCandidates.push([docId, intersection]);
+        }
+      }
+    }
+
+    // Sort by intersection count and take top candidates
+    fastCandidates.sort((a, b) => b[1] - a[1]);
+    const topFastCandidates = fastCandidates
+      .slice(0, Math.min(Math.ceil(maxCandidates * 0.7), 700))
+      .map(([docId]) => docId);
+
+    topFastCandidates.forEach(docId => candidates.add(docId));
+
+    // Strategy 2: Recently modified files (recency bias)
+    const recentFiles = this.vault.getMarkdownFiles()
+      .filter((file: TFile) => file.stat.mtime > Date.now() - (30 * 24 * 60 * 60 * 1000)) // Last 30 days
+      .slice(0, Math.ceil(maxCandidates * 0.2))
+      .map((file: TFile) => file.path)
+      .filter((path: string) => this.bloomFilters.has(path) && path !== queryDocId);
+
+    recentFiles.forEach((path: string) => candidates.add(path));
+
+    // Strategy 3: Random sampling from remaining documents (exploration)
+    const remaining = allDocIds.filter(docId => !candidates.has(docId));
+    const randomSampleSize = Math.min(
+      Math.ceil(maxCandidates * 0.1),
+      remaining.length,
+      100
+    );
+
+    for (let i = 0; i < randomSampleSize; i++) {
+      const randomIndex = Math.floor(Math.random() * remaining.length);
+      candidates.add(remaining[randomIndex]);
+    }
+
+    const result = Array.from(candidates).slice(0, maxCandidates);
+    
+    if (isDebugMode()) {
+      logIfDebugModeEnabled(`Smart candidate selection: ${result.length} candidates from ${allDocIds.length} total documents`);
+    }
+
+    return result;
+  }
+
+  /**
    * Get most similar documents to a query document with CPU throttling
    * @param queryDocId Query document ID
    * @param limit Maximum number of results
-   * @param sampleSize Optional: Number of documents to sample when corpus is large
+   * @param sampleSize Optional: Number of documents to sample when corpus is large (deprecated)
+   * @param candidateDocIds Optional: Specific candidate documents to compare against
    * @returns Array of [docId, similarity] pairs, sorted by similarity
    */
   async getSimilarDocuments(
     queryDocId: string,
     limit: number = 10,
-    sampleSize?: number
+    sampleSize?: number,
+    candidateDocIds?: string[]
   ): Promise<[string, number][]> {
     const startTime = performance.now();
 
@@ -1215,26 +1306,38 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     let skippedComparisons = 0;
     let operationsSinceYield = 0;
 
-    // Determine if we should sample based on corpus size
-    const corpusSize = this.bloomFilters.size;
-    const shouldSample = sampleSize && corpusSize > sampleSize;
+    // Determine which documents to compare against
+    let documentsToProcess: Iterable<[string, any]>;
+    
+    if (candidateDocIds && candidateDocIds.length > 0) {
+      // Use provided candidate documents
+      documentsToProcess = candidateDocIds
+        .filter(docId => docId !== queryDocId && this.bloomFilters.has(docId))
+        .map(docId => [docId, this.bloomFilters.get(docId)!]);
+      
+      logIfDebugModeEnabled(`Using ${candidateDocIds.length} smart candidates for similarity comparison`);
+    } else {
+      // Fallback to legacy sampling approach
+      const corpusSize = this.bloomFilters.size;
+      const shouldSample = sampleSize && corpusSize > sampleSize;
 
-    // Convert to array for sampling if needed
-    const docEntries = shouldSample
-      ? Array.from(this.bloomFilters.entries())
-      : null;
+      // Convert to array for sampling if needed
+      const docEntries = shouldSample
+        ? Array.from(this.bloomFilters.entries())
+        : null;
 
-    // If sampling, select a random subset
-    const samplesToProcess = shouldSample
-      ? this.sampleDocuments(docEntries!, sampleSize, queryDocId)
-      : this.bloomFilters.entries();
+      // If sampling, select a random subset
+      documentsToProcess = shouldSample
+        ? this.sampleDocuments(docEntries!, sampleSize, queryDocId)
+        : this.bloomFilters.entries();
 
-    if (shouldSample) {
-      logIfDebugModeEnabled(`Large corpus detected (${corpusSize} documents), sampling ${sampleSize} documents`);
+      if (shouldSample) {
+        logIfDebugModeEnabled(`Large corpus detected (${corpusSize} documents), sampling ${sampleSize} documents`);
+      }
     }
 
-    // Compare with sampled documents or all documents with CPU throttling
-    for (const [docId, filter] of samplesToProcess) {
+    // Compare with candidate documents with CPU throttling
+    for (const [docId, filter] of documentsToProcess) {
       if (docId === queryDocId) continue; // Skip self-comparison
 
       // CPU throttling: yield control after processing a batch
@@ -1271,7 +1374,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     logIfDebugModeEnabled(`Found ${sortedResults.length} similar documents to ${queryDocId}:
       - Compared with ${comparisons - skippedComparisons} documents (${skippedComparisons} skipped)
-      - ${shouldSample ? `Sampled ${sampleSize} out of ${corpusSize} documents` : 'No sampling applied'}
+      - ${candidateDocIds ? `Using smart candidates (${candidateDocIds.length} candidates)` : 'Using all documents'}
       - No threshold applied, showing top ${limit} non-zero matches
       - Time: ${(endTime - startTime).toFixed(2)}ms
       ${sortedResults.length > 0 ? `- Top match: ${sortedResults[0][0]} (${(sortedResults[0][1] * 100).toFixed(1)}%)` : ''}`);
@@ -1740,15 +1843,27 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         return false;
       }
 
-      // Validate parameters match - only check n-gram sizes and hash functions
-      // Bloom sizes are now always fixed at 4096, so we don't need to check them
+      // Validate parameters match - check compatibility
       const params = cache.params;
+      
+      // Check for critical parameter mismatches that would cause errors
       if (!this.areArraysEqual(params.ngramSizes, this.ngramSizes) ||
-        !this.areArraysEqual(params.hashFunctions, this.hashFunctions) ||
-        params.similarityThreshold !== this.similarityThreshold) {
-        // Cache parameters do not match current settings, clearing invalid cache
-        this.deleteCache(); // Delete the invalid cache file
+        !this.areArraysEqual(params.hashFunctions, this.hashFunctions)) {
+        logIfDebugModeEnabled('Cache parameter mismatch detected, will rebuild index');
+        this.deleteCache(); // Delete the incompatible cache file
         return false;
+      }
+      
+      // Check for bloom size mismatches (less critical, but can cause errors)
+      if (params.bloomSizes && !this.areArraysEqual(params.bloomSizes, this.bloomSizes)) {
+        logIfDebugModeEnabled('Bloom filter size mismatch detected, will rebuild index');
+        this.deleteCache(); // Delete the incompatible cache file
+        return false;
+      }
+      
+      // Similarity threshold changes are ok - we can work with different thresholds
+      if (params.similarityThreshold !== this.similarityThreshold) {
+        logIfDebugModeEnabled(`Similarity threshold changed from ${params.similarityThreshold} to ${this.similarityThreshold}, continuing with cache`);
       }
 
       // Verify all bloom filters have the same size
@@ -1823,7 +1938,18 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           loadedCount++;
         } catch (error) {
           console.error(`Error restoring bloom filter for ${docId}:`, error);
-          // Continue with other filters
+          
+          // Check if this is a size mismatch error (cache incompatibility)
+          if (error instanceof Error && error.message.includes('Array length mismatch')) {
+            logIfDebugModeEnabled(`Cache format incompatibility detected for ${docId}, will rebuild index`);
+            // Clear the problematic cache entry
+            if (cache.filters && cache.filters[docId]) {
+              delete cache.filters[docId];
+            }
+          }
+          
+          // Continue with other filters - don't let one bad entry break everything
+          continue;
         }
       }
 
