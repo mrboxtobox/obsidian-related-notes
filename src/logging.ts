@@ -26,7 +26,7 @@ export function isDebugMode(): boolean {
  * @param message The message to log
  * @param data Optional data to log
  */
-export function log(message: string, ...data: any[]): void {
+export function logIfDebugModeEnabled(message: string, ...data: any[]): void {
   if (globalDebugMode) {
     console.log(`[RelatedNotes] ${message}`, ...data);
   }

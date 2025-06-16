@@ -56,40 +56,50 @@ export interface CacheData {
  * @returns True if the URL appears to be valid and safe to process
  */
 function isValidUrlPattern(url: string): boolean {
-  // Check length limits
-  if (url.length > 2000) return false;
-  if (url.length < 4) return false;
+  // Check length limits first for early exit
+  if (url.length > 2000 || url.length < 4) return false;
 
-  // Check for suspicious patterns that could cause ReDoS
-  const suspiciousPatterns = [
-    /(.+\+){10,}/, // Repeated + characters
-    /(.+\*){10,}/, // Repeated * characters
-    /(\.+){50,}/, // Excessive dots
-    /(\/{2,}){10,}/, // Repeated slashes
-    /(\?.*){10,}/, // Excessive query parameters
-    /(#.*){10,}/, // Excessive fragments
-  ];
+  // Count occurrences of potentially dangerous characters
+  let plusCount = 0;
+  let starCount = 0;
+  let dotCount = 0;
+  let slashCount = 0;
+  let questionCount = 0;
+  let hashCount = 0;
 
-  for (const pattern of suspiciousPatterns) {
-    if (pattern.test(url)) return false;
+  for (let i = 0; i < url.length; i++) {
+    const char = url[i];
+    switch (char) {
+      case '+': if (++plusCount > 10) return false; break;
+      case '*': if (++starCount > 10) return false; break;
+      case '.': if (++dotCount > 50) return false; break;
+      case '/': if (++slashCount > 20) return false; break;
+      case '?': if (++questionCount > 10) return false; break;
+      case '#': if (++hashCount > 10) return false; break;
+    }
   }
 
-  // Basic format validation
+  // Basic format validation with safe string operations
   if (url.startsWith('http://') || url.startsWith('https://')) {
-    // URL should have some content after protocol
-    const afterProtocol = url.split('://')[1];
-    return !!(afterProtocol && afterProtocol.length > 0 && afterProtocol.length < 1500);
+    const protocolIndex = url.indexOf('://');
+    if (protocolIndex === -1) return false;
+    const afterProtocol = url.substring(protocolIndex + 3);
+    return afterProtocol.length > 0 && afterProtocol.length < 1500;
   }
 
   if (url.startsWith('file://')) {
-    // File URL should have some content after protocol
-    const afterProtocol = url.split('://')[1];
-    return !!(afterProtocol && afterProtocol.length > 0 && afterProtocol.length < 800);
+    const afterProtocol = url.substring(7);
+    return afterProtocol.length > 0 && afterProtocol.length < 800;
   }
 
-  // For file extensions, just check it's reasonable
+  // For file extensions, use safe indexOf check
   const fileExtensions = ['md', 'txt', 'js', 'ts', 'html', 'css', 'json', 'py', 'java', 'rb', 'c', 'cpp', 'h', 'go', 'rs', 'php'];
-  const hasValidExtension = fileExtensions.some(ext => url.toLowerCase().endsWith(`.${ext}`));
+  const lowerUrl = url.toLowerCase();
+  const hasValidExtension = fileExtensions.some(ext => {
+    const expectedSuffix = `.${ext}`;
+    return lowerUrl.length >= expectedSuffix.length && 
+           lowerUrl.substring(lowerUrl.length - expectedSuffix.length) === expectedSuffix;
+  });
   return hasValidExtension && url.length < 500;
 }
 
@@ -162,17 +172,20 @@ export function tokenize(text: string): string {
     const urls: string[] = [];
     let urlCounter = 0;
     
-    // Simplified URL replacement - much faster
-    processed = processed.replace(
-      /https?:\/\/\S+|file:\/\/\S+|\S+\.(md|txt|js|ts|html|css|json|py|java|rb|c|cpp|h|go|rs|php)\b/g, 
-      (match) => {
-        if (match.length > 500) return match; // Skip very long matches
+    // Safe URL replacement to prevent ReDoS
+    processed = processed.replace(/\S+/g, (match) => {
+      if (match.length > 500) return match; // Skip very long matches
+      
+      // Check if this looks like a URL using safe methods
+      if (match.startsWith('http://') || match.startsWith('https://') || 
+          match.startsWith('file://') || isValidUrlPattern(match)) {
         const placeholder = `__url_${urlCounter}__`;
         urls.push(match);
         urlCounter++;
         return placeholder;
       }
-    );
+      return match;
+    });
 
     // Step 3: Handle contractions
     processed = processed.replace(

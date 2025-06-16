@@ -18,6 +18,7 @@ export default class RelatedNotesPlugin extends Plugin {
   private isInitialized = false;
   private isReindexing = false;
   private reindexCancelled = false;
+  private readonly reindexLock = { value: false }; // Atomic lock for reindexing
   public id: string = 'obsidian-related-notes'; // Plugin ID for settings
 
   /**
@@ -28,8 +29,8 @@ export default class RelatedNotesPlugin extends Plugin {
    * @returns Promise that resolves to file content
    */
   private async readFileWithRetry(
-    file: TFile, 
-    maxRetries: number = FILE_OPERATIONS.MAX_RETRIES, 
+    file: TFile,
+    maxRetries: number = FILE_OPERATIONS.MAX_RETRIES,
     timeoutMs: number = FILE_OPERATIONS.READ_TIMEOUT_MS
   ): Promise<string> {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -48,17 +49,17 @@ export default class RelatedNotesPlugin extends Plugin {
         return content;
       } catch (error) {
         handleFileError(error as Error, 'read file', file.path);
-        
+
         if (attempt === maxRetries) {
           throw new Error(`Failed to read file ${file.path} after ${maxRetries} attempts: ${error}`);
         }
-        
+
         // Exponential backoff: wait longer between retries
         const backoffMs = Math.min(FILE_OPERATIONS.BASE_BACKOFF_MS * Math.pow(2, attempt - 1), FILE_OPERATIONS.MAX_BACKOFF_MS);
         await new Promise(resolve => setTimeout(resolve, backoffMs));
       }
     }
-    
+
     throw new Error(`Unexpected error in readFileWithRetry for ${file.path}`);
   }
 
@@ -66,10 +67,14 @@ export default class RelatedNotesPlugin extends Plugin {
    * Opens the plugin settings tab
    */
   public openSettings(): void {
-    // Type-safe access to app settings
-    const app = this.app as AppWithSettings;
-    app.setting.open();
-    app.setting.openTabById(this.id);
+    // Type-safe access to app settings with validation
+    const app = this.app as any;
+    if (app?.setting?.open && app?.setting?.openTabById) {
+      app.setting.open();
+      app.setting.openTabById(this.id);
+    } else {
+      console.error('Settings interface not available');
+    }
   }
 
   /**
@@ -357,8 +362,8 @@ export default class RelatedNotesPlugin extends Plugin {
    * @throws Error if indexing is cancelled
    */
   public async forceReindex(): Promise<void> {
-    // Check if already reindexing or initial indexing is still in progress
-    if (this.isReindexing) {
+    // Use atomic lock to prevent race conditions
+    if (this.reindexLock.value) {
       this.statusBarItem?.setText("Already indexing");
       if (this.statusBarItem) {
         this.statusBarItem.style.display = 'block';
@@ -387,7 +392,8 @@ export default class RelatedNotesPlugin extends Plugin {
       return;
     }
 
-    // Set reindexing state
+    // Set reindexing state with atomic lock
+    this.reindexLock.value = true;
     this.isReindexing = true;
     this.reindexCancelled = false;
 
@@ -510,7 +516,8 @@ export default class RelatedNotesPlugin extends Plugin {
         this.isInitialized = true;
       }
     } finally {
-      // Reset reindexing state
+      // Reset reindexing state and release lock
+      this.reindexLock.value = false;
       this.isReindexing = false;
     }
   }
@@ -566,7 +573,9 @@ export default class RelatedNotesPlugin extends Plugin {
           // Just mark the similarity provider as dirty to trigger a save
           // The specific file handling is done inside the provider
           if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
-            (this.similarityProvider as any).cacheDirty = true;
+            // Safe property access using bracket notation
+            const provider = this.similarityProvider as MultiResolutionBloomFilterProvider;
+            (provider as any).cacheDirty = true;
           }
         }
       })
@@ -582,6 +591,7 @@ export default class RelatedNotesPlugin extends Plugin {
   private lastProcessTime = 0;
   private readonly PROCESS_INTERVAL = BATCH_PROCESSING.PROCESS_INTERVAL_MS; // 2 seconds between batches
   private readonly MAX_BATCH_SIZE = 5; // Process at most 5 files at once
+  private queueProcessingTimeout: number | null = null;
 
   private async updateIndexForFile(file: TFile): Promise<void> {
     if (!this.isInitialized || !this.similarityProvider) return;
@@ -682,15 +692,24 @@ export default class RelatedNotesPlugin extends Plugin {
       this.cancelReindex();
     }
 
-    // Clear any pending file updates
+    // Clear any pending file updates and timeouts
     this.fileUpdateQueue.clear();
     this.processingQueue = false;
+    if (this.queueProcessingTimeout) {
+      clearTimeout(this.queueProcessingTimeout);
+      this.queueProcessingTimeout = null;
+    }
 
-    // Save cache before unloading
+    // Save cache before unloading with timeout to prevent hanging
     if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
       try {
-        // Call the public method
-        await (this.similarityProvider as MultiResolutionBloomFilterProvider).saveCache();
+        // Use Promise.race to timeout after 5 seconds
+        await Promise.race([
+          (this.similarityProvider as MultiResolutionBloomFilterProvider).saveCache(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Cache save timeout')), 5000)
+          )
+        ]);
       } catch (error) {
         handleUIError(error as Error, 'plugin unload', 'save cache');
       }
@@ -699,8 +718,11 @@ export default class RelatedNotesPlugin extends Plugin {
     // Clean up similarity provider
     this.similarityProvider = undefined;
 
-    // Reset initialization state
+    // Reset all state flags
     this.isInitialized = false;
+    this.isReindexing = false;
+    this.reindexCancelled = false;
+    this.reindexLock.value = false;
 
     // Obsidian automatically detaches leaves when a plugin is unloaded
     // Note: We don't manually detach leaves here to avoid breaking user experience
@@ -819,22 +841,6 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Get candidates, potentially with sampling
     const candidates = this.similarityProvider?.getCandidateFiles(file) || [];
-
-    // Add informational message to status bar if sampling is active
-    if (sampleSize && totalFiles > sampleSizeThreshold) {
-      this.statusBarItem?.setText(`Large vault detected - sampling ${sampleSize} of ${totalFiles} files`);
-      if (this.statusBarItem) {
-        this.statusBarItem.style.display = 'block';
-      }
-
-      // Hide status bar after 3 seconds
-      setTimeout(() => {
-        this.statusBarItem?.setText("");
-        if (this.statusBarItem) {
-          this.statusBarItem.style.display = 'none';
-        }
-      }, 3000);
-    }
 
     // Calculate similarities for all candidates
     const similarityPromises = candidates.map(async (candidate) => {
