@@ -13,10 +13,14 @@
 		"version": "node version-bump.mjs && git add src/manifest.json manifest.json versions.json",
 		"debug": "node esbuild.config.mjs",
 		"validate": "node scripts/validate.mjs",
+		"test": "vitest",
+		"test:ui": "vitest --ui",
+		"test:run": "vitest run",
+		"test:coverage": "vitest run --coverage",
 		"release:patch": "node scripts/release.mjs patch",
 		"release:minor": "node scripts/release.mjs minor",
 		"release:major": "node scripts/release.mjs major",
-		"prepare-release": "npm run validate && npm run build"
+		"prepare-release": "npm run validate && npm run build && npm run test:run"
 	},
 	"keywords": [
 		"obsidian",
@@ -31,11 +35,13 @@
 		"@types/node": "^20.11.17",
 		"@typescript-eslint/eslint-plugin": "^7.0.1",
 		"@typescript-eslint/parser": "^7.0.1",
+		"@vitest/ui": "^1.6.1",
 		"builtin-modules": "^3.3.0",
 		"esbuild": "^0.19.12",
 		"eslint": "^8.57.0",
 		"obsidian": "latest",
 		"tslib": "^2.6.2",
-		"typescript": "^5.3.3"
+		"typescript": "^5.3.3",
+		"vitest": "^1.6.1"
 	}
 }

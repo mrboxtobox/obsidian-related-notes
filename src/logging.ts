@@ -2,8 +2,24 @@
  * Logging utilities for the Related Notes plugin
  */
 
-// Set this to true to enable debug logging
-export const DEBUG_MODE = false;
+// Global debug mode state - will be updated by the plugin
+let globalDebugMode = false;
+
+/**
+ * Set the debug mode state
+ * @param enabled Whether debug mode should be enabled
+ */
+export function setDebugMode(enabled: boolean): void {
+  globalDebugMode = enabled;
+}
+
+/**
+ * Get the current debug mode state
+ * @returns Whether debug mode is currently enabled
+ */
+export function isDebugMode(): boolean {
+  return globalDebugMode;
+}
 
 /**
  * Log a message to the console if debug mode is enabled
@@ -11,7 +27,10 @@ export const DEBUG_MODE = false;
  * @param data Optional data to log
  */
 export function log(message: string, ...data: any[]): void {
-  if (DEBUG_MODE) {
+  if (globalDebugMode) {
     console.log(`[RelatedNotes] ${message}`, ...data);
   }
 }
+
+// Legacy constant for backward compatibility (will use global state)
+export const DEBUG_MODE = false; // This is now deprecated, use isDebugMode() instead

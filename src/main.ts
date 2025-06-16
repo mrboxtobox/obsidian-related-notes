@@ -1,28 +1,75 @@
-import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace, App } from 'obsidian';
-import { RelatedNote, SimilarityProvider } from './core';
+import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian';
+import type { RelatedNote, SimilarityProvider } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
-import { RelatedNotesSettings, DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
+import type { RelatedNotesSettings } from './settings';
+import { DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
 import { MultiResolutionBloomFilterProvider } from './multi-bloom';
+import { setDebugMode } from './logging';
+import { BATCH_PROCESSING, BLOOM_FILTER, FILE_OPERATIONS } from './constants';
+import { handleFileError, handleIndexingError, handleUIError } from './error-handling';
+import type { AppWithSettings } from './types';
 
 'use strict';
 
 export default class RelatedNotesPlugin extends Plugin {
-  settings!: RelatedNotesSettings;
-  similarityProvider!: SimilarityProvider;
-  private statusBarItem!: HTMLElement;
+  settings: RelatedNotesSettings = DEFAULT_SETTINGS;
+  similarityProvider?: SimilarityProvider;
+  private statusBarItem?: HTMLElement;
   private isInitialized = false;
   private isReindexing = false;
   private reindexCancelled = false;
   public id: string = 'obsidian-related-notes'; // Plugin ID for settings
 
   /**
+   * Read file content with timeout and retry logic
+   * @param file The file to read
+   * @param maxRetries Maximum number of retry attempts
+   * @param timeoutMs Timeout in milliseconds for each attempt
+   * @returns Promise that resolves to file content
+   */
+  private async readFileWithRetry(
+    file: TFile, 
+    maxRetries: number = FILE_OPERATIONS.MAX_RETRIES, 
+    timeoutMs: number = FILE_OPERATIONS.READ_TIMEOUT_MS
+  ): Promise<string> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Create a timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`File read timeout after ${timeoutMs}ms`)), timeoutMs);
+        });
+
+        // Race between file reading and timeout
+        const content = await Promise.race([
+          this.app.vault.cachedRead(file),
+          timeoutPromise
+        ]);
+
+        return content;
+      } catch (error) {
+        handleFileError(error as Error, 'read file', file.path);
+        
+        if (attempt === maxRetries) {
+          throw new Error(`Failed to read file ${file.path} after ${maxRetries} attempts: ${error}`);
+        }
+        
+        // Exponential backoff: wait longer between retries
+        const backoffMs = Math.min(FILE_OPERATIONS.BASE_BACKOFF_MS * Math.pow(2, attempt - 1), FILE_OPERATIONS.MAX_BACKOFF_MS);
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+      }
+    }
+    
+    throw new Error(`Unexpected error in readFileWithRetry for ${file.path}`);
+  }
+
+  /**
    * Opens the plugin settings tab
    */
   public openSettings(): void {
-    // Access setting via cast to handle TypeScript error
-    const appWithSettings = this.app as App & { setting: { open: () => void, openTabById: (id: string) => void } };
-    appWithSettings.setting.open();
-    appWithSettings.setting.openTabById(this.id);
+    // Type-safe access to app settings
+    const app = this.app as AppWithSettings;
+    app.setting.open();
+    app.setting.openTabById(this.id);
   }
 
   /**
@@ -51,13 +98,11 @@ export default class RelatedNotesPlugin extends Plugin {
       ];
 
       // Attempt to remove each cache file
-      let deletedCount = 0;
       for (const cachePath of cachePaths) {
         try {
           const exists = await adapter.exists(cachePath);
           if (exists) {
             await adapter.remove(cachePath);
-            deletedCount++;
             // File deleted
           }
         } catch (err) {
@@ -70,20 +115,24 @@ export default class RelatedNotesPlugin extends Plugin {
       if (this.similarityProvider) {
         // For MultiResolutionBloomFilterProvider, we can clear its internal cache
         if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
-          this.similarityProvider.clear();
+          this.similarityProvider?.clear();
         }
       }
 
       // Cache cleared
 
       // Update status bar temporarily
-      this.statusBarItem.setText('Cache cleared');
-      this.statusBarItem.style.display = 'block';
+      this.statusBarItem?.setText('Cache cleared');
+      if (this.statusBarItem) {
+        this.statusBarItem.style.display = 'block';
+      }
 
       // Hide status bar after 3 seconds
       setTimeout(() => {
-        this.statusBarItem.setText('');
-        this.statusBarItem.style.display = 'none';
+        this.statusBarItem?.setText('');
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'none';
+        }
       }, 3000);
 
       // Set as uninitialized to trigger reindexing on next use
@@ -105,11 +154,16 @@ export default class RelatedNotesPlugin extends Plugin {
     // Load settings
     await this.loadSettings();
 
+    // Initialize debug mode from settings
+    setDebugMode(this.settings.debugMode);
+
     // Register essential components immediately
     this.registerCommands();
     this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem.setText("Initializing");
-    this.statusBarItem.style.display = 'block';
+    this.statusBarItem?.setText("Initializing");
+    if (this.statusBarItem) {
+      this.statusBarItem.style.display = 'block';
+    }
 
     // Add settings tab
     this.addSettingTab(new RelatedNotesSettingTab(this.app, this));
@@ -126,6 +180,8 @@ export default class RelatedNotesPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    // Update debug mode when settings are saved
+    setDebugMode(this.settings.debugMode);
   }
 
   private async initializePlugin() {
@@ -171,7 +227,7 @@ export default class RelatedNotesPlugin extends Plugin {
     }
 
     // Ensure all bloom filters use the same size
-    const defaultSize = 8192; // Increased filter size to reduce false positives
+    const defaultSize = BLOOM_FILTER.DEFAULT_FILTER_SIZE; // Increased filter size to reduce false positives
     // Make sure all bloom filters have the exact same size to prevent comparison issues
     const bloomSizes = this.settings.ngramSizes.map(() => defaultSize);
 
@@ -203,8 +259,10 @@ export default class RelatedNotesPlugin extends Plugin {
     });
 
     // Show initial status
-    this.statusBarItem.setText("Indexing notes...");
-    this.statusBarItem.style.display = 'block';
+    this.statusBarItem?.setText("Indexing notes...");
+    if (this.statusBarItem) {
+      this.statusBarItem.style.display = 'block';
+    }
 
     // Use setTimeout to defer heavy initialization to the next event loop
     // This prevents UI blocking during startup
@@ -217,44 +275,49 @@ export default class RelatedNotesPlugin extends Plugin {
     try {
       // Initialize with progress reporting and smooth transitions
       // Pass the skipInitialIndexing setting to prevent reindexing on every load
-      await this.similarityProvider.initialize((processed, total) => {
+      await this.similarityProvider?.initialize((processed, total) => {
         const percentage = Math.round((processed / total) * 100);
         let message = "";
-        let phase = "Indexing";
+        const phase = "Indexing";
 
         // Simple progress message with percentage (following Obsidian style guide)
         message = `${phase} notes: ${percentage}%`;
 
-        this.statusBarItem.setText(message);
-        this.statusBarItem.style.display = 'block';
+        this.statusBarItem?.setText(message);
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'block';
+        }
       });
 
       // Get stats for status bar
-      const stats = this.similarityProvider.getStats();
+      const stats = this.similarityProvider?.getStats();
       const totalFiles = this.app.vault.getMarkdownFiles().length;
-      const indexedFiles = stats.documentsIndexed || 0;
 
       // Check if progressive indexing is active
-      if (stats.progressiveIndexing && stats.progressiveIndexing.active) {
+      if (stats?.progressiveIndexing && stats.progressiveIndexing.active) {
         const remaining = stats.progressiveIndexing.remainingFiles || 0;
         const total = Math.max(totalFiles, 1); // Avoid division by zero
         const indexed = Math.max(0, Math.min(total - remaining, total)); // Ensure value is between 0 and total
         const percent = Math.max(0, Math.min(100, Math.round((indexed / total) * 100))); // Bound between 0-100
 
         // Show a subtle indicator that progressive indexing is active
-        this.statusBarItem.setText(`Indexing: ${percent}%`);
-        this.statusBarItem.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
-        this.statusBarItem.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
-        this.statusBarItem.style.display = 'block';
+        this.statusBarItem?.setText(`Indexing: ${percent}%`);
+        this.statusBarItem?.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
+        this.statusBarItem?.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'block';
+        }
 
         // Set a timer to periodically update the status
         setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
       } else {
         // Remove status bar item when indexing is complete
-        this.statusBarItem.setText("");
-        this.statusBarItem.removeAttribute('aria-label');
-        this.statusBarItem.removeAttribute('title');
-        this.statusBarItem.style.display = 'none';
+        this.statusBarItem?.setText("");
+        this.statusBarItem?.removeAttribute('aria-label');
+        this.statusBarItem?.removeAttribute('title');
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'none';
+        }
       }
 
       this.isInitialized = true;
@@ -262,20 +325,24 @@ export default class RelatedNotesPlugin extends Plugin {
       // Handle cancellation error explicitly
       if (error instanceof Error && error.message === 'Indexing cancelled') {
         // Set a proper status message
-        this.statusBarItem.setText("Indexing cancelled");
+        this.statusBarItem?.setText("Indexing cancelled");
         setTimeout(() => {
-          this.statusBarItem.setText("");
-          this.statusBarItem.style.display = 'none';
+          this.statusBarItem?.setText("");
+          if (this.statusBarItem) {
+            this.statusBarItem.style.display = 'none';
+          }
         }, 2000);
 
         // Even if cancelled, mark as initialized to prevent blocking the UI
         this.isInitialized = true;
       } else {
         // For other errors, show error message
-        this.statusBarItem.setText("Indexing error");
+        this.statusBarItem?.setText("Indexing error");
         setTimeout(() => {
-          this.statusBarItem.setText("");
-          this.statusBarItem.style.display = 'none';
+          this.statusBarItem?.setText("");
+          if (this.statusBarItem) {
+            this.statusBarItem.style.display = 'none';
+          }
         }, 3000);
 
         // Mark as initialized even on error to prevent perpetual loading state
@@ -292,22 +359,30 @@ export default class RelatedNotesPlugin extends Plugin {
   public async forceReindex(): Promise<void> {
     // Check if already reindexing or initial indexing is still in progress
     if (this.isReindexing) {
-      this.statusBarItem.setText("Already indexing");
-      this.statusBarItem.style.display = 'block';
-      setTimeout(() => {
-        this.statusBarItem.setText("Indexing in progress");
+      this.statusBarItem?.setText("Already indexing");
+      if (this.statusBarItem) {
         this.statusBarItem.style.display = 'block';
+      }
+      setTimeout(() => {
+        this.statusBarItem?.setText("Indexing in progress");
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'block';
+        }
       }, 1000);
       return;
     }
 
     // Check if initial indexing is still in progress
     if (!this.isInitialized) {
-      this.statusBarItem.setText("Initial indexing in progress");
-      this.statusBarItem.style.display = 'block';
-      setTimeout(() => {
-        this.statusBarItem.setText("Indexing in progress");
+      this.statusBarItem?.setText("Initial indexing in progress");
+      if (this.statusBarItem) {
         this.statusBarItem.style.display = 'block';
+      }
+      setTimeout(() => {
+        this.statusBarItem?.setText("Indexing in progress");
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'block';
+        }
       }, 1000);
       return;
     }
@@ -319,8 +394,10 @@ export default class RelatedNotesPlugin extends Plugin {
     try {
       // Update status bar
       this.isInitialized = false;
-      this.statusBarItem.setText("Indexing notes");
-      this.statusBarItem.style.display = 'block';
+      this.statusBarItem?.setText("Indexing notes");
+      if (this.statusBarItem) {
+        this.statusBarItem.style.display = 'block';
+      }
 
       // Create a cancellation checker function
       let lastCheckTime = Date.now();
@@ -344,7 +421,7 @@ export default class RelatedNotesPlugin extends Plugin {
       };
 
       // Force re-indexing with progress reporting and cancellation checks
-      await this.similarityProvider.forceReindex(async (processed, total) => {
+      await this.similarityProvider?.forceReindex(async (processed, total) => {
         try {
           // Check for cancellation periodically
           if (processed % 10 === 0) {
@@ -366,8 +443,10 @@ export default class RelatedNotesPlugin extends Plugin {
 
           // Simple progress message with percentage (following Obsidian style guide)
           message = `${phase} notes: ${percentage}%`;
-          this.statusBarItem.setText(message);
-          this.statusBarItem.style.display = 'block';
+          this.statusBarItem?.setText(message);
+          if (this.statusBarItem) {
+            this.statusBarItem.style.display = 'block';
+          }
         } catch (error) {
           // Propagate cancellation errors
           if (error instanceof Error && error.message === 'Indexing cancelled') {
@@ -379,14 +458,16 @@ export default class RelatedNotesPlugin extends Plugin {
       });
 
       // Clear status bar after re-indexing
-      this.statusBarItem.setText("Indexing complete");
+      this.statusBarItem?.setText("Indexing complete");
       setTimeout(() => {
-        this.statusBarItem.setText("");
-        this.statusBarItem.style.display = 'none';
+        this.statusBarItem?.setText("");
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'none';
+        }
       }, 3000);
 
-      this.statusBarItem.removeAttribute('aria-label');
-      this.statusBarItem.removeAttribute('title');
+      this.statusBarItem?.removeAttribute('aria-label');
+      this.statusBarItem?.removeAttribute('title');
 
       this.isInitialized = true;
 
@@ -404,10 +485,12 @@ export default class RelatedNotesPlugin extends Plugin {
     } catch (error) {
       // If indexing was cancelled, update the status bar
       if (error instanceof Error && error.message === 'Indexing cancelled') {
-        this.statusBarItem.setText("Re-indexing cancelled");
+        this.statusBarItem?.setText("Re-indexing cancelled");
         setTimeout(() => {
-          this.statusBarItem.setText("");
-          this.statusBarItem.style.display = 'none';
+          this.statusBarItem?.setText("");
+          if (this.statusBarItem) {
+            this.statusBarItem.style.display = 'none';
+          }
         }, 2000);
 
         // Restore initialized state
@@ -415,10 +498,12 @@ export default class RelatedNotesPlugin extends Plugin {
       } else {
         // For other errors, log and update status bar
         console.error('Error during re-indexing:', error);
-        this.statusBarItem.setText("Error during re-indexing");
+        this.statusBarItem?.setText("Error during re-indexing");
         setTimeout(() => {
-          this.statusBarItem.setText("");
-          this.statusBarItem.style.display = 'none';
+          this.statusBarItem?.setText("");
+          if (this.statusBarItem) {
+            this.statusBarItem.style.display = 'none';
+          }
         }, 2000);
 
         // Restore initialized state for other errors too
@@ -437,13 +522,15 @@ export default class RelatedNotesPlugin extends Plugin {
     if (this.isReindexing) {
       this.reindexCancelled = true;
       // Also stop the similarity provider directly
-      this.similarityProvider.stop();
+      this.similarityProvider?.stop();
       // Update the status immediately (following Obsidian style guide)
-      this.statusBarItem.setText("Indexing cancelled");
+      this.statusBarItem?.setText("Indexing cancelled");
       // Hide status after a short delay
       setTimeout(() => {
-        this.statusBarItem.setText("");
-        this.statusBarItem.style.display = 'none';
+        this.statusBarItem?.setText("");
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'none';
+        }
       }, 2000);
       // Restore initialized state
       this.isInitialized = true;
@@ -493,7 +580,7 @@ export default class RelatedNotesPlugin extends Plugin {
   private fileUpdateQueue = new Set<string>();
   private processingQueue = false;
   private lastProcessTime = 0;
-  private readonly PROCESS_INTERVAL = 2000; // 2 seconds between batches
+  private readonly PROCESS_INTERVAL = BATCH_PROCESSING.PROCESS_INTERVAL_MS; // 2 seconds between batches
   private readonly MAX_BATCH_SIZE = 5; // Process at most 5 files at once
 
   private async updateIndexForFile(file: TFile): Promise<void> {
@@ -542,8 +629,8 @@ export default class RelatedNotesPlugin extends Plugin {
       try {
         const file = this.app.vault.getAbstractFileByPath(filePath);
         if (file instanceof TFile) {
-          // Get file content
-          const content = await this.app.vault.cachedRead(file);
+          // Get file content with timeout and retry logic
+          const content = await this.readFileWithRetry(file);
 
           // Extract title from the file path and add it to the content for improved matching
           const fileName = file.basename;
@@ -551,10 +638,10 @@ export default class RelatedNotesPlugin extends Plugin {
 
           // Process with a yield to keep UI responsive
           await new Promise(resolve => setTimeout(resolve, 10));
-          await this.similarityProvider.processDocument(file.path, enhancedContent);
+          await this.similarityProvider?.processDocument(file.path, enhancedContent);
         }
       } catch (error) {
-        console.error(`Error updating index for file ${filePath}:`, error);
+        handleIndexingError(error as Error, filePath, { operation: 'file index update' });
       }
     }
 
@@ -580,7 +667,24 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   async onunload() {
-    // Obsidian automatically detaches leaves when a plugin is unloaded
+    // Stop all ongoing operations first
+    if (this.similarityProvider) {
+      try {
+        // Stop any indexing operations
+        this.similarityProvider?.stop();
+      } catch (error) {
+        handleUIError(error as Error, 'plugin unload', 'stop operations');
+      }
+    }
+
+    // Cancel reindexing if in progress
+    if (this.isReindexing) {
+      this.cancelReindex();
+    }
+
+    // Clear any pending file updates
+    this.fileUpdateQueue.clear();
+    this.processingQueue = false;
 
     // Save cache before unloading
     if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
@@ -588,9 +692,18 @@ export default class RelatedNotesPlugin extends Plugin {
         // Call the public method
         await (this.similarityProvider as MultiResolutionBloomFilterProvider).saveCache();
       } catch (error) {
-        console.error('Error saving cache during unload:', error);
+        handleUIError(error as Error, 'plugin unload', 'save cache');
       }
     }
+
+    // Clean up similarity provider
+    this.similarityProvider = undefined;
+
+    // Reset initialization state
+    this.isInitialized = false;
+
+    // Obsidian automatically detaches leaves when a plugin is unloaded
+    // Note: We don't manually detach leaves here to avoid breaking user experience
   }
 
   private async toggleRelatedNotes(workspace: Workspace) {
@@ -647,29 +760,33 @@ export default class RelatedNotesPlugin extends Plugin {
     if (!this.isInitialized) return;
 
     // Get the latest stats
-    const stats = this.similarityProvider.getStats();
+    const stats = this.similarityProvider?.getStats();
 
     // Check if progressive indexing is still active
-    if (stats.progressiveIndexing && stats.progressiveIndexing.active) {
+    if (stats?.progressiveIndexing && stats.progressiveIndexing.active) {
       const remaining = stats.progressiveIndexing.remainingFiles || 0;
       const totalFiles = Math.max(this.app.vault.getMarkdownFiles().length, 1); // Avoid division by zero
       const indexed = Math.max(0, Math.min(totalFiles - remaining, totalFiles)); // Ensure value is between 0 and total
       const percent = Math.max(0, Math.min(100, Math.round((indexed / totalFiles) * 100))); // Bound between 0-100
 
       // Update the status bar
-      this.statusBarItem.setText(`Indexing: ${percent}%`);
-      this.statusBarItem.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
-      this.statusBarItem.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
-      this.statusBarItem.style.display = 'block';
+      this.statusBarItem?.setText(`Indexing: ${percent}%`);
+      this.statusBarItem?.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
+      this.statusBarItem?.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
+      if (this.statusBarItem) {
+        this.statusBarItem.style.display = 'block';
+      }
 
       // Schedule another update
       setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
     } else {
       // No longer doing progressive indexing, hide the status
-      this.statusBarItem.setText("");
-      this.statusBarItem.removeAttribute('aria-label');
-      this.statusBarItem.removeAttribute('title');
-      this.statusBarItem.style.display = 'none';
+      this.statusBarItem?.setText("");
+      this.statusBarItem?.removeAttribute('aria-label');
+      this.statusBarItem?.removeAttribute('title');
+      if (this.statusBarItem) {
+        this.statusBarItem.style.display = 'none';
+      }
     }
   }
 
@@ -701,26 +818,30 @@ export default class RelatedNotesPlugin extends Plugin {
       : undefined; // undefined means no sampling
 
     // Get candidates, potentially with sampling
-    const candidates = this.similarityProvider.getCandidateFiles(file);
+    const candidates = this.similarityProvider?.getCandidateFiles(file) || [];
 
     // Add informational message to status bar if sampling is active
     if (sampleSize && totalFiles > sampleSizeThreshold) {
-      this.statusBarItem.setText(`Large vault detected - sampling ${sampleSize} of ${totalFiles} files`);
-      this.statusBarItem.style.display = 'block';
+      this.statusBarItem?.setText(`Large vault detected - sampling ${sampleSize} of ${totalFiles} files`);
+      if (this.statusBarItem) {
+        this.statusBarItem.style.display = 'block';
+      }
 
       // Hide status bar after 3 seconds
       setTimeout(() => {
-        this.statusBarItem.setText("");
-        this.statusBarItem.style.display = 'none';
+        this.statusBarItem?.setText("");
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'none';
+        }
       }, 3000);
     }
 
     // Calculate similarities for all candidates
     const similarityPromises = candidates.map(async (candidate) => {
-      const similarity = await this.similarityProvider.computeCappedCosineSimilarity(file, candidate);
+      const similarity = await this.similarityProvider?.computeCappedCosineSimilarity(file, candidate);
       return {
         file: candidate,
-        similarity: similarity.similarity,
+        similarity: similarity?.similarity || 0,
         isPreIndexed: true
       };
     });

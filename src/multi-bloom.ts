@@ -7,8 +7,22 @@
 
 import { tokenize, SimilarityProvider, SimilarityInfo } from './core';
 import { BloomFilter } from './bloom';
-import { TFile, TAbstractFile } from 'obsidian';
-import { DEBUG_MODE, log } from './logging';
+import { TFile } from 'obsidian';
+import { isDebugMode, log } from './logging';
+import { 
+  TEXT_PROCESSING, 
+  BLOOM_FILTER, 
+  BATCH_PROCESSING, 
+  WORD_FILTERING, 
+  TIMING, 
+  FILE_OPERATIONS,
+  CACHE
+} from './constants';
+import { 
+  handleFileError, 
+  handleCacheError, 
+  handleValidationError
+} from './error-handling';
 
 /**
  * Optimal bloom filter size calculation
@@ -38,8 +52,9 @@ export function calculateOptimalHashFunctions(size: number, itemCount: number): 
 /**
  * Simplified bloom filter that uses word-based tokenization
  * Optimized for better latency
+ * Note: Despite the name, this uses a single resolution approach for performance
  */
-export class MultiResolutionBloomFilter {
+export class SimplifiedBloomFilter {
   // Single bloom filter for simplicity
   readonly filter: BloomFilter;
 
@@ -74,7 +89,7 @@ export class MultiResolutionBloomFilter {
     // Create single bloom filter
     this.filter = new BloomFilter(this.bloomSize, this.hashFunctionCount);
 
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Created simplified BloomFilter with ${this.bloomSize} bits, ${this.hashFunctionCount} hash functions`);
     }
   }
@@ -95,7 +110,7 @@ export class MultiResolutionBloomFilter {
       this.itemCount++;
     }
 
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Added ${words.size} words to bloom filter`);
     }
   }
@@ -105,7 +120,7 @@ export class MultiResolutionBloomFilter {
    * @param other The other filter
    * @returns Similarity score between 0 and 1
    */
-  similarity(other: MultiResolutionBloomFilter): number {
+  similarity(other: SimplifiedBloomFilter): number {
     try {
       // Direct comparison of the underlying bloom filters
       return this.filter.similarity(other.filter);
@@ -136,7 +151,7 @@ export class MultiResolutionBloomFilter {
 
     // Add word pairs (bigrams) for context
     // Use a lower limit for CJK text to avoid too many bigrams
-    const maxBigrams = hasCJK ? 100 : 200;
+    const maxBigrams = hasCJK ? BLOOM_FILTER.MAX_BIGRAMS_CJK : BLOOM_FILTER.MAX_BIGRAMS_NON_CJK;
     let count = 0;
 
     for (let i = 0; i < words.length - 1 && count < maxBigrams; i++) {
@@ -243,7 +258,7 @@ export class AdaptiveParameterCalculator {
   calculateOptimalBloomSizes(ngramSizes: number[], falsePositiveRate: number = 0.01): number[] {
     // Always use a consistent bloom filter size (2048 bits) for all n-gram sizes
     // This ensures compatibility when comparing filters while reducing memory usage
-    const fixedSize = 8192; // Reduced from 4096 for faster indexing
+    const fixedSize = BLOOM_FILTER.DEFAULT_FILTER_SIZE; // Reduced from 4096 for faster indexing
     return ngramSizes.map(() => fixedSize);
 
     /* Original adaptive code commented out for reference:
@@ -353,7 +368,7 @@ export class AdaptiveParameterCalculator {
  * Implements the SimilarityProvider interface from core.ts
  */
 export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
-  private readonly bloomFilters = new Map<string, MultiResolutionBloomFilter>();
+  private readonly bloomFilters = new Map<string, SimplifiedBloomFilter>();
   private readonly documentNgrams = new Map<string, Map<number, Set<string>>>();
   private readonly config: any;
   private readonly parameterCalculator = new AdaptiveParameterCalculator();
@@ -362,7 +377,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private hashFunctions: number[];
   private similarityThreshold: number;
   private adaptiveParameters = false;
-  private parameterUpdateInterval = 50; // Reduced from 100 to 50 for faster parameter adaptation
+  private parameterUpdateInterval = BLOOM_FILTER.PARAMETER_UPDATE_INTERVAL; // Reduced from 100 to 50 for faster parameter adaptation
   private documentsProcessed = 0;
   private vault: any;
   private onProgressCallback: ((progress: number) => void) | null = null;
@@ -370,7 +385,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private isInitialized = false;
   private cacheReady = false;
   private cacheDirty = false;
-  private cacheFilePath: string = '';
+  private cacheFilePath: string | undefined;
   private yieldInterval = 1; // Changed to yield after every document for smoother UI responsiveness
 
   // Progressive indexing properties
@@ -387,7 +402,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private commonWordsThreshold = 0.4; // Reduced from 0.5 to filter more words
   private commonWordsComputed = false;
   private minWordLength = 2;
-  private maxStopwords = 250; // Increased from 200 to filter more common words
+  private maxStopwords = WORD_FILTERING.MAX_STOPWORDS; // Increased from 200 to filter more common words
 
   constructor(vault: any, config: any = {}) {
     this.vault = vault;
@@ -422,9 +437,20 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       this.yieldInterval = config.yieldInterval;
     }
 
-    // Setup cache file path
+    // Setup cache file path with validation
     if (vault.adapter && vault.configDir) {
-      this.cacheFilePath = `${vault.configDir}/plugins/obsidian-related-notes/.bloom-filter-cache.json`;
+      try {
+        // Validate and normalize the config directory path
+        const configDir = this.validateConfigDir(vault.configDir);
+        this.cacheFilePath = `${configDir}${CACHE.RELATIVE_PATH}${CACHE.FILENAME}`;
+        log(`Cache path set to: ${this.cacheFilePath}`);
+      } catch (error) {
+        handleValidationError(error as Error, 'cache path setup', vault.configDir);
+        this.cacheFilePath = undefined;
+      }
+    } else {
+      console.warn('Vault adapter or configDir not available, cache will be disabled');
+      this.cacheFilePath = undefined;
     }
 
     log(`Created MultiResolutionBloomFilterProvider with:
@@ -472,7 +498,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       };
 
       // Process files in smaller batches for better UI responsiveness
-      const batchSize = 3; // Even smaller batch size for more frequent UI updates
+      const batchSize = BATCH_PROCESSING.SMALL_BATCH_SIZE; // Even smaller batch size for more frequent UI updates
       let processedCount = 0;
 
       // Enhanced yielding function with variable durations
@@ -481,7 +507,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       };
 
       // Optimize for large vaults
-      const LARGE_VAULT_THRESHOLD = 5000;
+      const LARGE_VAULT_THRESHOLD = WORD_FILTERING.LARGE_VAULT_THRESHOLD;
       const isLargeVault = totalFiles > LARGE_VAULT_THRESHOLD;
 
       // For large vaults, we may want to process only a subset of files
@@ -511,7 +537,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         // Priority 2: Get currently active file
         const activeLeaf = this.vault.getActiveLeaf?.();
         const activeFile = activeLeaf?.view?.file as TFile | undefined;
-        let activeFiles: TFile[] = [];
+        const activeFiles: TFile[] = [];
 
         if (activeFile && !recentFiles.includes(activeFile)) {
           activeFiles.push(activeFile);
@@ -655,7 +681,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     }
 
     // Log that stop was requested to help with debugging
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log('Stop requested for ongoing indexing operation');
     }
   }
@@ -671,7 +697,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       return;
     }
 
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Scheduling progressive indexing for ${this.remainingFilesToIndex.length} remaining files`);
     }
 
@@ -679,8 +705,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     // Process a small batch of files every few minutes
     // This spreads the indexing load over time
-    const BATCH_SIZE = 20; // Process 20 files at a time
-    const INTERVAL_MINUTES = 5; // Process a batch every 5 minutes
+    const BATCH_SIZE = BATCH_PROCESSING.FILES_PER_BATCH; // Process 20 files at a time
+    const INTERVAL_MINUTES = BATCH_PROCESSING.PROGRESSIVE_INTERVAL_MINUTES; // Process a batch every 5 minutes
 
     let progressiveIndexCount = 0;
 
@@ -694,7 +720,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           this.isProgressiveIndexingRunning = false;
         }
 
-        if (DEBUG_MODE) {
+        if (isDebugMode()) {
           log(`Progressive indexing completed or stopped after processing ${progressiveIndexCount} files`);
         }
 
@@ -706,7 +732,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       // Take the next batch of files
       const batchToProcess = this.remainingFilesToIndex.splice(0, BATCH_SIZE);
 
-      if (DEBUG_MODE) {
+      if (isDebugMode()) {
         log(`Progressive indexing: processing batch of ${batchToProcess.length} files (${this.remainingFilesToIndex.length} remaining)`);
       }
 
@@ -743,7 +769,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         this.isProgressiveIndexingRunning = false;
         this.hasPartialIndex = false;
 
-        if (DEBUG_MODE) {
+        if (isDebugMode()) {
           log(`Progressive indexing completed after processing ${progressiveIndexCount} files`);
         }
       }
@@ -816,7 +842,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
    */
   getCandidateFiles(file: TFile): TFile[] {
     if (!this.isInitialized) {
-      if (DEBUG_MODE) {
+      if (isDebugMode()) {
         log(`Provider not initialized yet, returning empty candidates list for ${file.path}`);
       }
       return [];
@@ -825,7 +851,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     try {
       // If the file isn't in our index yet, process it
       if (!this.bloomFilters.has(file.path)) {
-        if (DEBUG_MODE) {
+        if (isDebugMode()) {
           log(`File ${file.path} not in index yet, will process on-demand`);
         }
 
@@ -878,7 +904,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           })
           .filter(f => f !== null);
 
-        if (DEBUG_MODE) {
+        if (isDebugMode()) {
           log(`Found ${result.length} candidate files for ${file.path}${sampleSize ? ` (sampled ${sampleSize} of ${corpusSize} docs)` : ''
             }`);
         }
@@ -996,34 +1022,34 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     };
 
     // Initial yield before any processing
-    await yieldWithDuration(10);
+    await yieldWithDuration(TIMING.YIELD_DURATION_MS);
 
     // Skip adaptive parameters for better performance
     this.documentsProcessed++;
 
     // For very large documents, limit the content to process
     // This drastically improves performance for huge files
-    const processLimit = 10000; // Character limit
+    const processLimit = TEXT_PROCESSING.LARGE_DOCUMENT_LIMIT; // Character limit
     const isLargeDocument = text.length > processLimit;
 
-    if (isLargeDocument && DEBUG_MODE) {
+    if (isLargeDocument && isDebugMode()) {
       log(`Large document detected (${text.length} chars), limiting to ${processLimit} chars`);
     }
 
-    const limitedText = isLargeDocument ? text.substring(0, processLimit) : text;
+    const limitedText = isLargeDocument ? this.smartTruncateText(text, processLimit) : text;
 
     // Track word frequencies for adaptive stopwords
     this.trackWordFrequencies(docId, limitedText);
-    await yieldWithDuration(10);
+    await yieldWithDuration(TIMING.YIELD_DURATION_MS);
 
     // Compute common words if enough documents processed
     if (this.totalDocuments >= 30 && !this.commonWordsComputed) {
       this.computeCommonWords();
-      await yieldWithDuration(15);
+      await yieldWithDuration(TIMING.EXTENDED_YIELD_DURATION_MS);
     }
 
     // Create a simplified bloom filter (word-based, single resolution)
-    const filter = new MultiResolutionBloomFilter(
+    const filter = new SimplifiedBloomFilter(
       [3], // Single n-gram size (kept as array for backward compatibility)
       [2048], // Reduced bloom filter size for word-level indexing
       [3] // Hash functions
@@ -1031,7 +1057,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     // Pre-process text to filter stopwords if we've computed them
     const processed = this.preprocessText(limitedText);
-    await yieldWithDuration(10);
+    await yieldWithDuration(TIMING.YIELD_DURATION_MS);
 
     // Add text to the filter
     filter.addText(processed);
@@ -1047,7 +1073,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // Final yield to ensure UI responsiveness
     await yieldWithDuration(5);
 
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Processed document ${docId} in ${(endTime - startTime).toFixed(2)}ms`);
     }
   }
@@ -1121,7 +1147,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     // If either filter is missing, return 0
     if (!filter1 || !filter2) {
-      if (DEBUG_MODE) {
+      if (isDebugMode()) {
         if (!filter1) log(`Document ${docId1} not found`);
         if (!filter2) log(`Document ${docId2} not found`);
       }
@@ -1133,7 +1159,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     const endTime = performance.now();
 
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Similarity calculation for ${docId1} and ${docId2}: ${(similarity * 100).toFixed(2)}% in ${(endTime - startTime).toFixed(2)}ms`);
     }
 
@@ -1157,7 +1183,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // Get the filter for the query document
     const queryFilter = this.bloomFilters.get(queryDocId);
     if (!queryFilter) {
-      if (DEBUG_MODE) log(`Query document ${queryDocId} not found`);
+      if (isDebugMode()) log(`Query document ${queryDocId} not found`);
       return [];
     }
 
@@ -1179,7 +1205,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       ? this.sampleDocuments(docEntries!, sampleSize, queryDocId)
       : this.bloomFilters.entries();
 
-    if (shouldSample && DEBUG_MODE) {
+    if (shouldSample && isDebugMode()) {
       log(`Large corpus detected (${corpusSize} documents), sampling ${sampleSize} documents`);
     }
 
@@ -1200,7 +1226,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       } catch (error) {
         // Log error but continue processing other documents
         skippedComparisons++;
-        if (DEBUG_MODE) {
+        if (isDebugMode()) {
           log(`Error comparing ${queryDocId} with ${docId}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
@@ -1213,7 +1239,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     const endTime = performance.now();
 
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Found ${sortedResults.length} similar documents to ${queryDocId}:
         - Compared with ${comparisons - skippedComparisons} documents (${skippedComparisons} skipped)
         - ${shouldSample ? `Sampled ${sampleSize} out of ${corpusSize} documents` : 'No sampling applied'}
@@ -1234,10 +1260,10 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
    * @returns Array of sampled [docId, filter] pairs
    */
   private sampleDocuments(
-    documents: [string, MultiResolutionBloomFilter][],
+    documents: [string, SimplifiedBloomFilter][],
     sampleSize: number,
     queryDocId: string
-  ): [string, MultiResolutionBloomFilter][] {
+  ): [string, SimplifiedBloomFilter][] {
     // Skip the query document
     const filteredDocs = documents.filter(([docId]) => docId !== queryDocId);
 
@@ -1268,7 +1294,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     const params = this.parameterCalculator.generateRecommendedParameters(0.05); // Increased false positive rate from 0.01 to 0.05 for better performance
 
     // Log changes to parameters
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Updating parameters after analyzing ${this.documentsProcessed} documents:
         - n-gram sizes: [${this.ngramSizes.join(', ')}] -> [${params.ngramSizes.join(', ')}]
         - bloom sizes: [${this.bloomSizes.join(', ')}] (keeping fixed size for compatibility)
@@ -1359,7 +1385,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // Mark as computed
     this.commonWordsComputed = true;
 
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Computed ${this.commonWords.size} common words from ${this.totalDocuments} documents`);
 
       if (this.commonWords.size <= 50) {
@@ -1445,6 +1471,13 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       return false;
     }
 
+    // Validate cache directory before attempting to save
+    const isDirValid = await this.validateCacheDirectory();
+    if (!isDirValid) {
+      console.error('Cache directory is not accessible, cannot save cache');
+      return false;
+    }
+
     if (!this.cacheDirty) {
       log('Cache is not dirty, skipping save');
       return true;
@@ -1500,15 +1533,18 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       const cacheDir = this.cacheFilePath.substring(0, this.cacheFilePath.lastIndexOf('/'));
       await this.vault.adapter.mkdir(cacheDir);
 
-      // Save to disk
-      await this.vault.adapter.write(this.cacheFilePath, JSON.stringify(cache));
+      // Save to disk with retry logic
+      await this.executeFileOperationWithRetry(
+        () => this.vault.adapter.write(this.cacheFilePath, JSON.stringify(cache)),
+        'Cache save operation'
+      );
 
       log(`Bloom filter cache saved: ${Object.keys(cache.filters).length} documents`);
       this.cacheDirty = false;
       this.cacheReady = true;
       return true;
     } catch (error) {
-      console.error('Error saving bloom filter cache:', error);
+      handleCacheError(error as Error, 'save cache', { cacheFilePath: this.cacheFilePath });
       return false;
     }
   }
@@ -1523,30 +1559,36 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     }
 
     try {
-      // Check if cache file exists
-      const exists = await this.vault.adapter.exists(this.cacheFilePath);
+      // Check if cache file exists with retry logic
+      const exists = await this.executeFileOperationWithRetry(
+        () => this.vault.adapter.exists(this.cacheFilePath),
+        'Cache existence check'
+      );
       if (!exists) {
         // Cache file does not exist
         return false;
       }
 
-      // Read cache file
-      const cacheData = await this.vault.adapter.read(this.cacheFilePath);
+      // Read cache file with retry logic
+      const cacheData = await this.executeFileOperationWithRetry(
+        () => this.vault.adapter.read(this.cacheFilePath),
+        'Cache read operation'
+      );
 
       // Parse the JSON with error handling
       let cache;
       try {
-        cache = JSON.parse(cacheData);
+        cache = JSON.parse(cacheData as string);
       } catch (error) {
         // Cache file contains invalid JSON, deleting corrupt cache
         this.deleteCache();
         return false;
       }
 
-      // Validate cache version and basic structure
-      if (!cache.version || cache.version !== 1 ||
-        !cache.params || !cache.filters || !cache.stats) {
-        // Cache version mismatch or invalid cache format, deleting invalid cache
+      // Enhanced cache validation
+      const validationResult = this.validateCacheStructure(cache);
+      if (!validationResult.isValid) {
+        console.error('Cache validation failed:', validationResult.reason);
         this.deleteCache();
         return false;
       }
@@ -1610,7 +1652,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
           // Create a new multi-resolution bloom filter
           const ngramSizes = Array.isArray(filterData.ngramSizes) ? filterData.ngramSizes : this.ngramSizes;
-          const filter = new MultiResolutionBloomFilter(
+          const filter = new SimplifiedBloomFilter(
             ngramSizes,
             this.bloomSizes,
             this.hashFunctions
@@ -1668,6 +1710,230 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
+   * Validate and normalize the config directory path
+   * @param configDir The config directory path to validate
+   * @returns Normalized config directory path
+   * @throws Error if the path is invalid
+   */
+  private validateConfigDir(configDir: string): string {
+    if (!configDir || typeof configDir !== 'string') {
+      throw new Error('Config directory path is invalid or not provided');
+    }
+
+    // Remove any trailing slashes for consistency
+    const normalizedPath = configDir.replace(/\/+$/, '');
+    
+    // Basic path validation - check for suspicious patterns
+    if (normalizedPath.includes('..') || normalizedPath.includes('//')) {
+      throw new Error('Config directory path contains invalid patterns');
+    }
+
+    // Check if path is too short (should be at least a few characters)
+    if (normalizedPath.length < 3) {
+      throw new Error('Config directory path is too short to be valid');
+    }
+
+    return normalizedPath;
+  }
+
+  /**
+   * Validate cache directory exists and is writable
+   * @returns Promise<boolean> indicating if cache directory is accessible
+   */
+  private async validateCacheDirectory(): Promise<boolean> {
+    if (!this.cacheFilePath || !this.vault.adapter) {
+      return false;
+    }
+
+    try {
+      const cacheDir = this.cacheFilePath.substring(0, this.cacheFilePath.lastIndexOf('/'));
+      
+      // Check if directory exists
+      const dirExists = await this.vault.adapter.exists(cacheDir);
+      if (!dirExists) {
+        // Try to create the directory
+        await this.vault.adapter.mkdir(cacheDir);
+        log(`Created cache directory: ${cacheDir}`);
+      }
+
+      // Test write access by creating a temporary file
+      const testFilePath = `${cacheDir}/.write-test-${Date.now()}`;
+      try {
+        await this.vault.adapter.write(testFilePath, 'test');
+        await this.vault.adapter.remove(testFilePath);
+        return true;
+      } catch (writeError) {
+        console.error('Cache directory is not writable:', writeError);
+        return false;
+      }
+    } catch (error) {
+      console.error('Failed to validate cache directory:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Validate cache structure and content
+   * @param cache The cache object to validate
+   * @returns Validation result with success status and reason
+   */
+  private validateCacheStructure(cache: any): { isValid: boolean; reason?: string } {
+    // Check if cache is an object
+    if (!cache || typeof cache !== 'object') {
+      return { isValid: false, reason: 'Cache is not a valid object' };
+    }
+
+    // Check version
+    if (!cache.version || typeof cache.version !== 'number') {
+      return { isValid: false, reason: 'Cache version is missing or invalid' };
+    }
+
+    if (cache.version !== CACHE.VERSION) {
+      return { isValid: false, reason: `Cache version mismatch: expected ${CACHE.VERSION}, got ${cache.version}` };
+    }
+
+    // Check required top-level properties
+    const requiredProperties = ['params', 'filters', 'stats', 'timestamp'];
+    for (const prop of requiredProperties) {
+      if (!(prop in cache)) {
+        return { isValid: false, reason: `Missing required property: ${prop}` };
+      }
+    }
+
+    // Validate params structure
+    if (!cache.params || typeof cache.params !== 'object') {
+      return { isValid: false, reason: 'Cache params is missing or invalid' };
+    }
+
+    const requiredParams = ['ngramSizes', 'hashFunctions', 'similarityThreshold'];
+    for (const param of requiredParams) {
+      if (!(param in cache.params)) {
+        return { isValid: false, reason: `Missing required param: ${param}` };
+      }
+    }
+
+    // Validate filters structure
+    if (!cache.filters || typeof cache.filters !== 'object') {
+      return { isValid: false, reason: 'Cache filters is missing or invalid' };
+    }
+
+    // Validate stats structure
+    if (!cache.stats || typeof cache.stats !== 'object') {
+      return { isValid: false, reason: 'Cache stats is missing or invalid' };
+    }
+
+    // Check cache age (reject if too old)
+    if (typeof cache.timestamp === 'number') {
+      const cacheAge = Date.now() - cache.timestamp;
+      if (cacheAge > TIMING.CACHE_AGE_THRESHOLD_MS) {
+        return { isValid: false, reason: `Cache is too old: ${Math.round(cacheAge / (24 * 60 * 60 * 1000))} days` };
+      }
+    }
+
+    return { isValid: true };
+  }
+
+  /**
+   * Execute file operation with timeout and retry logic
+   * @param operation The file operation to execute
+   * @param operationName Description of the operation for logging
+   * @param maxRetries Maximum number of retry attempts
+   * @param timeoutMs Timeout in milliseconds for each attempt
+   * @returns Promise that resolves to operation result
+   */
+  private async executeFileOperationWithRetry<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    maxRetries: number = FILE_OPERATIONS.MAX_RETRIES,
+    timeoutMs: number = FILE_OPERATIONS.TIMEOUT_MS
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Create a timeout promise
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`${operationName} timeout after ${timeoutMs}ms`)), timeoutMs);
+        });
+
+        // Race between operation and timeout
+        const result = await Promise.race([
+          operation(),
+          timeoutPromise
+        ]);
+
+        return result;
+      } catch (error) {
+        handleFileError(error as Error, operationName, `attempt ${attempt}/${maxRetries}`);
+        
+        if (attempt === maxRetries) {
+          throw new Error(`${operationName} failed after ${maxRetries} attempts: ${error}`);
+        }
+        
+        // Exponential backoff: wait longer between retries
+        const backoffMs = Math.min(FILE_OPERATIONS.BASE_BACKOFF_MS * Math.pow(2, attempt - 1), FILE_OPERATIONS.MAX_BACKOFF_MS);
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+      }
+    }
+    
+    throw new Error(`Unexpected error in ${operationName}`);
+  }
+
+  /**
+   * Smart text truncation that preserves complete words and sentences
+   * @param text The text to truncate
+   * @param maxLength Maximum character length
+   * @returns Truncated text that preserves word/sentence boundaries
+   */
+  private smartTruncateText(text: string, maxLength: number): string {
+    if (text.length <= maxLength) {
+      return text;
+    }
+
+    // Try to truncate at sentence boundaries first
+    const sentenceEnds = /[.!?]+\s+/g;
+    let lastSentenceEnd = 0;
+    let match;
+    
+    while ((match = sentenceEnds.exec(text)) !== null) {
+      if (match.index + match[0].length > maxLength) {
+        break;
+      }
+      lastSentenceEnd = match.index + match[0].length;
+    }
+    
+    // If we found a good sentence boundary within 80% of the limit, use it
+    if (lastSentenceEnd > maxLength * TEXT_PROCESSING.SENTENCE_BOUNDARY_RATIO) {
+      return text.substring(0, lastSentenceEnd);
+    }
+    
+    // Otherwise, truncate at word boundaries
+    const wordBoundary = /\s+/g;
+    let lastWordEnd = 0;
+    let wordMatch;
+    
+    while ((wordMatch = wordBoundary.exec(text)) !== null) {
+      if (wordMatch.index > maxLength) {
+        break;
+      }
+      lastWordEnd = wordMatch.index;
+    }
+    
+    // If we found a good word boundary within 90% of the limit, use it
+    if (lastWordEnd > maxLength * TEXT_PROCESSING.WORD_BOUNDARY_RATIO) {
+      return text.substring(0, lastWordEnd);
+    }
+    
+    // Fallback to character-based truncation, but avoid breaking mid-word
+    let truncateIndex = maxLength;
+    while (truncateIndex > maxLength * TEXT_PROCESSING.TRUNCATION_FALLBACK_RATIO && 
+           truncateIndex < text.length && 
+           /\S/.test(text[truncateIndex])) {
+      truncateIndex--;
+    }
+    
+    return text.substring(0, truncateIndex);
+  }
+
+  /**
    * Deletes the cache file from disk
    * Used when cache is detected to be invalid
    */
@@ -1678,11 +1944,17 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     }
 
     try {
-      // Check if cache file exists
-      const exists = await this.vault.adapter.exists(this.cacheFilePath);
+      // Check if cache file exists with retry logic
+      const exists = await this.executeFileOperationWithRetry(
+        () => this.vault.adapter.exists(this.cacheFilePath),
+        'Cache deletion check'
+      );
       if (exists) {
-        // Delete the file
-        await this.vault.adapter.remove(this.cacheFilePath);
+        // Delete the file with retry logic
+        await this.executeFileOperationWithRetry(
+          () => this.vault.adapter.remove(this.cacheFilePath),
+          'Cache deletion operation'
+        );
         // Deleted invalid cache file
       }
     } catch (error) {

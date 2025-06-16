@@ -6,7 +6,7 @@
 'use strict';
 
 import { tokenize } from './core';
-import { DEBUG_MODE, log } from './logging';
+import { isDebugMode, log } from './logging';
 
 /**
  * BloomFilter class that implements a lightweight bloom filter
@@ -76,7 +76,7 @@ export class BloomFilter {
     this.addedItems.add(item); // Track for debugging
     
     const hashes = this.getHashes(item);
-    if (DEBUG_MODE && item.length < 10) { // Only log short items to avoid spam
+    if (isDebugMode() && item.length < 10) { // Only log short items to avoid spam
       log(`Adding item: "${item}" with hashes:`, hashes.map(h => h % this.size));
     }
     
@@ -178,6 +178,30 @@ export class BloomFilter {
   }
 
   /**
+   * Serialize the bloom filter to a JSON-compatible object
+   * @returns Serialized bloom filter data
+   */
+  serialize(): { size: number; hashFunctions: number; bitArray: number[] } {
+    return {
+      size: this.size,
+      hashFunctions: this.hashFunctions,
+      bitArray: Array.from(this.bitArray)
+    };
+  }
+
+  /**
+   * Deserialize and restore bloom filter from serialized data
+   * @param data Serialized bloom filter data
+   */
+  deserialize(data: { size: number; hashFunctions: number; bitArray: number[] }): void {
+    if (data.size !== this.size || data.hashFunctions !== this.hashFunctions) {
+      throw new Error(`Cannot deserialize: size/hash mismatch. Expected ${this.size}/${this.hashFunctions}, got ${data.size}/${data.hashFunctions}`);
+    }
+    this.bitArray = new Uint32Array(data.bitArray);
+    this.addedItems.clear(); // Clear tracked items since we don't serialize them
+  }
+
+  /**
    * Calculate Jaccard similarity between two bloom filters
    * @param other The other bloom filter to compare with
    * @returns Similarity score between 0 and 1
@@ -185,7 +209,7 @@ export class BloomFilter {
   similarity(other: BloomFilter): number {
     // Check if filters have the same size
     if (this.size !== other.size) {
-      if (DEBUG_MODE) {
+      if (isDebugMode()) {
         log(`Cannot directly compare bloom filters of different sizes: ${this.size} vs ${other.size}`);
       }
       return 0;
@@ -216,7 +240,7 @@ export class BloomFilter {
     const minBitsRequired = 5; // Minimum number of bits set to consider meaningful
     if (thisBits < minBitsRequired || otherBits < minBitsRequired) {
       // If either document has too few bits set, it's likely too short to compare meaningfully
-      if (DEBUG_MODE) {
+      if (isDebugMode()) {
         log(`One or both documents too small for meaningful comparison: ${thisBits} vs ${otherBits} bits set`);
       }
       return 0;
@@ -238,7 +262,7 @@ export class BloomFilter {
       similarity = similarity * Math.pow(1 - saturationFactor, 2);
     }
     
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       const rawSimilarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
       log(
         `Similarity details:
@@ -380,7 +404,7 @@ export class BloomFilterSimilarityProvider {
     // Log processing time and stats
     const endTime = performance.now();
     
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Processed document ${docId}:
         - Length: ${text.length} characters
         - Extracted ${ngrams.size} unique n-grams
@@ -476,7 +500,7 @@ export class BloomFilterSimilarityProvider {
     // Mark as computed
     this.commonWordsComputed = true;
     
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Computed ${this.commonWords.size} common words from ${this.totalDocuments} documents`);
       
       if (this.commonWords.size <= 50) {
@@ -537,7 +561,7 @@ export class BloomFilterSimilarityProvider {
     
     const endTime = performance.now();
     
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       const excludedPercent = words.length > 0 ? (excludedCount / words.length * 100).toFixed(1) : '0';
       const method = this.commonWordsComputed ? 'adaptive stopwords' : 'length filter';
       log(`Filtered out ${excludedCount} words (${excludedPercent}% of total) using ${method}`);
@@ -570,7 +594,7 @@ export class BloomFilterSimilarityProvider {
     
     // If either filter is missing, return 0
     if (!filter1 || !filter2) {
-      if (DEBUG_MODE) {
+      if (isDebugMode()) {
         if (!filter1) log(`Document ${docId1} not found`);
         if (!filter2) log(`Document ${docId2} not found`);
       }
@@ -582,7 +606,7 @@ export class BloomFilterSimilarityProvider {
     
     const endTime = performance.now();
     
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       // Calculate the actual n-gram overlap for comparison with the bloom filter estimation
       const ngrams1 = this.documentNgrams.get(docId1);
       const ngrams2 = this.documentNgrams.get(docId2);
@@ -624,7 +648,7 @@ export class BloomFilterSimilarityProvider {
     // Get the bloom filter for the query document
     const queryFilter = this.bloomFilters.get(queryDocId);
     if (!queryFilter) {
-      if (DEBUG_MODE) log(`Query document ${queryDocId} not found`);
+      if (isDebugMode()) log(`Query document ${queryDocId} not found`);
       return [];
     }
     
@@ -650,7 +674,7 @@ export class BloomFilterSimilarityProvider {
     
     const endTime = performance.now();
     
-    if (DEBUG_MODE) {
+    if (isDebugMode()) {
       log(`Found ${sortedResults.length} similar documents to ${queryDocId}:
         - Compared with ${comparisons} documents
         - Threshold: ${threshold}

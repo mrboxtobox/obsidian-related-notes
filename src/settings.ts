@@ -10,6 +10,7 @@ import RelatedNotesPlugin from './main';
 
 export interface RelatedNotesSettings {
   maxSuggestions: number;
+  debugMode: boolean;          // Enable debug logging
   // Internal settings - not exposed to users
   similarityThreshold: number;
   batchSize: number;
@@ -26,6 +27,7 @@ export interface RelatedNotesSettings {
 
 export const DEFAULT_SETTINGS: RelatedNotesSettings = {
   maxSuggestions: 5,
+  debugMode: false,           // Debug mode disabled by default
   enableSampling: true,
   // Internal settings with good defaults
   similarityThreshold: 0.15, // Lowered from 0.3 to find more matches
@@ -81,6 +83,25 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.maxSuggestions = value;
           await this.plugin.saveSettings();
+        }));
+
+    // Debug Settings Section  
+    containerEl.createEl('h3', { text: 'Advanced Settings' });
+
+    new Setting(containerEl)
+      .setName('Debug mode')
+      .setDesc('Enable debug logging to the console. Useful for troubleshooting but may impact performance.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.debugMode)
+        .onChange(async (value) => {
+          this.plugin.settings.debugMode = value;
+          await this.plugin.saveSettings();
+          // Show notice about needing to restart for changes to take full effect
+          if (value) {
+            new Notice('Debug mode enabled. Some debug messages will appear in the developer console.');
+          } else {
+            new Notice('Debug mode disabled.');
+          }
         }));
 
     // Reindexing Section (using sentence case per Obsidian style guide)

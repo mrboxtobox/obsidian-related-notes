@@ -4,13 +4,12 @@
 * Includes smart caching to improve performance and reduce token usage.
 */
 
-import { Vault, TFile, normalizePath } from 'obsidian';
-import { BloomFilter, BloomFilterSimilarityProvider } from './bloom';
+import { TFile } from 'obsidian';
 
 'use strict';
 
-const FREQUENCY_CAP = 10;
-const CACHE_VERSION = 1;
+// const FREQUENCY_CAP = 10; // Currently unused
+// const CACHE_VERSION = 1; // Currently unused
 
 export interface RelatedNote {
   file: TFile;
@@ -39,7 +38,7 @@ export interface SimilarityProvider {
   computeCappedCosineSimilarity(file1: TFile, file2: TFile): Promise<SimilarityInfo>;
   
   // Stats and metadata
-  getStats(): any;
+  getStats(): Record<string, unknown>;
 }
 
 export interface CacheData {
@@ -49,6 +48,49 @@ export interface CacheData {
   signatures: Record<string, number[]>;
   relatedNotes: Record<string, string[]>;
   fileMetadata: Record<string, { mtime: number; size: number }>;
+}
+
+/**
+ * Validate URL pattern to prevent ReDoS attacks
+ * @param url The URL string to validate
+ * @returns True if the URL appears to be valid and safe to process
+ */
+function isValidUrlPattern(url: string): boolean {
+  // Check length limits
+  if (url.length > 2000) return false;
+  if (url.length < 4) return false;
+
+  // Check for suspicious patterns that could cause ReDoS
+  const suspiciousPatterns = [
+    /(.+\+){10,}/, // Repeated + characters
+    /(.+\*){10,}/, // Repeated * characters
+    /(\.+){50,}/, // Excessive dots
+    /(\/{2,}){10,}/, // Repeated slashes
+    /(\?.*){10,}/, // Excessive query parameters
+    /(#.*){10,}/, // Excessive fragments
+  ];
+
+  for (const pattern of suspiciousPatterns) {
+    if (pattern.test(url)) return false;
+  }
+
+  // Basic format validation
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    // URL should have some content after protocol
+    const afterProtocol = url.split('://')[1];
+    return !!(afterProtocol && afterProtocol.length > 0 && afterProtocol.length < 1500);
+  }
+
+  if (url.startsWith('file://')) {
+    // File URL should have some content after protocol
+    const afterProtocol = url.split('://')[1];
+    return !!(afterProtocol && afterProtocol.length > 0 && afterProtocol.length < 800);
+  }
+
+  // For file extensions, just check it's reasonable
+  const fileExtensions = ['md', 'txt', 'js', 'ts', 'html', 'css', 'json', 'py', 'java', 'rb', 'c', 'cpp', 'h', 'go', 'rs', 'php'];
+  const hasValidExtension = fileExtensions.some(ext => url.toLowerCase().endsWith(`.${ext}`));
+  return hasValidExtension && url.length < 500;
 }
 
 /**
@@ -119,12 +161,34 @@ export function tokenize(text: string): string {
     // Step 2: Handle URLs and file paths - preserve them
     const urls: string[] = [];
     let urlCounter = 0;
-    processed = processed.replace(/https?:\/\/[^\s]+|file:\/\/[^\s]+|[\w\/\.-]+\.(md|txt|js|ts|html|css|json|py|java|rb|c|cpp|h|go|rs|php)/g, (match) => {
-      const placeholder = `__URL_${urlCounter}__`;
-      urls.push(match);
-      urlCounter++;
-      return placeholder;
-    });
+    
+    // Use safer URL replacement with timeout protection
+    try {
+      const urlReplacementStart = Date.now();
+      processed = processed.replace(
+        /https?:\/\/[^\s]{1,2000}(?:\s|$)|file:\/\/[^\s]{1,1000}(?:\s|$)|[\w\/\.-]+\.(md|txt|js|ts|html|css|json|py|java|rb|c|cpp|h|go|rs|php)\b/g, 
+        (match) => {
+          // Check for timeout to prevent ReDoS
+          if (Date.now() - urlReplacementStart > 1000) { // 1 second timeout
+            console.warn('URL replacement timeout, stopping processing');
+            return match;
+          }
+          
+          // Additional validation to prevent processing malicious patterns
+          const trimmedMatch = match.trim();
+          if (isValidUrlPattern(trimmedMatch)) {
+            const placeholder = `__URL_${urlCounter}__`;
+            urls.push(trimmedMatch);
+            urlCounter++;
+            return placeholder;
+          }
+          return match; // Return original if validation fails
+        }
+      );
+    } catch (error) {
+      console.error('Error during URL replacement:', error);
+      // Continue with original text if URL replacement fails
+    }
 
     // Step 3: Handle contractions
     processed = processed.replace(
