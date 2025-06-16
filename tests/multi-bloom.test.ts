@@ -8,7 +8,7 @@ import {
   MultiResolutionBloomFilterProvider,
   calculateOptimalBloomSize,
   calculateOptimalHashFunctions
-} from './multi-bloom';
+} from '../src/multi-bloom';
 
 describe('Optimal Size Calculations', () => {
   describe('calculateOptimalBloomSize', () => {

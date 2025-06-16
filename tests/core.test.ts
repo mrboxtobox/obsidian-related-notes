@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { tokenize } from './core';
+import { tokenize } from '../src/core';
 
 describe('Core Tokenization', () => {
   describe('Basic Functionality', () => {

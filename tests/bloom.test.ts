@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { BloomFilter, BloomFilterSimilarityProvider } from './bloom';
+import { BloomFilter, BloomFilterSimilarityProvider } from '../src/bloom';
 
 describe('BloomFilter', () => {
   let bloomFilter: BloomFilter;
