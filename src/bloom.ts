@@ -6,8 +6,7 @@
 'use strict';
 
 import { tokenize } from './core';
-
-// No logging
+import { DEBUG_MODE, log } from './logging';
 
 /**
  * BloomFilter class that implements a lightweight bloom filter

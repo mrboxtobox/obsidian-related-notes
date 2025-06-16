@@ -8,8 +8,7 @@
 import { tokenize, SimilarityProvider, SimilarityInfo } from './core';
 import { BloomFilter } from './bloom';
 import { TFile, TAbstractFile } from 'obsidian';
-
-// No logging
+import { DEBUG_MODE, log } from './logging';
 
 /**
  * Optimal bloom filter size calculation
@@ -507,7 +506,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
         // Priority 1: Get recently modified files (last 30 days)
         const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-        const recentFiles = markdownFiles.filter(file => file.stat.mtime > thirtyDaysAgo);
+        const recentFiles = markdownFiles.filter((file: TFile) => file.stat.mtime > thirtyDaysAgo);
 
         // Priority 2: Get currently active file
         const activeLeaf = this.vault.getActiveLeaf?.();
@@ -532,7 +531,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         // Otherwise, supplement with random files
         else {
           // Create a list of non-priority files
-          const remainingFiles = markdownFiles.filter(file => !priorityFiles.includes(file));
+          const remainingFiles = markdownFiles.filter((file: TFile) => !priorityFiles.includes(file));
 
           // Shuffle the remaining files for random sampling
           const shuffledRemaining = [...remainingFiles];
@@ -552,7 +551,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         }
 
         // Store the information about remaining files for later progressive indexing
-        this.remainingFilesToIndex = markdownFiles.filter(file => !filesToProcess.includes(file));
+        this.remainingFilesToIndex = markdownFiles.filter((file: TFile) => !filesToProcess.includes(file));
         this.hasPartialIndex = true;
 
         log(`Progressive indexing: Processing ${filesToProcess.length} files initially out of ${totalFiles} total (${this.remainingFilesToIndex.length} files will be indexed later)`);

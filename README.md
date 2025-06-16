@@ -142,7 +142,11 @@ npm run build
 ### Development Workflow
 
 - `npm run dev` - Starts development build with hot-reload
+- `npm run dev:test` - Starts development build with hot-reload and copies files to test-vault
+- `npm run dev:custom` - Starts development build with custom target directories (set TARGET_DIRS env var)
 - `npm run build` - Creates a production build
+- `npm run build:test` - Creates a production build and copies files to test-vault
+- `npm run build:custom` - Creates a production build with custom target directories (set TARGET_DIRS env var)
 - `npm run version` - Updates version numbers in manifest.json and versions.json
 
 ### Project Structure
@@ -153,10 +157,10 @@ npm run build
 - `src/multi-bloom.ts` - Multi-resolution bloom filter with adaptive parameters
 - `src/settings.ts` - Settings tab implementation
 - `src/ui.ts` - User interface components for related notes view
-- `styles.css` - Custom CSS styles
-- `manifest.json` - Plugin manifest
+- `src/styles.css` - Custom CSS styles for the plugin
+- `src/manifest.json` - Plugin manifest file
 - `package.json` - Project configuration and dependencies
-- `esbuild.config.mjs` - Build configuration for esbuild
+- `esbuild.config.mjs` - Build configuration for esbuild that handles copying files
 
 ### Key Dependencies
 
@@ -182,14 +186,50 @@ npm run build
 
 4. Copy the built files to your Obsidian plugins folder
 ```bash
-# For testing with a local vault
-npm run dev
+# For testing with the included test-vault
+npm run dev:test
+
+# For testing with custom vault locations
+TARGET_DIRS='["path/to/vault1/.obsidian/plugins/related-notes", "path/to/vault2/.obsidian/plugins/related-notes"]' npm run dev:custom
 ```
 
 Alternatively, you can manually copy the following files to your Obsidian plugins folder:
 - `main.js`
 - `manifest.json`
 - `styles.css`
+
+Note: These files are generated from the source files in the `src/` directory.
+
+## Release Process
+
+This plugin follows Obsidian's guidelines for plugin releases. The following scripts are available to streamline the release process:
+
+1. Validate your plugin against Obsidian's requirements:
+```bash
+npm run validate
+```
+
+2. Create a new release (patch, minor, or major version):
+```bash
+npm run release:patch  # For bug fixes
+npm run release:minor  # For new features
+npm run release:major  # For breaking changes
+```
+
+The release script will:
+- Check for uncommitted changes
+- Validate the plugin against Obsidian's requirements
+- Bump the version in package.json and manifest.json
+- Create a git tag
+- Push to GitHub
+- Trigger the GitHub Actions workflow to create a release
+
+3. GitHub Actions will build the plugin and create a draft release with the required files:
+- `main.js`
+- `manifest.json`
+- `styles.css`
+
+4. Review the draft release on GitHub and publish it when ready.
 
 ## License
 

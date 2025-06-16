@@ -5,11 +5,18 @@
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"dev:vault": "node dev-with-copy.mjs",
+		"dev:test": "TARGET_DIRS='[\"test-vault/.obsidian/plugins/related-notes\"]' node esbuild.config.mjs",
+		"dev:custom": "echo 'Set TARGET_DIRS env var as JSON array of paths' && node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"build:vault": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && node -e \"const homedir = process.env.HOME || process.env.USERPROFILE; const targetDir = homedir + '/Desktop/ObsidianVault/.obsidian/plugins/related-notes'; require('fs').mkdirSync(targetDir, {recursive: true}); require('fs').copyFileSync('main.js', targetDir + '/main.js'); require('fs').copyFileSync('styles.css', targetDir + '/styles.css'); require('fs').copyFileSync('manifest.json', targetDir + '/manifest.json'); console.log('Files copied to ' + targetDir);\"",
-		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"debug": "node esbuild.config.mjs"
+		"build:test": "tsc -noEmit -skipLibCheck && TARGET_DIRS='[\"test-vault/.obsidian/plugins/related-notes\"]' node esbuild.config.mjs production",
+		"build:custom": "tsc -noEmit -skipLibCheck && echo 'Set TARGET_DIRS env var as JSON array of paths' && node esbuild.config.mjs production",
+		"version": "node version-bump.mjs && git add src/manifest.json manifest.json versions.json",
+		"debug": "node esbuild.config.mjs",
+		"validate": "node scripts/validate.mjs",
+		"release:patch": "node scripts/release.mjs patch",
+		"release:minor": "node scripts/release.mjs minor",
+		"release:major": "node scripts/release.mjs major",
+		"prepare-release": "npm run validate && npm run build"
 	},
 	"keywords": [
 		"obsidian",
