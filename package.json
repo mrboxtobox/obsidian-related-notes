@@ -1,25 +1,31 @@
 {
 	"name": "obsidian-related-notes",
 	"version": "1.0.4",
-	"description": "An Obsidian plugin that suggests related notes using NLP and TF-IDF similarity",
+	"description": "An Obsidian plugin that suggests related notes using bloom filter similarity",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
+		"dev:test": "TARGET_DIRS='[\"test-vault/.obsidian/plugins/related-notes\"]' node esbuild.config.mjs",
+		"dev:custom": "echo 'Set TARGET_DIRS env var as JSON array of paths' && node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"build:dev": "node esbuild.config.mjs production && npm run copy:dev",
-		"copy:dev": "cp main.js manifest.json styles.css ~/Desktop/ObsidianVault/.obsidian/plugins/obsidian-related-notes/",
-		"watch": "node watch.mjs",
-		"version": "node version-bump.mjs && git add manifest.json versions.json",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"bench": "vitest bench",
-		"lint": "eslint src/",
-		"typecheck": "tsc -noEmit -skipLibCheck"
+		"build:test": "tsc -noEmit -skipLibCheck && TARGET_DIRS='[\"test-vault/.obsidian/plugins/related-notes\"]' node esbuild.config.mjs production",
+		"build:custom": "tsc -noEmit -skipLibCheck && echo 'Set TARGET_DIRS env var as JSON array of paths' && node esbuild.config.mjs production",
+		"version": "node version-bump.mjs && git add src/manifest.json manifest.json versions.json",
+		"debug": "node esbuild.config.mjs",
+		"validate": "node scripts/validate.mjs",
+		"test": "vitest",
+		"test:ui": "vitest --ui",
+		"test:run": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"release:patch": "node scripts/release.mjs patch",
+		"release:minor": "node scripts/release.mjs minor",
+		"release:major": "node scripts/release.mjs major",
+		"prepare-release": "npm run validate && npm run build && npm run test:run"
 	},
 	"keywords": [
 		"obsidian",
 		"plugin",
-		"nlp",
+		"bloom-filter",
 		"related-notes",
 		"similarity"
 	],
@@ -29,12 +35,13 @@
 		"@types/node": "^20.11.17",
 		"@typescript-eslint/eslint-plugin": "^7.0.1",
 		"@typescript-eslint/parser": "^7.0.1",
+		"@vitest/ui": "^1.6.1",
 		"builtin-modules": "^3.3.0",
-		"esbuild": "^0.25.0",
+		"esbuild": "^0.19.12",
 		"eslint": "^8.57.0",
 		"obsidian": "latest",
 		"tslib": "^2.6.2",
 		"typescript": "^5.3.3",
-		"vitest": "^1.4.0"
+		"vitest": "^1.6.1"
 	}
 }

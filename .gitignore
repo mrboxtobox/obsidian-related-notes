@@ -17,10 +17,13 @@ main.js
 
 # obsidian
 data.json
+# Similarity cache
+.bloom-filter-cache.json
 similarity-cache.json
+*bloom-filter-cache.json
+
+# Test Vault
+test-vault/
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
-
-# Ignore test vault by default
-test-vault/

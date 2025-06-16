@@ -8,11 +8,15 @@ Uncover connections between notes in your vault using this plugin.
 
 ![alt text](<non_readme_screenshot.png>)
 
+Uncover connections between notes in your vault using this plugin.
+
 ## Features
 
-- 🔍 Automatically analyzes note content using proven similarity algorithms
+- 🔍 Automatically analyzes note content using multi-resolution Bloom filters
 - 🔗 One-click linking between related notes
 - ⚡ Fully local processing with complete data privacy
+- 🚀 Efficient indexing for handling large vaults with tens of thousands of notes
+- 💡 Multi-resolution n-gram sizes for better accuracy across different document styles
 
 ## Installation
 
@@ -68,104 +72,46 @@ The plugin features a streamlined settings interface:
 ### Stats Toggle
 Enable to view detailed statistics about the plugin's operation:
 
-- **Memory Usage**: See how much memory the plugin is using (vocabulary size, file vectors, signatures, cache sizes, etc.)
-- **NLP Metrics**: View natural language processing statistics (shingle size, document length, similarity provider, etc.)
+### Multi-Resolution Bloom Filter
 
-The re-indexing process now includes a visual progress indicator below the button, showing the current phase and completion percentage.
+The plugin uses a multi-resolution bloom filter approach for efficient similarity detection:
 
-### Similarity Providers
+#### How It Works
+- **Bloom Filters**: Probabilistic data structures for efficient similarity detection
+- **Multiple N-gram Sizes**: Combines different character sequence lengths (2, 3, and 4-grams by default)
+- **Weighted Similarity**: Different resolutions contribute differently to the final similarity score
+- **Unicode Support**: Properly handles multi-byte characters in all languages
+- **Adaptive Parameters**: Self-tunes based on your vault's characteristics
 
-The plugin automatically selects the optimal similarity provider based on your vault size:
+#### Advantages
+- **Memory Efficiency**: Uses just a fraction of the memory of traditional algorithms
+- **Language Agnostic**: Works equally well with English, Chinese, Japanese, Arabic, etc.
+- **Automatic Stopword Detection**: Identifies common words in any language
+- **Fast Similarity Calculation**: Quick Jaccard similarity computation
+- **No Training Required**: Works immediately without model training
+- **Privacy-Focused**: All processing happens locally on your device
 
-#### BM25+ (For Small-Medium Vaults)
-- Local processing, no data leaves your device
-- Fast and privacy-focused
-- Works well for keyword-based similarity
-- Uses bidirectional BM25+ scoring for better accuracy
-- Efficient sparse vector representation
-- Simple but effective word stemming
-- Smart vector caching for improved performance
-- Ideal for vaults with fewer than 10,000 notes
-- No setup required
+### Efficient Indexing for Large Vaults
 
-#### Optimized MinHash LSH (For Large Vaults)
-- Automatically selected for vaults with 10,000+ notes
-- Breakthrough performance with optimized implementation:
-  1. Row-based minhash calculation (10-100x faster than traditional approaches)
-  2. Word-level shingles for more meaningful semantic matches
-  3. Efficient Uint32Array storage for minimal memory footprint
-  4. Optimized hash functions using universal hashing (a*x + b) mod p
-- Scales to 50,000+ notes with minimal performance impact
-- No external dependencies or setup required
-- Built-in test suite and benchmarks validate both accuracy and performance
+For users with extensive note collections (tens of thousands of notes), the plugin implements an efficient indexing strategy:
 
-### Hybrid Indexing for Large Vaults
+- **Optimized Memory Usage**: 
+  - The multi-resolution bloom filter uses minimal memory per document
+  - A 1000-document vault might use only ~1MB of memory total
+  - Even large vaults with 50,000+ notes remain performant
 
-For users with extensive note collections (tens of thousands of notes), the plugin now implements a hybrid indexing approach:
+- **Adaptive Parameters**:
+  - Automatically detects common words in your vault to exclude from similarity calculations
+  - Adjusts n-gram sizes based on your document characteristics
+  - Tunes bloom filter sizes and hash functions for optimal performance
+  - All adaptations happen automatically without user intervention
 
-- **Priority-Based Indexing**: The plugin intelligently prioritizes which notes to pre-index based on:
-  - **Access Frequency**: Notes you open frequently are prioritized
-  - **Creation Time**: Recently created notes are given higher priority
-  - **Configurable Limit**: Up to 10,000 notes are pre-indexed (increased from previous 5,000 limit)
+- **Fast Similarity Calculation**:
+  - Bloom filter comparison is extremely fast (O(1) complexity)
+  - Jaccard similarity provides reliable relevance ranking
+  - Works equally well across all languages and writing styles
 
-- **On-Demand Computation**: For notes outside the priority index:
-  - **Real-Time Processing**: Similarity is computed when you view the note
-  - **Smart Caching**: Results are cached to improve performance on subsequent views
-  - **Visual Indicators**: UI shows which notes were computed on-demand
-  - **Balanced Approach**: Combines performance with comprehensive coverage
-
-This hybrid approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
-
-### Adaptive Similarity for Large Corpora
-
-For users with large note collections, the plugin also features an adaptive similarity system:
-
-- **Automatic Detection**: Identifies when you're working with a large corpus
-- **Expanded Results**: Shows up to 10 related notes (instead of 5) for large collections
-- **Quality Indicators**: Visual percentage indicators show the estimated relevance of each match
-- **Lenient Matching**: Adjusts LSH parameters to find more potential matches in large collections
-- **Similarity Boosting**: Applies a small boost to similarity scores to ensure you see relevant connections
-- **Transparent UI**: Clear indication when approximate matches are being shown
-
-This feature helps ensure you can still discover meaningful connections even when working with thousands of notes, where traditional exact matching might miss important relationships due to the scale and diversity of content.
-
-### File Type Support
-
-The plugin currently processes Markdown (.md) files only, as these are the primary content files in Obsidian. Other file types are automatically skipped to optimize performance and maintain focus on note relationships.
-
-### Caching System
-
-The plugin uses an intelligent caching system to improve performance:
-- Document signatures and BM25+ vectors are cached in memory using sparse representation
-- LSH index structures are maintained for efficient retrieval
-- Cache invalidation based on file modification time
-- Indexes and scores are only recomputed when content changes
-- Smart cache management to prevent unnecessary recomputation
-- Progress bar shows indexing status for better user feedback
-- Drift tolerance allows approximate results with configurable threshold
-
-### Debug Logging
-
-When Debug Mode is enabled, the plugin provides detailed logging about its operations:
-
-- Text processing and tokenization details
-- BM25 calculations and similarity scores
-- MinHash signature generation
-- LSH index operations
-- File processing events and timing
-- UI updates and user interactions
-- Cache operations and performance metrics
-
-To view the logs:
-1. Enable Debug Mode in settings
-2. Open the Developer Console (View -> Toggle Developer Tools)
-3. Look for entries prefixed with `[Related Notes]`
-
-This can be helpful for:
-- Understanding how the plugin processes your notes
-- Troubleshooting unexpected behavior
-- Performance optimization
-- Development and debugging
+This approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
 
 ## Development
 
@@ -196,36 +142,25 @@ npm run build
 ### Development Workflow
 
 - `npm run dev` - Starts development build with hot-reload
+- `npm run dev:test` - Starts development build with hot-reload and copies files to test-vault
+- `npm run dev:custom` - Starts development build with custom target directories (set TARGET_DIRS env var)
 - `npm run build` - Creates a production build
+- `npm run build:test` - Creates a production build and copies files to test-vault
+- `npm run build:custom` - Creates a production build with custom target directories (set TARGET_DIRS env var)
 - `npm run version` - Updates version numbers in manifest.json and versions.json
-- `npm run test` - Runs tests for algorithm verification
-- `npm run bench` - Runs performance benchmarks
-- `npm run lint` - Checks code for style and potential issues
-- `npm run typecheck` - Validates TypeScript types
 
 ### Project Structure
 
-- `main.ts` - Main plugin file with core functionality and event handling
-- `core.ts` - Core similarity algorithms and providers
-- `minhash.ts` - Optimized MinHash-LSH implementation for large document collections
-- `settings.ts` - Settings tab implementation
-- `ui.ts` - UI components and view implementations
-- `tests/` - Test suites for verifying algorithm correctness
-- `benchmarks/` - Performance benchmarks for similarity algorithms
-- `styles.css` - Custom CSS styles
-- `manifest.json` - Plugin manifest
+- `src/main.ts` - Main plugin file with core functionality and event handling
+- `src/core.ts` - Core similarity algorithms and interfaces
+- `src/bloom.ts` - Bloom filter implementation for efficient similarity calculation
+- `src/multi-bloom.ts` - Multi-resolution bloom filter with adaptive parameters
+- `src/settings.ts` - Settings tab implementation
+- `src/ui.ts` - User interface components for related notes view
+- `src/styles.css` - Custom CSS styles for the plugin
+- `src/manifest.json` - Plugin manifest file
 - `package.json` - Project configuration and dependencies
-
-### Testing with Large Vaults
-
-For stress testing with large vaults, we've included a script to generate a test vault with 100,000 notes:
-
-```bash
-# Run the generation script (requires Python 3.6+)
-./generate-test-vault.sh
-```
-
-This creates a test vault using content from Project Gutenberg texts. The test vault is stored using Git LFS and is not cloned by default to keep repository size manageable.
+- `esbuild.config.mjs` - Build configuration for esbuild that handles copying files
 
 ### Key Dependencies
 
@@ -233,13 +168,68 @@ This creates a test vault using content from Project Gutenberg texts. The test v
 
 ## Building From Source
 
-1. Clone the repository as described in the Development section
-2. Install dependencies: `npm install`
-3. Build the plugin: `npm run build`
-4. Copy the following files to your Obsidian plugins folder:
-   - main.js
-   - manifest.json
-   - styles.css
+1. Clone the repository
+```bash
+git clone https://github.com/yourusername/obsidian-related-notes.git
+cd obsidian-related-notes
+```
+
+2. Install dependencies
+```bash
+npm install
+```
+
+3. Build the plugin
+```bash
+npm run build
+```
+
+4. Copy the built files to your Obsidian plugins folder
+```bash
+# For testing with the included test-vault
+npm run dev:test
+
+# For testing with custom vault locations
+TARGET_DIRS='["path/to/vault1/.obsidian/plugins/related-notes", "path/to/vault2/.obsidian/plugins/related-notes"]' npm run dev:custom
+```
+
+Alternatively, you can manually copy the following files to your Obsidian plugins folder:
+- `main.js`
+- `manifest.json`
+- `styles.css`
+
+Note: These files are generated from the source files in the `src/` directory.
+
+## Release Process
+
+This plugin follows Obsidian's guidelines for plugin releases. The following scripts are available to streamline the release process:
+
+1. Validate your plugin against Obsidian's requirements:
+```bash
+npm run validate
+```
+
+2. Create a new release (patch, minor, or major version):
+```bash
+npm run release:patch  # For bug fixes
+npm run release:minor  # For new features
+npm run release:major  # For breaking changes
+```
+
+The release script will:
+- Check for uncommitted changes
+- Validate the plugin against Obsidian's requirements
+- Bump the version in package.json and manifest.json
+- Create a git tag
+- Push to GitHub
+- Trigger the GitHub Actions workflow to create a release
+
+3. GitHub Actions will build the plugin and create a draft release with the required files:
+- `main.js`
+- `manifest.json`
+- `styles.css`
+
+4. Review the draft release on GitHub and publish it when ready.
 
 ## License
 

@@ -25,7 +25,7 @@ export class RelatedNotesView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Related notes';
+    return 'Related Notes';
   }
 
   getIcon(): string {
@@ -42,7 +42,7 @@ export class RelatedNotesView extends ItemView {
 
     // Create header with title
     const headerEl = container.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related notes' });
+    headerEl.createEl('h4', { text: 'Related Notes' });
 
     container.createDiv({ cls: 'related-notes-content' });
   }
@@ -58,7 +58,7 @@ export class RelatedNotesView extends ItemView {
 
     // Create header with title
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related notes' });
+    headerEl.createEl('h4', { text: 'Related Notes' });
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
@@ -99,24 +99,29 @@ export class RelatedNotesView extends ItemView {
    */
   private async addLink(sourceFile: TFile, targetFile: TFile): Promise<void> {
     try {
-      await this.app.vault.process(sourceFile, (content) => {
-        // Create a wiki link to the target file
-        const linkText = `\n\n## Related notes\n- [[${targetFile.basename}]]\n`;
+      // Get current content
+      const content = await this.app.vault.cachedRead(sourceFile);
 
-        // Check if the file already has a Related Notes section
-        const relatedSectionRegex = /\n## Related notes\n/;
+      // Create a wiki link to the target file
+      const linkText = `\n\n## Related Notes\n- [[${targetFile.basename}]]\n`;
 
-        if (relatedSectionRegex.test(content)) {
-          // Add to existing Related Notes section
-          return content.replace(
-            /\n## Related notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
-            (match, p1) => `\n## Related notes\n${p1}- [[${targetFile.basename}]]\n`
-          );
-        } else {
-          // Add new Related Notes section at the end
-          return content + linkText;
-        }
-      });
+      // Check if the file already has a Related Notes section
+      const relatedSectionRegex = /\n## Related Notes\n/;
+      let newContent: string;
+
+      if (relatedSectionRegex.test(content)) {
+        // Add to existing Related Notes section
+        newContent = content.replace(
+          /\n## Related Notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
+          (match, p1) => `\n## Related Notes\n${p1}- [[${targetFile.basename}]]\n`
+        );
+      } else {
+        // Add new Related Notes section at the end
+        newContent = content + linkText;
+      }
+
+      // Write the updated content back to the file
+      await this.app.vault.modify(sourceFile, newContent);
     } catch (error) {
       console.error(`Error adding link to ${sourceFile.path}:`, error);
     }
@@ -127,7 +132,7 @@ export class RelatedNotesView extends ItemView {
 
     // Create header with title
     const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related notes' });
+    headerEl.createEl('h4', { text: 'Related Notes' });
 
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     this.currentFile = file;
@@ -176,7 +181,8 @@ export class RelatedNotesView extends ItemView {
       return;
     }
 
-    // No on-demand info message needed
+    // Check if we're working with a large vault
+    const isLargeVault = this.app.vault.getMarkdownFiles().length > 1000;
 
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
 
@@ -200,27 +206,14 @@ export class RelatedNotesView extends ItemView {
       nameEl.textContent = relatedFile.basename;
       linkContainer.appendChild(nameEl);
 
-      // No on-demand indicators needed
+      // No on-demand indicator needed anymore
 
       // Add click handler to open the related file
       linkContainer.addEventListener('click', async () => {
         try {
-          // First check if the file is already open in any leaf
-          const existingLeaf = this.app.workspace.getLeavesOfType('markdown')
-            .find(leaf => {
-              const view = leaf.view;
-              return view instanceof MarkdownView && view.file?.path === relatedFile.path;
-            });
-
-          if (existingLeaf) {
-            // If file is already open, focus on that leaf
-            this.app.workspace.setActiveLeaf(existingLeaf);
-          } else {
-            // If file isn't open, create new leaf and open it
-            const leaf = this.app.workspace.getLeaf();
-            if (!leaf) return;
-            await leaf.openFile(relatedFile);
-          }
+          const leaf = this.app.workspace.getLeaf();
+          if (!leaf) return;
+          await leaf.openFile(relatedFile);
         } catch (error) {
           console.error(`Error opening file ${relatedFile.path}:`, error);
         }
@@ -267,6 +260,8 @@ export class RelatedNotesView extends ItemView {
 
       // Add the item container to the list item
       listItemEl.appendChild(itemContainer);
+
+      // Common terms section removed
 
       return listItemEl;
     });

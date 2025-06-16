@@ -3,33 +3,42 @@
  * Implements the settings interface and tab for configuring the plugin.
  */
 
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import RelatedNotesPlugin from './main';
 
 'use strict';
 
 export interface RelatedNotesSettings {
   maxSuggestions: number;
-  advancedSettingsEnabled: boolean;
-  similarityProvider: 'auto' | 'bm25' | 'minhash';
-  debugMode: boolean;
+  debugMode: boolean;          // Enable debug logging
+  // Internal settings - not exposed to users
   similarityThreshold: number;
   batchSize: number;
   priorityIndexSize: number;
-  disableIncrementalUpdates: boolean;
-  showStats: boolean;
+  ngramSizes: number[];
+  hashFunctions: number[];
+  commonWordsThreshold: number;
+  maxStopwords: number;
+  enableSampling: boolean;     // Whether to use sampling for large vaults
+  sampleSizeThreshold: number; // Minimum corpus size to trigger sampling
+  maxSampleSize: number;       // Maximum documents to sample
+  lastKnownVersion?: string;   // Track the last known version for cache invalidation
 }
 
 export const DEFAULT_SETTINGS: RelatedNotesSettings = {
   maxSuggestions: 5,
-  advancedSettingsEnabled: false,
-  similarityProvider: 'auto',
-  debugMode: false,
-  similarityThreshold: 0.3,
-  batchSize: 1,
+  debugMode: false,           // Debug mode disabled by default
+  enableSampling: true,
+  // Internal settings with good defaults
+  similarityThreshold: 0.15, // Lowered from 0.3 to find more matches
+  batchSize: 5, // Smaller batch size for more responsive processing
   priorityIndexSize: 10000,
-  disableIncrementalUpdates: false,
-  showStats: false
+  ngramSizes: [3],
+  hashFunctions: [3],
+  commonWordsThreshold: 0.5,
+  maxStopwords: 200,
+  sampleSizeThreshold: 5000,  // Only sample when more than 5000 files
+  maxSampleSize: 1000         // Maximum number of documents to sample
 };
 
 export class RelatedNotesSettingTab extends PluginSettingTab {
@@ -41,12 +50,31 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  /**
+   * Estimates the false positive rate of a bloom filter
+   * @param m Size of the filter in bits
+   * @param k Number of hash functions
+   * @param n Number of elements in the filter
+   * @returns Estimated false positive rate (0-1)
+   */
+  private estimateFalsePositiveRate(m: number, k: number, n: number): number {
+    // False positive probability formula: (1 - e^(-k*n/m))^k
+    const power = -k * n / m;
+    const innerTerm = 1 - Math.exp(power);
+    return Math.pow(innerTerm, k);
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
+    containerEl.createEl('h2', { text: 'Related Notes Settings' });
+
+    // Basic Settings Section
+    containerEl.createEl('h3', { text: 'Basic Settings' });
+
     new Setting(containerEl)
-      .setName('Maximum Suggestions')
+      .setName('Maximum suggestions')
       .setDesc('Maximum number of related notes to display (1-20)')
       .addSlider(slider => slider
         .setLimits(1, 20, 1)
@@ -57,20 +85,74 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    // Debug Settings Section  
+    containerEl.createEl('h3', { text: 'Advanced Settings' });
+
+    new Setting(containerEl)
+      .setName('Debug mode')
+      .setDesc('Enable debug logging to the console. Useful for troubleshooting but may impact performance.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.debugMode)
+        .onChange(async (value) => {
+          this.plugin.settings.debugMode = value;
+          await this.plugin.saveSettings();
+          // Show notice about needing to restart for changes to take full effect
+          if (value) {
+            new Notice('Debug mode enabled. Some debug messages will appear in the developer console.');
+          } else {
+            new Notice('Debug mode disabled.');
+          }
+        }));
+
+    // Reindexing Section (using sentence case per Obsidian style guide)
+    containerEl.createEl('h3', { text: 'Index management' });
+
     const reindexSetting = new Setting(containerEl)
       .setName('Rebuild index')
-      .setDesc('Force a complete re-indexing of all notes. Indexing may several minutes depending on the size of your vault.');
+      .setDesc('Update the index if related notes suggestions seem out of date.');
+
+    const clearCacheSetting = new Setting(containerEl)
+      .setName('Clear cache')
+      .setDesc('Remove all cached data and start fresh. Use this if you encounter issues.');
+
+    // Add the clear cache button
+    const clearCacheButton = clearCacheSetting.addButton(button =>
+      button
+        .setButtonText('Clear cache')
+        .setCta()
+        .onClick(async () => {
+          // Disable the button during operation
+          button.setDisabled(true);
+          button.setButtonText('Clearing...');
+
+          try {
+            // Call the plugin method to clear cache
+            await this.plugin.clearCache();
+
+            // Show success message
+            new Notice('Cache cleared successfully');
+          } catch (error) {
+            console.error('Error clearing cache:', error);
+            new Notice('Error clearing cache');
+          } finally {
+            // Re-enable the button
+            button.setDisabled(false);
+            button.setButtonText('Clear cache');
+          }
+        })
+    );
 
     // Create button container for reindex and cancel buttons
     const buttonContainer = reindexSetting.controlEl.createDiv({ cls: 'related-notes-button-container' });
 
     // Add the reindex button
     this.reindexButton = buttonContainer.createEl('button', {
-      text: 'Re-index all notes',
+      text: 'Rebuild index',
       cls: 'mod-cta'
     });
 
-    // Disable the button if indexing is already in progress or initialization is not complete
+    // Disable the button if indexing is already in progress, initialization is not complete,
+    // or on-demand computation is disabled
     if (this.plugin.isReindexingInProgress() || !this.plugin.isInitializationComplete()) {
       this.reindexButton.disabled = true;
 
@@ -102,7 +184,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
         // Reset UI
         this.reindexButton!.disabled = false;
-        this.reindexButton!.setText('Re-index all notes');
+        this.reindexButton!.setText('Rebuild index');
         cancelButton.removeClass('related-notes-cancel-button-visible');
         cancelButton.addClass('related-notes-cancel-button-hidden');
       });
@@ -130,7 +212,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
 
         // Reset UI
         this.reindexButton!.disabled = false;
-        this.reindexButton!.setText('Re-index all notes');
+        this.reindexButton!.setText('Rebuild index');
         cancelButton.removeClass('related-notes-cancel-button-visible');
         cancelButton.addClass('related-notes-cancel-button-hidden');
       };
@@ -142,7 +224,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         // Start actual re-indexing
         await this.plugin.forceReindex();
       } catch (error: unknown) {
-        // Only log errors that aren't cancellation
+        // Log non-cancellation errors
         if (!(error instanceof Error && error.message === 'Indexing cancelled')) {
           console.error('Error during re-indexing:', error);
         }
@@ -152,11 +234,9 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         cancelButton.removeClass('related-notes-cancel-button-visible');
         cancelButton.addClass('related-notes-cancel-button-hidden');
 
-        // Only reset the button if indexing wasn't cancelled (it's already reset in the cancel handler)
-        if (!cancelled) {
-          this.reindexButton!.disabled = false;
-          this.reindexButton!.setText('Re-index all notes');
-        }
+        // Reset the button state (always safe to do this in finally)
+        this.reindexButton!.disabled = false;
+        this.reindexButton!.setText('Rebuild index');
       }
     });
   }
