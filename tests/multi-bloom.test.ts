@@ -304,7 +304,8 @@ describe('MultiResolutionBloomFilterProvider', () => {
       ngramSizes: [3],
       bloomSizes: [2048],
       hashFunctions: [3],
-      similarityThreshold: 0.1
+      similarityThreshold: 0.1,
+      useWordBasedCandidates: true // Enable word-based candidate selection
     });
   });
 
@@ -323,6 +324,39 @@ describe('MultiResolutionBloomFilterProvider', () => {
       
       await provider.initialize(progressCallback);
       // Progress callback might not be called if no files to process
+    });
+
+    it('should handle graceful cancellation during initialization', async () => {
+      // Create a mock vault with many files to simulate longer initialization
+      const mockFiles = Array.from({ length: 100 }, (_, i) => ({
+        path: `test_${i}.md`,
+        stat: { mtime: Date.now() },
+        cachedRead: () => Promise.resolve(`Content for file ${i}`)
+      }));
+      
+      const mockVault = {
+        getMarkdownFiles: () => mockFiles,
+        cachedRead: (file: any) => Promise.resolve(`Content for ${file.path}`)
+      };
+      
+      const testProvider = new MultiResolutionBloomFilterProvider(mockVault, {
+        ngramSizes: [3, 4],
+        bloomSizes: [1024, 2048],
+        hashFunctions: [3, 4],
+        similarityThreshold: 0.15
+      });
+      
+      // Start initialization
+      const initPromise = testProvider.initialize();
+      
+      // Cancel immediately
+      (testProvider as any).stopRequested = true;
+      
+      // Should not throw an error
+      await expect(initPromise).resolves.not.toThrow();
+      
+      // Should not be marked as initialized
+      expect((testProvider as any).isInitialized).toBe(false);
     });
   });
 
@@ -390,6 +424,15 @@ describe('MultiResolutionBloomFilterProvider', () => {
       expect(typeof stats.memoryUsage.totalBytes).toBe('number');
     });
 
+    it('should include word index stats when enabled', () => {
+      const stats = provider.getStats();
+      
+      // Should include word index stats since useWordBasedCandidates is true
+      expect(stats.wordIndex).toBeDefined();
+      expect(typeof stats.wordIndex.totalDocuments).toBe('number');
+      expect(typeof stats.wordIndex.totalUniqueWords).toBe('number');
+    });
+
     it('should update stats after processing documents', async () => {
       const initialStats = provider.getStats();
       
@@ -397,6 +440,108 @@ describe('MultiResolutionBloomFilterProvider', () => {
       
       const updatedStats = provider.getStats();
       expect(updatedStats.documentsProcessed).toBeGreaterThan(initialStats.documentsProcessed);
+      
+      // Word index stats should also be updated
+      if (updatedStats.wordIndex) {
+        expect(updatedStats.wordIndex.totalDocuments).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  describe('Word-Based Candidate Selection Integration', () => {
+    beforeEach(async () => {
+      // Add documents to test word-based candidate selection
+      await provider.processDocument('ai_doc', 'artificial intelligence machine learning deep learning algorithms');
+      await provider.processDocument('ml_doc', 'machine learning neural networks training models');
+      await provider.processDocument('nlp_doc', 'natural language processing text analysis algorithms');
+      await provider.processDocument('cv_doc', 'computer vision image processing deep learning');
+      await provider.processDocument('db_doc', 'database systems data management storage');
+    });
+
+    it('should use word-based candidates when enabled', async () => {
+      const startTime = Date.now();
+      const candidates = await provider.getSmartCandidates('ai_doc', 10);
+      const endTime = Date.now();
+      
+      expect(Array.isArray(candidates)).toBe(true);
+      expect(candidates.length).toBeLessThanOrEqual(10);
+      expect(candidates).not.toContain('ai_doc'); // Should not include query doc
+      
+      // Should be fast (word-based selection)
+      expect(endTime - startTime).toBeLessThan(100); // Less than 100ms
+      
+      // Should find relevant documents
+      expect(candidates.length).toBeGreaterThan(0);
+    });
+
+    it('should find semantically related candidates', async () => {
+      const candidates = await provider.getSmartCandidates('ai_doc', 5);
+      
+      // ai_doc contains "machine learning deep learning algorithms"
+      // Should find ml_doc (has "machine learning") and cv_doc (has "deep learning")
+      expect(candidates.length).toBeGreaterThan(0);
+      
+      // Verify candidates are valid
+      candidates.forEach(candidate => {
+        expect(typeof candidate).toBe('string');
+        expect(candidate.length).toBeGreaterThan(0);
+        expect(provider.isFileIndexed({ path: candidate } as any)).toBe(true);
+      });
+    });
+
+    it('should handle fallback to bloom filter selection', async () => {
+      // Create provider without word-based candidates
+      const mockVault = {
+        getMarkdownFiles: () => [],
+        adapter: {
+          exists: () => Promise.resolve(false),
+          read: () => Promise.resolve(''),
+          write: () => Promise.resolve(),
+          mkdir: () => Promise.resolve(),
+          remove: () => Promise.resolve(),
+        },
+        configDir: '/mock/config'
+      } as any;
+
+      const fallbackProvider = new MultiResolutionBloomFilterProvider(mockVault, {
+        ngramSizes: [3],
+        bloomSizes: [2048],
+        hashFunctions: [3],
+        similarityThreshold: 0.1,
+        useWordBasedCandidates: false // Disable word-based candidates
+      });
+
+      await fallbackProvider.processDocument('test', 'test content');
+      const candidates = await fallbackProvider.getSmartCandidates('test', 5);
+      
+      // Should still work with bloom filter fallback
+      expect(Array.isArray(candidates)).toBe(true);
+    });
+
+    it('should perform well with many documents', async () => {
+      // Add more documents for performance testing
+      for (let i = 0; i < 50; i++) {
+        const topics = ['science', 'technology', 'research', 'data', 'analysis'];
+        const topic = topics[i % topics.length];
+        await provider.processDocument(`doc_${i}`, `${topic} content document ${i} with various ${topic} topics`);
+      }
+
+      const startTime = Date.now();
+      const candidates = await provider.getSmartCandidates('ai_doc', 20);
+      const endTime = Date.now();
+      
+      expect(candidates.length).toBeLessThanOrEqual(20);
+      expect(endTime - startTime).toBeLessThan(500); // Should be very fast
+    }, 10000); // 10 second timeout
+
+    it('should clear word index when clearing provider', () => {
+      const initialStats = provider.getStats();
+      expect(initialStats.wordIndex?.totalDocuments).toBeGreaterThan(0);
+      
+      provider.clear();
+      
+      const clearedStats = provider.getStats();
+      expect(clearedStats.wordIndex?.totalDocuments).toBe(0);
     });
   });
 });

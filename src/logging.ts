@@ -22,14 +22,35 @@ export function isDebugMode(): boolean {
 }
 
 /**
- * Log a message to the console if debug mode is enabled
+ * Log a debug message to the console if debug mode is enabled
+ * Use sparingly for actionable debugging information
  * @param message The message to log
  * @param data Optional data to log
  */
 export function logIfDebugModeEnabled(message: string, ...data: any[]): void {
   if (globalDebugMode) {
-    console.log(`[RelatedNotes] ${message}`, ...data);
+    console.log(`[RelatedNotes Debug] ${message}`, ...data);
   }
+}
+
+/**
+ * Log metrics and statistics information
+ * Always logged, used for important operational insights
+ * @param message The message to log
+ * @param data Optional data to log
+ */
+export function logMetrics(message: string, ...data: any[]): void {
+  console.info(`[RelatedNotes] ${message}`, ...data);
+}
+
+/**
+ * Log performance information
+ * Always logged, used for performance tracking
+ * @param message The message to log
+ * @param data Optional data to log
+ */
+export function logPerformance(message: string, ...data: any[]): void {
+  console.info(`[RelatedNotes Performance] ${message}`, ...data);
 }
 
 // Legacy constant for backward compatibility (will use global state)

@@ -1,5 +1,8 @@
 # Related Notes Plugin for Obsidian
 
+[![Tests](https://github.com/yourusername/obsidian-related-notes/workflows/Run%20Tests/badge.svg)](https://github.com/yourusername/obsidian-related-notes/actions)
+[![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg)](https://buymeacoffee.com/oluwasanya)
+
 Uncover connections between notes in your vault using this plugin.
 
 ![Preview of the Related Notes plugin on the right pane](<screenshot.png>)
@@ -239,14 +242,74 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## 🚨 Troubleshooting
+
+### Plugin Freezes or Becomes Unresponsive
+
+If the plugin freezes during indexing or becomes unresponsive, especially in large vaults (5,000+ notes):
+
+**Quick Recovery Steps:**
+
+1. **Force-quit Obsidian** completely (not just close the window)
+2. **Remove the plugin cache** by deleting the cache directory:
+   ```bash
+   # Navigate to your vault's .obsidian folder and run:
+   rm -rf .obsidian/plugins/related-notes
+   ```
+   Or manually delete the `.obsidian/plugins/related-notes` folder
+3. **Restart Obsidian**
+4. **Reinstall the plugin** from Community Plugins
+5. The plugin will rebuild its index automatically with optimizations for large vaults
+
+**Alternative Recovery (Preserve Settings):**
+
+If you want to keep your plugin settings:
+1. Force-quit Obsidian
+2. Delete only the cache files:
+   ```bash
+   # In your vault's .obsidian/plugins/related-notes/ folder:
+   rm -f .bloom-filter-cache.json
+   rm -f bloom-filter-cache.json  
+   rm -f similarity-cache.json
+   ```
+3. Restart Obsidian
+
+### Index Corruption Issues
+
+If you see errors like "Array length mismatch" or "Cache format incompatibility":
+
+- The plugin automatically detects and fixes these issues
+- If problems persist, follow the cache deletion steps above
+- The plugin will rebuild with the correct format
+
+### Performance Issues in Large Vaults
+
+For vaults with 10,000+ notes:
+
+- The plugin uses progressive indexing to avoid blocking Obsidian
+- Initial indexing may take several minutes in the background
+- Use the "Clear Cache and Re-index" button in settings if needed
+- Monitor progress in the status bar
+
+### Memory Issues
+
+If Obsidian becomes slow or uses excessive memory:
+
+1. Close other resource-intensive applications
+2. Restart Obsidian to clear memory
+3. Consider adjusting the "Maximum Suggestions" setting to a lower number
+4. Use the progressive indexing feature for very large vaults
+
 ## Support
 
 If you encounter any issues or have questions:
 
-1. Check the [GitHub Issues](https://github.com/yourusername/obsidian-related-notes/issues)
-2. Create a new issue if your problem hasn't been reported
-3. Provide as much information as possible, including:
+1. **Check the troubleshooting section above first** 👆
+2. Check the [GitHub Issues](https://github.com/yourusername/obsidian-related-notes/issues)
+3. Create a new issue if your problem hasn't been reported
+4. Provide as much information as possible, including:
    - Steps to reproduce the issue
    - Your Obsidian version
    - Your plugin version
-   - Any relevant error messages
+   - Vault size (approximate number of notes)
+   - Any relevant error messages from the Developer Console (Ctrl+Shift+I)

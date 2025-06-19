@@ -64,14 +64,58 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     return Math.pow(innerTerm, k);
   }
 
+  /**
+   * Generate debug information without PII
+   * @returns String containing debug information
+   */
+  private generateDebugInfo(): string {
+    const vault = this.app.vault;
+    const files = vault.getMarkdownFiles();
+    const stats = this.plugin.similarityProvider?.getStats?.();
+    
+    const debugInfo = {
+      timestamp: new Date().toISOString(),
+      plugin: {
+        version: this.plugin.manifest.version,
+        initialized: this.plugin.isInitializationComplete(),
+        reindexing: this.plugin.isReindexingInProgress()
+      },
+      vault: {
+        totalMarkdownFiles: files.length,
+        configDirExists: !!vault.configDir
+      },
+      settings: {
+        maxSuggestions: this.plugin.settings.maxSuggestions,
+        debugMode: this.plugin.settings.debugMode,
+        similarityThreshold: this.plugin.settings.similarityThreshold,
+        enableSampling: this.plugin.settings.enableSampling,
+        sampleSizeThreshold: this.plugin.settings.sampleSizeThreshold,
+        maxSampleSize: this.plugin.settings.maxSampleSize,
+        ngramSizes: this.plugin.settings.ngramSizes,
+        hashFunctions: this.plugin.settings.hashFunctions
+      },
+      system: {
+        platform: navigator.platform,
+        userAgent: navigator.userAgent,
+        memoryAvailable: (navigator as any).deviceMemory || 'unknown',
+        hardwareConcurrency: navigator.hardwareConcurrency || 'unknown'
+      },
+      index: stats ? {
+        documentsIndexed: stats.documentsProcessed || 0,
+        progressiveIndexing: stats.progressiveIndexing,
+        memoryUsage: stats.memoryUsage,
+        avgProcessingTime: stats.averageProcessingTime
+      } : null
+    };
+
+    return JSON.stringify(debugInfo, null, 2);
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'Related Notes Settings' });
-
-    // Basic Settings Section
-    containerEl.createEl('h3', { text: 'Basic Settings' });
+    containerEl.createEl('h2', { text: 'Related Notes' });
 
     new Setting(containerEl)
       .setName('Maximum suggestions')
@@ -85,8 +129,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    // Debug Settings Section  
-    containerEl.createEl('h3', { text: 'Advanced Settings' });
+    // Debug settings
 
     new Setting(containerEl)
       .setName('Debug mode')
@@ -104,8 +147,24 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           }
         }));
 
-    // Reindexing Section (using sentence case per Obsidian style guide)
-    containerEl.createEl('h3', { text: 'Index management' });
+    // Copy debug info button
+    new Setting(containerEl)
+      .setName('Copy debug info')
+      .setDesc('Copy debug information to clipboard (no personal data included)')
+      .addButton(button => button
+        .setButtonText('Copy debug info')
+        .onClick(async () => {
+          try {
+            const debugInfo = this.generateDebugInfo();
+            await navigator.clipboard.writeText(debugInfo);
+            new Notice('Debug info copied to clipboard');
+          } catch (error) {
+            console.error('Failed to copy debug info:', error);
+            new Notice('Failed to copy debug info');
+          }
+        }));
+
+    // Index management
 
     const reindexSetting = new Setting(containerEl)
       .setName('Rebuild index')

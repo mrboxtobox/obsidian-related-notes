@@ -4,8 +4,8 @@ import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import type { RelatedNotesSettings } from './settings';
 import { DEFAULT_SETTINGS, RelatedNotesSettingTab } from './settings';
 import { MultiResolutionBloomFilterProvider } from './multi-bloom';
-import { setDebugMode, logIfDebugModeEnabled } from './logging';
-import { BATCH_PROCESSING, BLOOM_FILTER, FILE_OPERATIONS } from './constants';
+import { setDebugMode, logIfDebugModeEnabled, logMetrics } from './logging';
+import { BATCH_PROCESSING, BLOOM_FILTER, FILE_OPERATIONS, WORD_FILTERING } from './constants';
 import { handleFileError, handleIndexingError, handleUIError } from './error-handling';
 import type { AppWithSettings } from './types';
 
@@ -32,13 +32,30 @@ export default class RelatedNotesPlugin extends Plugin {
     maxRetries: number = FILE_OPERATIONS.MAX_RETRIES,
     timeoutMs?: number
   ): Promise<string> {
-    // Adaptive timeout based on file size
+    // Adaptive timeout based on file size - more generous for small files
     const baseTimeout = timeoutMs || FILE_OPERATIONS.READ_TIMEOUT_MS;
-    const adaptiveTimeout = file.stat.size > 1024 * 1024 ? // 1MB
-      baseTimeout * FILE_OPERATIONS.LARGE_FILE_TIMEOUT_MULTIPLIER :
-      baseTimeout;
+    let adaptiveTimeout: number;
+
+    if (file.stat.size < 1024) { // Files under 1KB get shorter timeout
+      adaptiveTimeout = Math.min(baseTimeout * 0.5, 5000);
+    } else if (file.stat.size > 1024 * 1024) { // Files over 1MB get longer timeout
+      adaptiveTimeout = baseTimeout * FILE_OPERATIONS.LARGE_FILE_TIMEOUT_MULTIPLIER;
+    } else {
+      adaptiveTimeout = baseTimeout;
+    }
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        // For very small files, try direct read first without timeout
+        if (file.stat.size < 1024 && attempt === 1) {
+          try {
+            return await this.app.vault.cachedRead(file);
+          } catch (quickError) {
+            // If direct read fails, fall through to timeout logic
+            // Fallback to timeout approach for small files
+          }
+        }
+
         // Create a timeout promise with adaptive timeout
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error(`File read timeout after ${adaptiveTimeout}ms (file size: ${file.stat.size} bytes)`)), adaptiveTimeout);
@@ -52,14 +69,20 @@ export default class RelatedNotesPlugin extends Plugin {
 
         return content;
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (attempt === maxRetries) {
+          logIfDebugModeEnabled(`File read failed after ${maxRetries} attempts: ${file.path} - ${errorMessage}`);
+        }
+
         handleFileError(error as Error, 'read file', file.path);
 
         if (attempt === maxRetries) {
-          throw new Error(`Failed to read file ${file.path} after ${maxRetries} attempts: ${error}`);
+          throw new Error(`Failed to read file ${file.path} after ${maxRetries} attempts: ${errorMessage}`);
         }
 
         // Exponential backoff: wait longer between retries
         const backoffMs = Math.min(FILE_OPERATIONS.BASE_BACKOFF_MS * Math.pow(2, attempt - 1), FILE_OPERATIONS.MAX_BACKOFF_MS);
+        // Exponential backoff retry
         await new Promise(resolve => setTimeout(resolve, backoffMs));
       }
     }
@@ -235,8 +258,10 @@ export default class RelatedNotesPlugin extends Plugin {
       // Ignore errors when trying to delete old cache
     }
 
-    // Ensure all bloom filters use the same size
-    const defaultSize = BLOOM_FILTER.DEFAULT_FILTER_SIZE; // Increased filter size to reduce false positives
+    // Use adaptive bloom filter size based on vault size
+    const totalFiles = this.app.vault.getMarkdownFiles().length;
+    const isLargeVault = totalFiles > WORD_FILTERING.LARGE_VAULT_THRESHOLD;
+    const defaultSize = isLargeVault ? BLOOM_FILTER.LARGE_VAULT_FILTER_SIZE : BLOOM_FILTER.DEFAULT_FILTER_SIZE;
     // Make sure all bloom filters have the exact same size to prevent comparison issues
     const bloomSizes = this.settings.ngramSizes.map(() => defaultSize);
 
@@ -265,10 +290,23 @@ export default class RelatedNotesPlugin extends Plugin {
       enableSampling: this.settings.enableSampling,
       sampleSizeThreshold: this.settings.sampleSizeThreshold,
       maxSampleSize: this.settings.maxSampleSize,
+      // Fast word-based candidate selection (auto-enabled for medium+ vaults)
+      useWordBasedCandidates: (() => {
+        const totalFiles = this.app.vault.getMarkdownFiles().length;
+        const threshold = WORD_FILTERING.WORD_INDEX_THRESHOLD;
+        // Auto-enable for larger vaults unless explicitly disabled in settings
+        const useWordIndex = totalFiles > threshold;
+        if (useWordIndex) {
+          logIfDebugModeEnabled(`Using word-based indexing for ${totalFiles} files (>${threshold} threshold)`);
+        } else {
+          logIfDebugModeEnabled(`Using bloom filter indexing for ${totalFiles} files (≤${threshold} threshold)`);
+        }
+        return useWordIndex;
+      })()
     });
 
     // Show initial status
-    this.statusBarItem?.setText("Indexing notes...");
+    this.statusBarItem?.setText("Loading index...");
     if (this.statusBarItem) {
       this.statusBarItem.style.display = 'block';
     }
@@ -280,17 +318,43 @@ export default class RelatedNotesPlugin extends Plugin {
     }, 1000);
   }
 
+  private lastStatusUpdate = 0;
+  private readonly STATUS_UPDATE_THROTTLE = 500; // Update status bar at most every 500ms
+
   private async initializeSimilarityProvider() {
     try {
-      // Initialize with progress reporting and smooth transitions
-      // Pass the skipInitialIndexing setting to prevent reindexing on every load
+      // Initialize with throttled progress reporting to reduce DOM repainting
       await this.similarityProvider?.initialize((processed, total) => {
-        const percentage = Math.round((processed / total) * 100);
-        let message = "";
-        const phase = "Indexing";
+        const now = Date.now();
 
-        // Simple progress message with percentage (following Obsidian style guide)
-        message = `${phase} notes: ${percentage}%`;
+        // Throttle status bar updates to reduce repainting
+        if (now - this.lastStatusUpdate < this.STATUS_UPDATE_THROTTLE && processed < total) {
+          return; // Skip this update
+        }
+
+        this.lastStatusUpdate = now;
+        const percentage = Math.round((processed / total) * 100);
+        const totalFiles = this.app.vault.getMarkdownFiles().length;
+        const isLargeVault = totalFiles > 5000; // WORD_FILTERING.LARGE_VAULT_THRESHOLD
+        let message = "";
+
+        if (processed === 0 && total > 0) {
+          message = `Checking cache...`;
+        } else if (processed === 0) {
+          if (isLargeVault) {
+            message = `Preparing large vault (${totalFiles} files)...`;
+          } else {
+            message = `Indexing ${total} files...`;
+          }
+        } else if (processed === total) {
+          if (isLargeVault) {
+            message = `Related notes ready! (${total})`;
+          } else {
+            message = `Indexed ${total} files`;
+          }
+        } else {
+          message = `Indexing: ${percentage}% (${processed}/${total})`;
+        }
 
         this.statusBarItem?.setText(message);
         if (this.statusBarItem) {
@@ -308,11 +372,23 @@ export default class RelatedNotesPlugin extends Plugin {
         const total = Math.max(totalFiles, 1); // Avoid division by zero
         const indexed = Math.max(0, Math.min(total - remaining, total)); // Ensure value is between 0 and total
         const percent = Math.max(0, Math.min(100, Math.round((indexed / total) * 100))); // Bound between 0-100
+        const isLargeVault = totalFiles > 5000;
 
-        // Show a subtle indicator that progressive indexing is active
-        this.statusBarItem?.setText(`Indexing: ${percent}%`);
-        this.statusBarItem?.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
-        this.statusBarItem?.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
+        // Show user-friendly progressive indexing status
+        let progressMessage;
+        let progressTitle;
+
+        if (isLargeVault) {
+          progressMessage = `Indexing: ${percent}% (${indexed}/${total})`;
+          progressTitle = `Indexing ${remaining} remaining files in the background. Related notes are available now.`;
+        } else {
+          progressMessage = `Indexing: ${percent}%`;
+          progressTitle = `Progressively indexing ${remaining} remaining files`;
+        }
+
+        this.statusBarItem?.setText(progressMessage);
+        this.statusBarItem?.setAttribute('aria-label', progressTitle);
+        this.statusBarItem?.setAttribute('title', progressTitle);
         if (this.statusBarItem) {
           this.statusBarItem.style.display = 'block';
         }
@@ -329,11 +405,8 @@ export default class RelatedNotesPlugin extends Plugin {
         }
       }
 
-      this.isInitialized = true;
-    } catch (error) {
-      // Handle cancellation error explicitly
-      if (error instanceof Error && error.message === 'Indexing cancelled') {
-        // Set a proper status message
+      // Check if indexing was stopped (graceful cancellation)
+      if (this.similarityProvider && (this.similarityProvider as any).stopRequested) {
         this.statusBarItem?.setText("Indexing cancelled");
         setTimeout(() => {
           this.statusBarItem?.setText("");
@@ -341,22 +414,22 @@ export default class RelatedNotesPlugin extends Plugin {
             this.statusBarItem.style.display = 'none';
           }
         }, 2000);
-
-        // Even if cancelled, mark as initialized to prevent blocking the UI
-        this.isInitialized = true;
-      } else {
-        // For other errors, show error message
-        this.statusBarItem?.setText("Indexing error");
-        setTimeout(() => {
-          this.statusBarItem?.setText("");
-          if (this.statusBarItem) {
-            this.statusBarItem.style.display = 'none';
-          }
-        }, 3000);
-
-        // Mark as initialized even on error to prevent perpetual loading state
-        this.isInitialized = true;
       }
+
+      this.isInitialized = true;
+    } catch (error) {
+      // For any errors, show error message and log
+      console.error('Error during initialization:', error);
+      this.statusBarItem?.setText("Indexing error");
+      setTimeout(() => {
+        this.statusBarItem?.setText("");
+        if (this.statusBarItem) {
+          this.statusBarItem.style.display = 'none';
+        }
+      }, 3000);
+
+      // Mark as initialized even on error to prevent perpetual loading state
+      this.isInitialized = true;
     }
   }
 
@@ -367,7 +440,7 @@ export default class RelatedNotesPlugin extends Plugin {
   public async forceReindex(): Promise<void> {
     // Simple check - if already reindexing, just return
     if (this.isReindexing) {
-      logIfDebugModeEnabled("Reindex already in progress, skipping duplicate request");
+      logIfDebugModeEnabled("Reindex already in progress - request ignored");
       return;
     }
 
@@ -562,12 +635,14 @@ export default class RelatedNotesPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on('delete', (file) => {
         if (file instanceof TFile && this.isMarkdownFile(file)) {
-          // Just mark the similarity provider as dirty to trigger a save
-          // The specific file handling is done inside the provider
+          // Remove from word index for fast candidate selection
           if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
-            // Safe property access using bracket notation
-            const provider = this.similarityProvider as MultiResolutionBloomFilterProvider;
-            (provider as any).cacheDirty = true;
+            const provider = this.similarityProvider as any;
+            if (provider.wordCandidateSelector && provider.useWordBasedCandidates) {
+              provider.wordCandidateSelector.removeDocument(file.path);
+            }
+            // Mark as dirty to trigger cache save
+            provider.cacheDirty = true;
           }
         }
       })
@@ -692,18 +767,19 @@ export default class RelatedNotesPlugin extends Plugin {
       this.queueProcessingTimeout = null;
     }
 
-    // Save cache before unloading with timeout to prevent hanging
+    // Clear cache when plugin is disabled to avoid stale data
     if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
       try {
-        // Use Promise.race to timeout after 5 seconds
+        // Clear cache with timeout to prevent hanging
         await Promise.race([
-          (this.similarityProvider as MultiResolutionBloomFilterProvider).saveCache(),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Cache save timeout')), 5000)
+          (this.similarityProvider as MultiResolutionBloomFilterProvider).deleteCache(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Cache clear timeout')), 5000)
           )
         ]);
+        console.info('[RelatedNotes] Cache cleared on plugin disable');
       } catch (error) {
-        handleUIError(error as Error, 'plugin unload', 'save cache');
+        handleUIError(error as Error, 'plugin unload', 'clear cache');
       }
     }
 
@@ -781,17 +857,29 @@ export default class RelatedNotesPlugin extends Plugin {
       const totalFiles = Math.max(this.app.vault.getMarkdownFiles().length, 1); // Avoid division by zero
       const indexed = Math.max(0, Math.min(totalFiles - remaining, totalFiles)); // Ensure value is between 0 and total
       const percent = Math.max(0, Math.min(100, Math.round((indexed / totalFiles) * 100))); // Bound between 0-100
+      const isLargeVault = totalFiles > 5000;
 
-      // Update the status bar
-      this.statusBarItem?.setText(`Indexing: ${percent}%`);
-      this.statusBarItem?.setAttribute('aria-label', `Progressively indexing ${remaining} remaining files`);
-      this.statusBarItem?.setAttribute('title', `Progressively indexing ${remaining} remaining files`);
+      // Update the status bar with consistent messaging
+      let progressMessage;
+      let progressTitle;
+
+      if (isLargeVault) {
+        progressMessage = `Background indexing: ${percent}% (${indexed}/${totalFiles})`;
+        progressTitle = `Indexing ${remaining} remaining files in the background. Related notes are available now.`;
+      } else {
+        progressMessage = `Indexing: ${percent}%`;
+        progressTitle = `Progressively indexing ${remaining} remaining files`;
+      }
+
+      this.statusBarItem?.setText(progressMessage);
+      this.statusBarItem?.setAttribute('aria-label', progressTitle);
+      this.statusBarItem?.setAttribute('title', progressTitle);
       if (this.statusBarItem) {
         this.statusBarItem.style.display = 'block';
       }
 
-      // Schedule another update
-      setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
+      // Schedule another update less frequently to reduce performance impact
+      setTimeout(() => this.updateProgressiveIndexingStatus(), 120000); // Check every 2 minutes
     } else {
       // No longer doing progressive indexing, hide the status
       this.statusBarItem?.setText("");
@@ -817,39 +905,106 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private async getRelatedNotes(file: TFile): Promise<Array<RelatedNote>> {
-    // Get candidates from the similarity provider
-    // Use sampling for large vaults
-    const markdownFiles = this.app.vault.getMarkdownFiles();
-    const totalFiles = markdownFiles.length;
+    try {
+      // Get candidates from the similarity provider
+      // Use sampling for large vaults
+      const markdownFiles = this.app.vault.getMarkdownFiles();
+      const totalFiles = markdownFiles.length;
 
-    // Get sampling settings from plugin settings
-    const { enableSampling, sampleSizeThreshold, maxSampleSize } = this.settings;
+      // Get sampling settings from plugin settings
+      const { enableSampling, sampleSizeThreshold, maxSampleSize } = this.settings;
 
-    // Calculate adaptive sample size if sampling is enabled
-    const sampleSize = enableSampling && totalFiles > sampleSizeThreshold
-      ? Math.min(Math.ceil(totalFiles * 0.2), maxSampleSize)
-      : undefined; // undefined means no sampling
+      // Calculate adaptive sample size if sampling is enabled
+      const sampleSize = enableSampling && totalFiles > sampleSizeThreshold
+        ? Math.min(Math.ceil(totalFiles * 0.2), maxSampleSize)
+        : undefined; // undefined means no sampling
 
-    // Get candidates, potentially with sampling
-    const candidates = await this.similarityProvider?.getCandidateFiles(file) || [];
+      // Get candidates, potentially with sampling
+      const candidates = await this.similarityProvider?.getCandidateFiles(file) || [];
 
-    // Calculate similarities for all candidates
-    const similarityPromises = candidates.map(async (candidate) => {
-      const similarity = await this.similarityProvider?.computeCappedCosineSimilarity(file, candidate);
-      return {
-        file: candidate,
-        similarity: similarity?.similarity || 0,
-        isPreIndexed: true
-      };
-    });
+      // Calculate similarities for all candidates
+      const similarityPromises = candidates.map(async (candidate) => {
+        try {
+          const similarity = await this.similarityProvider?.computeCappedCosineSimilarity(file, candidate);
+          return {
+            file: candidate,
+            similarity: similarity?.similarity || 0,
+            isPreIndexed: true
+          };
+        } catch (error) {
+          console.warn(`Error computing similarity for ${candidate.path}:`, error);
+          return {
+            file: candidate,
+            similarity: 0,
+            isPreIndexed: true
+          };
+        }
+      });
 
-    // Await all similarity calculations
-    const relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
+      // Await all similarity calculations
+      const relatedNotes: RelatedNote[] = await Promise.all(similarityPromises);
 
-    // Sort by similarity (highest first)
-    const sortedNotes = relatedNotes.sort((a, b) => b.similarity - a.similarity);
+      // Sort by similarity (highest first)
+      const sortedNotes = relatedNotes
+        .filter(note => note.similarity > 0) // Filter out zero similarities
+        .sort((a, b) => b.similarity - a.similarity);
 
-    // Return top N notes according to settings
-    return sortedNotes.slice(0, this.settings.maxSuggestions);
+      // If we have good results, return them
+      if (sortedNotes.length > 0) {
+        return sortedNotes.slice(0, this.settings.maxSuggestions);
+      }
+
+    } catch (error) {
+      console.error(`Error getting related notes for ${file.path}:`, error);
+    }
+    return [];
+  }
+
+  /**
+   * Get recent files from the same folder as the current file
+   */
+  private getRecentFilesFromSameFolder(currentFile: TFile, allFiles: TFile[]): RelatedNote[] {
+    const currentFolder = currentFile.parent?.path || '';
+
+    return allFiles
+      .filter(f => f.path !== currentFile.path && (f.parent?.path || '') === currentFolder)
+      .sort((a, b) => b.stat.mtime - a.stat.mtime)
+      .slice(0, 10)
+      .map(f => ({
+        file: f,
+        similarity: 0.1, // Low but non-zero similarity
+        isPreIndexed: false
+      }));
+  }
+
+  /**
+   * Get recently modified files
+   */
+  private getRecentFiles(allFiles: TFile[], currentFile: TFile): RelatedNote[] {
+    return allFiles
+      .filter(f => f.path !== currentFile.path)
+      .sort((a, b) => b.stat.mtime - a.stat.mtime)
+      .slice(0, 10)
+      .map(f => ({
+        file: f,
+        similarity: 0.05, // Very low but non-zero similarity
+        isPreIndexed: false
+      }));
+  }
+
+  /**
+   * Get random files as last resort
+   */
+  private getRandomFiles(allFiles: TFile[], currentFile: TFile): RelatedNote[] {
+    const otherFiles = allFiles.filter(f => f.path !== currentFile.path);
+    const shuffled = otherFiles.sort(() => Math.random() - 0.5);
+
+    return shuffled
+      .slice(0, 5)
+      .map(f => ({
+        file: f,
+        similarity: 0.01, // Minimal similarity
+        isPreIndexed: false
+      }));
   }
 }
