@@ -1,9 +1,8 @@
 # Related Notes Plugin for Obsidian
 
 [![Tests](https://github.com/yourusername/obsidian-related-notes/workflows/Run%20Tests/badge.svg)](https://github.com/yourusername/obsidian-related-notes/actions)
-[![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg)](https://buymeacoffee.com/oluwasanya)
 
-Uncover connections between notes in your vault using this plugin.
+Discover hidden connections between your notes using advanced bloom filter algorithms. This plugin automatically analyzes your vault to suggest related content, helping you uncover insights and build a richer knowledge graph.
 
 ![Preview of the Related Notes plugin on the right pane](<screenshot.png>)
 
@@ -11,40 +10,40 @@ Uncover connections between notes in your vault using this plugin.
 
 ![alt text](<non_readme_screenshot.png>)
 
-Uncover connections between notes in your vault using this plugin.
-
 ## Features
 
-- 🔍 Automatically analyzes note content using multi-resolution Bloom filters
-- 🔗 One-click linking between related notes
-- ⚡ Fully local processing with complete data privacy
-- 🚀 Efficient indexing for handling large vaults with tens of thousands of notes
-- 💡 Multi-resolution n-gram sizes for better accuracy across different document styles
+- 🔍 **Smart Content Analysis**: Uses optimized bloom filter algorithms to analyze note content
+- 🔗 **One-Click Linking**: Easily create connections between related notes
+- ⚡ **Lightning Fast**: Single-pass indexing with optimized performance for all vault sizes
+- 🛡️ **Privacy First**: All processing happens locally on your device
+- 🌍 **Universal Language Support**: Works with any language including CJK scripts
+- 📊 **Intelligent Sampling**: Automatically optimizes for large vaults (10,000+ notes)
+- 🔄 **Real-Time Updates**: Incrementally updates index as you modify notes
 
 ## Installation
 
 1. Open Obsidian Settings
-2. Navigate to Community Plugins and disable Restricted mode
-3. Click Browse and search for "Related Notes"
-4. Click Install
-5. Enable the plugin in the Community Plugins tab
+2. Navigate to Community plugins and disable Restricted mode
+3. Select **Browse** and search for "Related Notes"
+4. Select **Install**
+5. Enable the plugin in the Community plugins tab
 
 ## Usage
 
-### Viewing Related Notes
+### Viewing related notes
 
-1. Click the lightning (⚡️) icon in the ribbon to open the Related Notes pane
-2. The plugin will automatically show related notes for your currently active note
-3. Click the "Link" button to create a link to a related note
+1. Select the lightning (⚡️) icon in the ribbon to open the Related notes sidebar
+2. The plugin will automatically show related notes for your active note
+3. Select the **Link** button to create a link to a related note
 4. You can also use the command palette and search for "Toggle related notes"
 
-### Force Re-indexing
+### Force re-indexing
 
 The plugin automatically indexes your notes and updates the index when notes are modified. However, if you want to force a complete re-indexing of all notes:
 
 1. Open Obsidian Settings
-2. Navigate to the Related Notes plugin settings
-3. In the "Indexing" section, click the "Re-index All Notes" button
+2. Navigate to the Related notes plugin settings
+3. In the "Index management" section, select the **Rebuild index** button
 4. Wait for the re-indexing to complete (progress will be shown in the status bar)
 
 Force re-indexing is useful when:
@@ -52,7 +51,7 @@ Force re-indexing is useful when:
 - You suspect the index might be out of date
 - You want to ensure the most accurate related notes suggestions
 
-### Creating Links Between Related Notes
+### Creating links between related notes
 
 The plugin now makes it easy to create links between related notes:
 
@@ -68,53 +67,54 @@ The plugin now makes it easy to create links between related notes:
 
 The plugin features a streamlined settings interface:
 
-### Basic Settings
-- **Maximum Suggestions**: Control how many related notes are displayed (1-20)
-- **Force Re-indexing**: Button to trigger a complete re-indexing of all notes
+### Basic settings
+- **Maximum suggestions**: Control how many related notes are displayed (1-20)
+- **Rebuild index**: Button to trigger a complete re-indexing of all notes
 
-### Stats Toggle
-Enable to view detailed statistics about the plugin's operation:
+### Debug mode
+Enable to view detailed statistics about the plugin's operation in the developer console:
 
-### Multi-Resolution Bloom Filter
+### Bloom filter technology
 
-The plugin uses a multi-resolution bloom filter approach for efficient similarity detection:
+The plugin uses an optimized bloom filter approach for efficient similarity detection:
 
-#### How It Works
-- **Bloom Filters**: Probabilistic data structures for efficient similarity detection
-- **Multiple N-gram Sizes**: Combines different character sequence lengths (2, 3, and 4-grams by default)
-- **Weighted Similarity**: Different resolutions contribute differently to the final similarity score
-- **Unicode Support**: Properly handles multi-byte characters in all languages
-- **Adaptive Parameters**: Self-tunes based on your vault's characteristics
+#### How it works
+- **Single-Pass Indexing**: Simplified architecture for maximum performance and reliability
+- **Bloom Filters**: Probabilistic data structures for memory-efficient similarity detection
+- **N-gram Analysis**: Uses 3-gram tokenization for optimal balance of accuracy and speed
+- **Smart Tokenization**: Advanced text processing with CJK support and technical term preservation
+- **Adaptive Parameters**: Automatically optimizes based on your vault size and characteristics
 
-#### Advantages
-- **Memory Efficiency**: Uses just a fraction of the memory of traditional algorithms
-- **Language Agnostic**: Works equally well with English, Chinese, Japanese, Arabic, etc.
-- **Automatic Stopword Detection**: Identifies common words in any language
-- **Fast Similarity Calculation**: Quick Jaccard similarity computation
-- **No Training Required**: Works immediately without model training
-- **Privacy-Focused**: All processing happens locally on your device
+#### Key advantages
+- **Memory Efficient**: Uses minimal memory even for large vaults (50,000+ notes)
+- **Language Universal**: Excellent support for all languages including Chinese, Japanese, Arabic
+- **Zero Configuration**: Works out-of-the-box with intelligent defaults
+- **Privacy Focused**: All processing happens locally - your notes never leave your device
+- **Performance Optimized**: Single-pass design eliminates complex multi-phase processing
 
-### Efficient Indexing for Large Vaults
+### Optimized for all vault sizes
 
-For users with extensive note collections (tens of thousands of notes), the plugin implements an efficient indexing strategy:
+The plugin automatically adapts to your vault size and provides excellent performance:
 
-- **Optimized Memory Usage**: 
-  - The multi-resolution bloom filter uses minimal memory per document
-  - A 1000-document vault might use only ~1MB of memory total
-  - Even large vaults with 50,000+ notes remain performant
+- **Single-Pass Efficiency**:
+  - Simplified indexing processes all notes in one optimized pass
+  - Frequent cache saves (every 50 files) prevent data loss
+  - UI remains responsive with intelligent yielding every 5 files
+  - Real-time progress display with current file information
 
-- **Adaptive Parameters**:
-  - Automatically detects common words in your vault to exclude from similarity calculations
-  - Adjusts n-gram sizes based on your document characteristics
-  - Tunes bloom filter sizes and hash functions for optimal performance
-  - All adaptations happen automatically without user intervention
+- **Memory Optimization**:
+  - Uses minimal memory per document (~1KB per 1000 notes)
+  - Automatic sampling for large vaults to maintain performance
+  - Smart cache management with periodic persistence
+  - Optimized bloom filter sizes based on vault characteristics
 
-- **Fast Similarity Calculation**:
-  - Bloom filter comparison is extremely fast (O(1) complexity)
-  - Jaccard similarity provides reliable relevance ranking
-  - Works equally well across all languages and writing styles
+- **Intelligent Processing**:
+  - Automatic stopword detection for any language
+  - Filename inclusion for better matching accuracy
+  - Incremental updates for modified files
+  - Debounced processing to handle rapid file changes
 
-This approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
+Whether you have 100 notes or 100,000 notes, the plugin delivers fast, accurate suggestions.
 
 ## Development
 
@@ -142,7 +142,7 @@ npm install
 npm run build
 ```
 
-### Development Workflow
+### Development workflow
 
 - `npm run dev` - Starts development build with hot-reload
 - `npm run dev:test` - Starts development build with hot-reload and copies files to test-vault
@@ -152,7 +152,7 @@ npm run build
 - `npm run build:custom` - Creates a production build with custom target directories (set TARGET_DIRS env var)
 - `npm run version` - Updates version numbers in manifest.json and versions.json
 
-### Project Structure
+### Project structure
 
 - `src/main.ts` - Main plugin file with core functionality and event handling
 - `src/core.ts` - Core similarity algorithms and interfaces
@@ -165,7 +165,7 @@ npm run build
 - `package.json` - Project configuration and dependencies
 - `esbuild.config.mjs` - Build configuration for esbuild that handles copying files
 
-### Key Dependencies
+### Key dependencies
 
 - `obsidian` - Obsidian API types and utilities
 
@@ -244,7 +244,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 🚨 Troubleshooting
 
-### Plugin Freezes or Becomes Unresponsive
+### Plugin freezes or becomes unresponsive
 
 If the plugin freezes during indexing or becomes unresponsive, especially in large vaults (5,000+ notes):
 
@@ -274,7 +274,7 @@ If you want to keep your plugin settings:
    ```
 3. Restart Obsidian
 
-### Index Corruption Issues
+### Index corruption issues
 
 If you see errors like "Array length mismatch" or "Cache format incompatibility":
 
@@ -282,16 +282,17 @@ If you see errors like "Array length mismatch" or "Cache format incompatibility"
 - If problems persist, follow the cache deletion steps above
 - The plugin will rebuild with the correct format
 
-### Performance Issues in Large Vaults
+### Performance in large vaults
 
 For vaults with 10,000+ notes:
 
-- The plugin uses progressive indexing to avoid blocking Obsidian
-- Initial indexing may take several minutes in the background
-- Use the "Clear Cache and Re-index" button in settings if needed
-- Monitor progress in the status bar
+- The plugin uses single-pass indexing with intelligent optimizations
+- Initial indexing completes in one efficient pass
+- Automatic sampling keeps performance excellent even in massive vaults
+- Use the "Clear Cache" and "Rebuild Index" buttons in settings if needed
+- Monitor progress in the status bar with real-time file information
 
-### Memory Issues
+### Memory issues
 
 If Obsidian becomes slow or uses excessive memory:
 
@@ -313,3 +314,70 @@ If you encounter any issues or have questions:
    - Your plugin version
    - Vault size (approximate number of notes)
    - Any relevant error messages from the Developer Console (Ctrl+Shift+I)
+
+## Architecture Overview
+
+The plugin uses a streamlined architecture designed for optimal performance:
+
+```mermaid
+graph TD
+    A[Note Files] --> B[Single-Pass Indexer]
+    B --> C[Bloom Filter Generator]
+    C --> D[Memory Cache]
+    D --> E[Persistent Cache]
+    
+    F[User Opens Note] --> G[Similarity Calculator]
+    G --> D
+    G --> H[Word-based Candidate Selector]
+    H --> I[Related Notes Results]
+    
+    J[File Changes] --> K[Incremental Updater]
+    K --> D
+    
+    subgraph "Optimizations"
+        L[Intelligent Sampling]
+        M[Debounced Processing]
+        N[Adaptive Parameters]
+    end
+    
+    B --> L
+    K --> M
+    C --> N
+```
+
+### Data flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Markdown      │    │   Tokenization   │    │  Bloom Filter   │
+│     Files       │───▶│   & Analysis     │───▶│   Generation    │
+│                 │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                ▲                        │
+                                │                        ▼
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   File Events   │    │   Incremental    │    │   Cache Layer   │
+│   (Create/Edit) │───▶│   Processing     │◀───│   (Memory+Disk) │
+│                 │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                         │
+                                                         ▼
+                              ┌─────────────────────────────────────┐
+                              │        Similarity Engine           │
+                              │                                     │
+                              │  • Word-based Candidate Selection  │
+                              │  • Bloom Filter Comparison         │
+                              │  • Jaccard Similarity Scoring      │
+                              │  • Result Ranking & Filtering      │
+                              └─────────────────────────────────────┘
+```
+
+---
+
+## Support the Project
+
+If this plugin helps you discover meaningful connections in your notes, consider supporting its development:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/mrboxtobox)
+
+Your support helps maintain and improve this plugin. Thank you! ☕️

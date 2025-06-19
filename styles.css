@@ -189,3 +189,39 @@ button:disabled {
 .related-notes-cancel-button-hidden {
   display: none;
 }
+
+/* Settings page enhancements - minimal styling */
+.related-notes-bug-report-content {
+  margin: 8px 0;
+  padding: 8px;
+}
+
+.related-notes-bug-report-content p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.related-notes-bug-report-content a {
+  color: var(--interactive-accent);
+  text-decoration: none;
+}
+
+.related-notes-bug-report-content a:hover {
+  text-decoration: underline;
+}
+
+.related-notes-support-section {
+  margin: 12px 0;
+  text-align: center;
+}
+
+.related-notes-coffee-button {
+  display: inline-block;
+  margin: 8px 0;
+  text-decoration: none;
+}
+
+.related-notes-support-thanks {
+  color: var(--text-muted);
+  margin-top: 4px;
+}

@@ -324,7 +324,7 @@ export default class RelatedNotesPlugin extends Plugin {
   private async initializeSimilarityProvider() {
     try {
       // Initialize with throttled progress reporting to reduce DOM repainting
-      await this.similarityProvider?.initialize((processed, total) => {
+      await this.similarityProvider?.initialize((processed: number, total: number, currentFile?: string) => {
         const now = Date.now();
 
         // Throttle status bar updates to reduce repainting
@@ -337,26 +337,40 @@ export default class RelatedNotesPlugin extends Plugin {
         const totalFiles = this.app.vault.getMarkdownFiles().length;
         const isLargeVault = totalFiles > 5000; // WORD_FILTERING.LARGE_VAULT_THRESHOLD
         let message = "";
+        let hoverText = "";
 
         if (processed === 0 && total > 0) {
           message = `Checking cache...`;
+          hoverText = 'Loading existing index from cache';
         } else if (processed === 0) {
           if (isLargeVault) {
             message = `Preparing large vault (${totalFiles} files)...`;
+            hoverText = 'Preparing to index files in large vault';
           } else {
             message = `Indexing ${total} files...`;
+            hoverText = 'Starting to index files';
           }
         } else if (processed === total) {
           if (isLargeVault) {
             message = `Related notes ready! (${total})`;
+            hoverText = 'Indexing complete - related notes are available';
           } else {
             message = `Indexed ${total} files`;
+            hoverText = 'Indexing complete';
           }
         } else {
           message = `Indexing: ${percentage}% (${processed}/${total})`;
+          if (currentFile) {
+            const fileName = currentFile.split('/').pop() || currentFile;
+            hoverText = `Currently indexing: ${fileName}`;
+          } else {
+            hoverText = `Processing ${processed} of ${total} files`;
+          }
         }
 
         this.statusBarItem?.setText(message);
+        this.statusBarItem?.setAttribute('aria-label', hoverText);
+        this.statusBarItem?.setAttribute('title', hoverText);
         if (this.statusBarItem) {
           this.statusBarItem.style.display = 'block';
         }
@@ -366,35 +380,21 @@ export default class RelatedNotesPlugin extends Plugin {
       const stats = this.similarityProvider?.getStats();
       const totalFiles = this.app.vault.getMarkdownFiles().length;
 
-      // Check if progressive indexing is active
-      if (stats?.progressiveIndexing && typeof stats.progressiveIndexing === 'object' && stats.progressiveIndexing !== null && 'active' in stats.progressiveIndexing && (stats.progressiveIndexing as any).active) {
-        const remaining = (stats.progressiveIndexing as any).remainingFiles || 0;
-        const total = Math.max(totalFiles, 1); // Avoid division by zero
-        const indexed = Math.max(0, Math.min(total - remaining, total)); // Ensure value is between 0 and total
-        const percent = Math.max(0, Math.min(100, Math.round((indexed / total) * 100))); // Bound between 0-100
-        const isLargeVault = totalFiles > 5000;
+      // Check if indexing is still active
+      if (stats?.indexing && (stats.indexing as any).currentFile) {
+        const currentFile = (stats.indexing as any).currentFile;
+        const fileName = currentFile.split('/').pop() || currentFile;
+        const progressTitle = `Currently indexing: ${fileName}`;
 
-        // Show user-friendly progressive indexing status
-        let progressMessage;
-        let progressTitle;
-
-        if (isLargeVault) {
-          progressMessage = `Indexing: ${percent}% (${indexed}/${total})`;
-          progressTitle = `Indexing ${remaining} remaining files in the background. Related notes are available now.`;
-        } else {
-          progressMessage = `Indexing: ${percent}%`;
-          progressTitle = `Progressively indexing ${remaining} remaining files`;
-        }
-
-        this.statusBarItem?.setText(progressMessage);
+        this.statusBarItem?.setText('Indexing...');
         this.statusBarItem?.setAttribute('aria-label', progressTitle);
         this.statusBarItem?.setAttribute('title', progressTitle);
         if (this.statusBarItem) {
           this.statusBarItem.style.display = 'block';
         }
 
-        // Set a timer to periodically update the status
-        setTimeout(() => this.updateProgressiveIndexingStatus(), 60000); // Check every minute
+        // Set a timer to check again
+        setTimeout(() => this.updateProgressiveIndexingStatus(), 30000); // Check every 30 seconds
       } else {
         // Remove status bar item when indexing is complete
         this.statusBarItem?.setText("");
@@ -493,7 +493,7 @@ export default class RelatedNotesPlugin extends Plugin {
       };
 
       // Force re-indexing with progress reporting and cancellation checks
-      await this.similarityProvider?.forceReindex(async (processed, total) => {
+      await this.similarityProvider?.forceReindex(async (processed: number, total: number, currentFile?: string) => {
         try {
           // Check for cancellation periodically
           if (processed % 10 === 0) {
@@ -515,7 +515,15 @@ export default class RelatedNotesPlugin extends Plugin {
 
           // Simple progress message with percentage (following Obsidian style guide)
           message = `${phase} notes: ${percentage}%`;
+          let hoverText = `${phase} ${processed} of ${total} notes`;
+          if (currentFile) {
+            const fileName = currentFile.split('/').pop() || currentFile;
+            hoverText = `Currently processing: ${fileName}`;
+          }
+          
           this.statusBarItem?.setText(message);
+          this.statusBarItem?.setAttribute('aria-label', hoverText);
+          this.statusBarItem?.setAttribute('title', hoverText);
           if (this.statusBarItem) {
             this.statusBarItem.style.display = 'block';
           }
@@ -841,7 +849,7 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   /**
-   * Updates the status bar with progressive indexing information
+   * Updates the status bar with indexing information
    * Called periodically to refresh the status
    */
   private updateProgressiveIndexingStatus(): void {
@@ -851,37 +859,23 @@ export default class RelatedNotesPlugin extends Plugin {
     // Get the latest stats
     const stats = this.similarityProvider?.getStats();
 
-    // Check if progressive indexing is still active
-    if (stats?.progressiveIndexing && typeof stats.progressiveIndexing === 'object' && stats.progressiveIndexing !== null && 'active' in stats.progressiveIndexing && (stats.progressiveIndexing as any).active) {
-      const remaining = (stats.progressiveIndexing as any).remainingFiles || 0;
-      const totalFiles = Math.max(this.app.vault.getMarkdownFiles().length, 1); // Avoid division by zero
-      const indexed = Math.max(0, Math.min(totalFiles - remaining, totalFiles)); // Ensure value is between 0 and total
-      const percent = Math.max(0, Math.min(100, Math.round((indexed / totalFiles) * 100))); // Bound between 0-100
-      const isLargeVault = totalFiles > 5000;
+    // Check if indexing is still active
+    if (stats?.indexing && (stats.indexing as any).currentFile) {
+      const currentFile = (stats.indexing as any).currentFile;
+      const fileName = currentFile.split('/').pop() || currentFile;
+      const progressTitle = `Currently indexing: ${fileName}`;
 
-      // Update the status bar with consistent messaging
-      let progressMessage;
-      let progressTitle;
-
-      if (isLargeVault) {
-        progressMessage = `Background indexing: ${percent}% (${indexed}/${totalFiles})`;
-        progressTitle = `Indexing ${remaining} remaining files in the background. Related notes are available now.`;
-      } else {
-        progressMessage = `Indexing: ${percent}%`;
-        progressTitle = `Progressively indexing ${remaining} remaining files`;
-      }
-
-      this.statusBarItem?.setText(progressMessage);
+      this.statusBarItem?.setText('Indexing...');
       this.statusBarItem?.setAttribute('aria-label', progressTitle);
       this.statusBarItem?.setAttribute('title', progressTitle);
       if (this.statusBarItem) {
         this.statusBarItem.style.display = 'block';
       }
 
-      // Schedule another update less frequently to reduce performance impact
-      setTimeout(() => this.updateProgressiveIndexingStatus(), 120000); // Check every 2 minutes
+      // Schedule another update
+      setTimeout(() => this.updateProgressiveIndexingStatus(), 30000); // Check every 30 seconds
     } else {
-      // No longer doing progressive indexing, hide the status
+      // No longer indexing, hide the status
       this.statusBarItem?.setText("");
       this.statusBarItem?.removeAttribute('aria-label');
       this.statusBarItem?.removeAttribute('title');

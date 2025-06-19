@@ -411,11 +411,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private isSaving = false; // Prevent concurrent cache saves
   private useWordBasedCandidates = true; // Enable fast word-based candidate selection
 
-  // Progressive indexing properties
-  private remainingFilesToIndex: TFile[] = [];
-  private hasPartialIndex = false;
-  private isProgressiveIndexingRunning = false;
-  private progressiveIndexingIntervalId: number | null = null;
+  // Current indexing state
+  private currentIndexingFile: string | null = null;
 
   // Adaptive stopwords (reusing from BloomFilterSimilarityProvider)
   private readonly wordFrequencies = new Map<string, number>();
@@ -545,85 +542,12 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         await new Promise(resolve => setTimeout(resolve, ms));
       };
 
-      // Optimize for large vaults
-      const LARGE_VAULT_THRESHOLD = WORD_FILTERING.LARGE_VAULT_THRESHOLD;
-      const isLargeVault = totalFiles > LARGE_VAULT_THRESHOLD;
+      // Single optimized pass - process all files with smart batching
+      const filesToProcess = markdownFiles;
 
-      // For large vaults, we may want to process only a subset of files
-      // or prioritize certain files during initial indexing
-      let filesToProcess = markdownFiles;
+      logIfDebugModeEnabled(`Single pass indexing: ${totalFiles} files`);
 
-      // Check if sampling is enabled in the config and this is a large vault
-      const enableSampling = this.config.enableSampling !== undefined
-        ? this.config.enableSampling
-        : true; // Default to true if not specified
-
-      // Get max sample size from config or use default
-      const maxSampleSize = this.config.maxSampleSize || 5000;
-
-      if (isLargeVault && enableSampling) {
-        logIfDebugModeEnabled(`Large vault indexing: ${totalFiles} files, using progressive strategy`);
-
-        // For progressive indexing of large vaults:
-        // 1. First index a set of active/recent files (last 30 days)
-        // 2. Include any currently open files
-        // 3. Include a random sample of other files
-
-        // Priority 1: Get recently modified files (last 30 days)
-        const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-        const recentFiles = markdownFiles.filter((file: TFile) => file.stat.mtime > thirtyDaysAgo);
-
-        // Priority 2: Get currently active file
-        const activeLeaf = this.vault.getActiveLeaf?.();
-        const activeFile = activeLeaf?.view?.file as TFile | undefined;
-        const activeFiles: TFile[] = [];
-
-        if (activeFile && !recentFiles.includes(activeFile)) {
-          activeFiles.push(activeFile);
-        }
-
-        // Mark these files to be indexed first
-        const priorityFiles = [...recentFiles, ...activeFiles];
-
-        // Determine how many files to include in initial indexing (max 1000 or 10% of vault)
-        const initialIndexSize = Math.min(1000, Math.ceil(totalFiles * 0.1));
-
-        // If we already have enough priority files, use those
-        if (priorityFiles.length >= initialIndexSize) {
-          logIfDebugModeEnabled(`Initial indexing: ${priorityFiles.length} priority files`);
-          filesToProcess = priorityFiles.slice(0, initialIndexSize);
-        }
-        // Otherwise, supplement with random files
-        else {
-          // Create a list of non-priority files
-          const remainingFiles = markdownFiles.filter((file: TFile) => !priorityFiles.includes(file));
-
-          // Shuffle the remaining files for random sampling
-          const shuffledRemaining = [...remainingFiles];
-          for (let i = shuffledRemaining.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffledRemaining[i], shuffledRemaining[j]] = [shuffledRemaining[j], shuffledRemaining[i]];
-          }
-
-          // Take enough random files to reach our target initial index size
-          const randomSampleCount = initialIndexSize - priorityFiles.length;
-          const randomSample = shuffledRemaining.slice(0, randomSampleCount);
-
-          // Combine priority files with random sample
-          filesToProcess = [...priorityFiles, ...randomSample];
-
-          logIfDebugModeEnabled(`Initial indexing: ${priorityFiles.length} priority + ${randomSample.length} random files`);
-        }
-
-        // Store the information about remaining files for later progressive indexing
-        this.remainingFilesToIndex = markdownFiles.filter((file: TFile) => !filesToProcess.includes(file));
-        this.hasPartialIndex = true;
-
-        logIfDebugModeEnabled(`Progressive indexing: ${filesToProcess.length}/${totalFiles} files initially, ${this.remainingFilesToIndex.length} remaining`);
-
-        // Schedule background indexing of remaining files
-        setTimeout(() => this.scheduleProgressiveIndexing(), 300000); // Start after 5 minutes
-      }
+      // No sampling or progressive complexity - just process all files in one optimized pass
 
       // Process files in batches
       for (let i = 0; i < filesToProcess.length; i += batchSize) {
@@ -636,17 +560,9 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         // Process a batch of files
         const batch = filesToProcess.slice(i, Math.min(i + batchSize, filesToProcess.length));
 
-        // Update progress at start of batch - calculate proper percentage
+        // Update progress at start of batch
         if (onProgress) {
-          // If we're sampling, adjust the progress reporting to show progress relative to the total files
-          if (isLargeVault) {
-            const progressPercentage = (processedCount / filesToProcess.length) * 100;
-            // Map the percentage to the total files to show accurate progress
-            const scaledProcessed = Math.floor((progressPercentage / 100) * totalFiles);
-            onProgress(scaledProcessed, totalFiles);
-          } else {
-            onProgress(processedCount, totalFiles);
-          }
+          onProgress(processedCount, totalFiles);
         }
 
         // Longer yield before processing batch
@@ -661,41 +577,50 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           }
 
           try {
-            // Read and process document without excessive yielding
+            // Track current file for status display
+            this.currentIndexingFile = file.path;
+
+            // Read and process document
             const content = await this.vault.cachedRead(file);
-            await this.processDocument(file.path, content);
+            
+            // Extract title from the file path and add it to the content for improved matching
+            const fileName = file.basename;
+            const enhancedContent = `${fileName} ${content}`;
+            
+            await this.processDocument(file.path, enhancedContent);
             processedCount++;
 
-            // Update progress periodically, not for every file
-            if (onProgress && (processedCount % 5 === 0 || processedCount === filesToProcess.length)) {
-              // If we're sampling, adjust the progress reporting
-              if (isLargeVault) {
-                const progressPercentage = (processedCount / filesToProcess.length) * 100;
-                // Map the percentage to the total files to show accurate progress
-                const scaledProcessed = Math.floor((progressPercentage / 100) * totalFiles);
-                onProgress(scaledProcessed, totalFiles);
-              } else {
-                onProgress(processedCount, totalFiles);
-              }
+            // Update progress more frequently for better user feedback
+            if (onProgress && (processedCount % 3 === 0 || processedCount === filesToProcess.length)) {
+              // Call with optional third parameter
+              (onProgress as any)(processedCount, totalFiles, file.path);
             }
 
-            // Only yield periodically to reduce performance impact
-            if (processedCount % 10 === 0) {
-              await yieldWithDuration(15); // Reduced yield frequency and duration
+            // Yield every 5 files to keep UI responsive
+            if (processedCount % 5 === 0) {
+              await yieldWithDuration(10); // Quick yield
+            }
+
+            // Save cache periodically during indexing to preserve progress
+            if (processedCount % 50 === 0) {
+              this.cacheDirty = true;
+              await this.saveToCache();
             }
           } catch (error) {
             console.error(`Error processing file ${file.path}:`, error);
           }
         }
 
-        // Reduced yielding to minimize performance impact
-        // Only yield every few batches for large vaults
-        if (i % (batchSize * 3) === 0 || totalFiles < 1000) {
-          await yieldWithDuration(30); // Reduced from 50ms to 30ms
+        // Yield between batches to keep UI responsive
+        if (i % (batchSize * 2) === 0) {
+          await yieldWithDuration(20); // Quick yield between batches
         }
       }
 
-      // Save the cache after initialization
+      // Clear current file tracking
+      this.currentIndexingFile = null;
+
+      // Save the final cache
       await this.saveToCache();
 
       logIfDebugModeEnabled(`Indexing complete: ${this.bloomFilters.size} documents processed`);
@@ -712,12 +637,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   stop(): void {
     this.stopRequested = true;
 
-    // Also stop progressive indexing if it's running
-    if (this.progressiveIndexingIntervalId !== null) {
-      clearInterval(this.progressiveIndexingIntervalId);
-      this.progressiveIndexingIntervalId = null;
-      this.isProgressiveIndexingRunning = false;
-    }
+    // Progressive indexing removed - no cleanup needed
 
     // Log that stop was requested to help with debugging
     if (isDebugMode()) {
@@ -725,116 +645,19 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     }
   }
 
-  /**
-   * Schedule progressive indexing of remaining files
-   * This method processes files in small batches during idle time
-   * to avoid impacting performance during active use
-   */
-  private scheduleProgressiveIndexing(): void {
-    // Don't schedule if already running or no files to process
-    if (this.isProgressiveIndexingRunning || this.remainingFilesToIndex.length === 0) {
-      return;
-    }
-
-    logIfDebugModeEnabled(`Background indexing: ${this.remainingFilesToIndex.length} files queued`);
-
-    this.isProgressiveIndexingRunning = true;
-
-    // Process a small batch of files every few minutes
-    // This spreads the indexing load over time
-    const BATCH_SIZE = BATCH_PROCESSING.FILES_PER_BATCH; // Process 20 files at a time
-    const INTERVAL_MINUTES = BATCH_PROCESSING.PROGRESSIVE_INTERVAL_MINUTES; // Process a batch every 5 minutes
-
-    let progressiveIndexCount = 0;
-
-    // Function to process a small batch of files
-    const processBatch = async () => {
-      // Stop if requested or no more files
-      if (this.stopRequested || this.remainingFilesToIndex.length === 0) {
-        if (this.progressiveIndexingIntervalId !== null) {
-          clearInterval(this.progressiveIndexingIntervalId);
-          this.progressiveIndexingIntervalId = null;
-          this.isProgressiveIndexingRunning = false;
-        }
-
-        if (isDebugMode()) {
-          logIfDebugModeEnabled(`Progressive indexing completed or stopped after processing ${progressiveIndexCount} files`);
-        }
-
-        // Save cache after batch processing
-        await this.saveToCache();
-        return;
-      }
-
-      // Take the next batch of files
-      const batchToProcess = this.remainingFilesToIndex.splice(0, BATCH_SIZE);
-
-      // Background indexing batch
-
-      // Process each file with minimal yielding for background indexing
-      for (let i = 0; i < batchToProcess.length; i++) {
-        const file = batchToProcess[i];
-        try {
-          // Read file content
-          const content = await this.vault.cachedRead(file);
-
-          // Process document
-          await this.processDocument(file.path, content);
-          progressiveIndexCount++;
-
-          // Only yield every 10 files to reduce performance impact
-          if (i % 10 === 0) {
-            await new Promise(resolve => setTimeout(resolve, 10));
-          }
-        } catch (error) {
-          console.error(`Error during progressive indexing of ${file.path}:`, error);
-        }
-      }
-
-      // Save cache after batch processing
-      this.cacheDirty = true;
-      await this.saveToCache();
-
-      // If no more files to process, clean up
-      if (this.remainingFilesToIndex.length === 0) {
-        if (this.progressiveIndexingIntervalId !== null) {
-          clearInterval(this.progressiveIndexingIntervalId);
-          this.progressiveIndexingIntervalId = null;
-        }
-        this.isProgressiveIndexingRunning = false;
-        this.hasPartialIndex = false;
-
-        logIfDebugModeEnabled(`Background indexing completed: ${progressiveIndexCount} files processed`);
-      }
-    };
-
-    // Start the first batch immediately
-    processBatch();
-
-    // Schedule future batches
-    this.progressiveIndexingIntervalId = window.setInterval(processBatch, INTERVAL_MINUTES * 60 * 1000);
-  }
+  // Progressive indexing method removed - using single optimized pass only
 
   /**
    * Force a complete reindexing of all files
    * @param onProgress Progress callback
    */
-  async forceReindex(onProgress: (processed: number, total: number) => void): Promise<void> {
+  async forceReindex(onProgress: (processed: number, total: number, currentFile?: string) => void): Promise<void> {
     // Reset stop flag before starting
     this.stopRequested = false;
-
-    // Stop any progressive indexing that might be in progress
-    if (this.progressiveIndexingIntervalId !== null) {
-      clearInterval(this.progressiveIndexingIntervalId);
-      this.progressiveIndexingIntervalId = null;
-      this.isProgressiveIndexingRunning = false;
-    }
 
     // Clear existing data
     this.bloomFilters.clear();
     this.documentNgrams.clear();
-    this.remainingFilesToIndex = [];
-    this.hasPartialIndex = false;
 
     // Reset stopwords detection
     this.commonWords.clear();
@@ -882,11 +705,24 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       return [];
     }
 
+    // Even during progressive indexing, we can use what we have indexed so far
+    const availableIndexSize = this.bloomFilters.size;
+    if (availableIndexSize === 0) {
+      return [];
+    }
+
     try {
       // If the file isn't in our index yet, process it
       if (!this.bloomFilters.has(file.path)) {
         if (isDebugMode()) {
           logIfDebugModeEnabled(`File ${file.path} not in index yet, will process on-demand`);
+
+          // Show list of files currently in the index for debugging
+          const indexedFiles = Array.from(this.bloomFilters.keys());
+          logIfDebugModeEnabled(`Files currently in index (${indexedFiles.length} total):`);
+          indexedFiles.forEach(indexedFile => {
+            logIfDebugModeEnabled(`  - ${indexedFile}`);
+          });
         }
 
         // Return empty for now - computeCappedCosineSimilarity will handle on-demand processing
@@ -909,12 +745,16 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         const sampleSizeThreshold = this.config.sampleSizeThreshold || 5000;
         const maxSampleSize = this.config.maxSampleSize || 1000;
 
-        // For large corpora, use smart candidate selection instead of random sampling
+        // For large corpora or during progressive indexing, use smart candidate selection
         let candidateDocuments: string[];
 
-        if (enableSampling && corpusSize > sampleSizeThreshold) {
+        // Use sampling for large vaults to maintain performance
+        const shouldSample = enableSampling && corpusSize > sampleSizeThreshold;
+
+        if (shouldSample) {
           // Smart candidate selection for large vaults
           candidateDocuments = await this.getSmartCandidates(file.path, maxSampleSize);
+          logIfDebugModeEnabled(`Large vault: using ${candidateDocuments.length} smart candidates from ${corpusSize} indexed files`);
         } else {
           // Small vault - use all documents
           candidateDocuments = Array.from(this.bloomFilters.keys()).filter(path => path !== file.path);
@@ -1683,10 +1523,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       stopwordsThreshold: this.commonWordsThreshold,
       maxStopwords: this.maxStopwords,
       documentsAnalyzed: this.totalDocuments,
-      progressiveIndexing: {
-        active: this.isProgressiveIndexingRunning,
-        remainingFiles: this.remainingFilesToIndex.length,
-        partialIndex: this.hasPartialIndex
+      indexing: {
+        currentFile: this.currentIndexingFile
       },
       memoryUsage: {
         totalBytes: 0,
@@ -1723,6 +1561,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   clear(): void {
     this.bloomFilters.clear();
     this.documentNgrams.clear();
+    this.currentIndexingFile = null;
     // Clear adaptive stopwords data to free memory
     this.wordFrequencies.clear();
     this.wordDocumentCount.clear();

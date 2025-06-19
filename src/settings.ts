@@ -115,7 +115,10 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'Related Notes' });
+    containerEl.createEl('h2', { text: 'Related Notes Settings' });
+    
+    // === BASIC SETTINGS ===
+    containerEl.createEl('h3', { text: 'Basic Settings' });
 
     new Setting(containerEl)
       .setName('Maximum suggestions')
@@ -129,42 +132,8 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    // Debug settings
-
-    new Setting(containerEl)
-      .setName('Debug mode')
-      .setDesc('Enable debug logging to the console. Useful for troubleshooting but may impact performance.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.debugMode)
-        .onChange(async (value) => {
-          this.plugin.settings.debugMode = value;
-          await this.plugin.saveSettings();
-          // Show notice about needing to restart for changes to take full effect
-          if (value) {
-            new Notice('Debug mode enabled. Some debug messages will appear in the developer console.');
-          } else {
-            new Notice('Debug mode disabled.');
-          }
-        }));
-
-    // Copy debug info button
-    new Setting(containerEl)
-      .setName('Copy debug info')
-      .setDesc('Copy debug information to clipboard (no personal data included)')
-      .addButton(button => button
-        .setButtonText('Copy debug info')
-        .onClick(async () => {
-          try {
-            const debugInfo = this.generateDebugInfo();
-            await navigator.clipboard.writeText(debugInfo);
-            new Notice('Debug info copied to clipboard');
-          } catch (error) {
-            console.error('Failed to copy debug info:', error);
-            new Notice('Failed to copy debug info');
-          }
-        }));
-
-    // Index management
+    // === INDEX MANAGEMENT ===
+    containerEl.createEl('h3', { text: 'Index Management' });
 
     const reindexSetting = new Setting(containerEl)
       .setName('Rebuild index')
@@ -297,6 +266,94 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         this.reindexButton!.disabled = false;
         this.reindexButton!.setText('Rebuild index');
       }
+    });
+
+    // === DEBUG & TROUBLESHOOTING ===
+    containerEl.createEl('h3', { text: 'Debug & Troubleshooting' });
+
+    new Setting(containerEl)
+      .setName('Debug mode')
+      .setDesc('Enable debug logging to the console. Useful for troubleshooting but may impact performance.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.debugMode)
+        .onChange(async (value) => {
+          this.plugin.settings.debugMode = value;
+          await this.plugin.saveSettings();
+          // Show notice about needing to restart for changes to take full effect
+          if (value) {
+            new Notice('Debug mode enabled. Some debug messages will appear in the developer console.');
+          } else {
+            new Notice('Debug mode disabled.');
+          }
+        }));
+
+    // Report a bug section with comprehensive instructions
+    new Setting(containerEl)
+      .setName('Report a bug')
+      .setDesc('Having issues? Follow these steps to get help:')
+      .setClass('related-notes-bug-report');
+    
+    const bugReportEl = containerEl.createEl('div', { cls: 'related-notes-bug-report-content' });
+    bugReportEl.createEl('p', { 
+      text: '1. Try the troubleshooting steps in the README first'
+    });
+    bugReportEl.createEl('p', { 
+      text: '2. Copy the debug info below when reporting issues'
+    });
+    bugReportEl.createEl('p', { 
+      text: '3. Check existing issues on GitHub before creating a new one'
+    });
+    
+    const githubLink = bugReportEl.createEl('a', {
+      text: '→ Open GitHub Issues',
+      href: 'https://github.com/oluwasanyaawe/obsidian-related-notes/issues'
+    });
+    githubLink.setAttribute('target', '_blank');
+    githubLink.setAttribute('rel', 'noopener noreferrer');
+
+    // Copy exhaustive debug info button (moved to bottom as requested)
+    new Setting(containerEl)
+      .setName('Copy exhaustive debug info')
+      .setDesc('Copy comprehensive debug information to clipboard for bug reports. No personal data included.')
+      .addButton(button => button
+        .setButtonText('Copy debug info')
+        .setCta()
+        .onClick(async () => {
+          try {
+            const debugInfo = this.generateDebugInfo();
+            await navigator.clipboard.writeText(debugInfo);
+            new Notice('Exhaustive debug info copied to clipboard! Please include this when reporting bugs.');
+          } catch (error) {
+            console.error('Failed to copy debug info:', error);
+            new Notice('Failed to copy debug info. Please try again or check console for details.');
+          }
+        }));
+
+    // === SUPPORT THE PROJECT ===
+    containerEl.createEl('h3', { text: 'Support the Project' });
+    
+    const supportEl = containerEl.createEl('div', { cls: 'related-notes-support-section' });
+    supportEl.createEl('p', { 
+      text: 'If this plugin helps you discover meaningful connections in your notes, consider supporting its development:' 
+    });
+    
+    const coffeeButton = supportEl.createEl('a', {
+      cls: 'related-notes-coffee-button',
+      href: 'https://buymeacoffee.com/mrboxtobox'
+    });
+    coffeeButton.setAttribute('target', '_blank');
+    coffeeButton.setAttribute('rel', 'noopener noreferrer');
+    
+    const coffeeImg = coffeeButton.createEl('img', {
+      attr: {
+        src: 'https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee',
+        alt: 'Buy Me A Coffee'
+      }
+    });
+    
+    supportEl.createEl('p', { 
+      text: 'Thank you for your support! ☕️',
+      cls: 'related-notes-support-thanks'
     });
   }
 }
