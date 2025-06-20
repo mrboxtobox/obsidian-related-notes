@@ -19,6 +19,7 @@ export default class RelatedNotesPlugin extends Plugin {
   private isReindexing = false;
   private reindexCancelled = false;
   public id: string = 'obsidian-related-notes'; // Plugin ID for settings
+  private cacheSaveInterval?: number;
 
   /**
    * Read file content with adaptive timeout and retry logic
@@ -159,12 +160,9 @@ export default class RelatedNotesPlugin extends Plugin {
         this.statusBarItem.style.display = 'block';
       }
 
-      // Hide status bar after 3 seconds
+      // Hide status bar after 3 seconds and then show current status
       setTimeout(() => {
-        this.statusBarItem?.setText('');
-        if (this.statusBarItem) {
-          this.statusBarItem.style.display = 'none';
-        }
+        this.updateFileCountStatus();
       }, 3000);
 
       // Set as uninitialized to trigger reindexing on next use
@@ -220,6 +218,10 @@ export default class RelatedNotesPlugin extends Plugin {
 
     this.addRibbonIcon('zap', 'Toggle related notes',
       () => this.toggleRelatedNotes(this.app.workspace));
+
+    // Add status bar item to show indexing progress and file count
+    this.statusBarItem = this.addStatusBarItem();
+    this.statusBarItem.style.display = 'none'; // Hidden by default
 
     // Register event handlers
     this.registerEventHandlers();
@@ -306,6 +308,9 @@ export default class RelatedNotesPlugin extends Plugin {
       this.statusBarItem.style.display = 'block';
     }
 
+    // Set up periodic cache saving to preserve work
+    this.setupPeriodicCacheSave();
+
     // Use setTimeout to defer heavy initialization to the next event loop
     // This prevents UI blocking during startup
     setTimeout(() => {
@@ -390,13 +395,8 @@ export default class RelatedNotesPlugin extends Plugin {
         // Set a timer to check again
         setTimeout(() => this.updateProgressiveIndexingStatus(), 30000); // Check every 30 seconds
       } else {
-        // Remove status bar item when indexing is complete
-        this.statusBarItem?.setText("");
-        this.statusBarItem?.removeAttribute('aria-label');
-        this.statusBarItem?.removeAttribute('title');
-        if (this.statusBarItem) {
-          this.statusBarItem.style.display = 'none';
-        }
+        // Show indexed file count when indexing is complete
+        this.updateFileCountStatus();
       }
 
       // Check if indexing was stopped (graceful cancellation)
@@ -522,13 +522,10 @@ export default class RelatedNotesPlugin extends Plugin {
         }
       });
 
-      // Clear status bar after re-indexing
+      // Clear status bar after re-indexing and show file count
       this.statusBarItem?.setText("Indexing complete");
       setTimeout(() => {
-        this.statusBarItem?.setText("");
-        if (this.statusBarItem) {
-          this.statusBarItem.style.display = 'none';
-        }
+        this.updateFileCountStatus();
       }, 3000);
 
       this.statusBarItem?.removeAttribute('aria-label');
@@ -637,6 +634,22 @@ export default class RelatedNotesPlugin extends Plugin {
             // Mark as dirty to trigger cache save
             provider.cacheDirty = true;
           }
+          // Update status bar to reflect new file count
+          setTimeout(() => this.updateFileCountStatus(), 100);
+        }
+      })
+    );
+
+    // Save cache when the app is about to close
+    this.registerEvent(
+      this.app.workspace.on('quit', async () => {
+        if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
+          try {
+            await (this.similarityProvider as MultiResolutionBloomFilterProvider).saveCache();
+            console.info('[RelatedNotes] Cache saved before app quit');
+          } catch (error) {
+            console.error('[RelatedNotes] Failed to save cache before app quit:', error);
+          }
         }
       })
     );
@@ -721,6 +734,8 @@ export default class RelatedNotesPlugin extends Plugin {
       this.processFileQueue();
     } else {
       this.processingQueue = false;
+      // Update status bar when batch processing is complete
+      this.updateFileCountStatus();
     }
   }
 
@@ -761,19 +776,25 @@ export default class RelatedNotesPlugin extends Plugin {
       this.queueProcessingTimeout = null;
     }
 
-    // Clear cache when plugin is disabled to avoid stale data
+    // Clear cache save interval
+    if (this.cacheSaveInterval) {
+      clearInterval(this.cacheSaveInterval);
+      this.cacheSaveInterval = undefined;
+    }
+
+    // Save cache when plugin is disabled to preserve indexing work
     if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider) {
       try {
-        // Clear cache with timeout to prevent hanging
+        // Save cache with timeout to prevent hanging
         await Promise.race([
-          (this.similarityProvider as MultiResolutionBloomFilterProvider).deleteCache(),
+          (this.similarityProvider as MultiResolutionBloomFilterProvider).saveCache(),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Cache clear timeout')), 5000)
+            setTimeout(() => reject(new Error('Cache save timeout')), 5000)
           )
         ]);
-        console.info('[RelatedNotes] Cache cleared on plugin disable');
+        console.info('[RelatedNotes] Cache saved on plugin disable');
       } catch (error) {
-        handleUIError(error as Error, 'plugin unload', 'clear cache');
+        handleUIError(error as Error, 'plugin unload', 'save cache');
       }
     }
 
@@ -868,6 +889,59 @@ export default class RelatedNotesPlugin extends Plugin {
       if (this.statusBarItem) {
         this.statusBarItem.style.display = 'none';
       }
+    }
+  }
+
+  /**
+   * Set up periodic cache saving to preserve indexing work
+   */
+  private setupPeriodicCacheSave(): void {
+    // Save cache every 5 minutes during normal operation
+    this.cacheSaveInterval = window.setInterval(async () => {
+      if (this.similarityProvider instanceof MultiResolutionBloomFilterProvider && this.isInitialized) {
+        try {
+          const provider = this.similarityProvider as MultiResolutionBloomFilterProvider;
+          // Only save if cache is dirty (has changes)
+          if ((provider as any).cacheDirty) {
+            await provider.saveCache();
+            logIfDebugModeEnabled('Periodic cache save completed');
+          }
+        } catch (error) {
+          console.warn('Periodic cache save failed:', error);
+        }
+      }
+    }, 5 * 60 * 1000); // 5 minutes
+
+    // Register the interval for cleanup
+    this.registerInterval(this.cacheSaveInterval);
+  }
+
+  /**
+   * Update the status bar to show the number of indexed files
+   */
+  private updateFileCountStatus(): void {
+    if (!this.statusBarItem || !this.similarityProvider) {
+      return;
+    }
+
+    // Get the number of indexed files
+    const indexedCount = this.similarityProvider.size ? this.similarityProvider.size() : 0;
+    const totalFiles = this.app.vault.getMarkdownFiles().length;
+
+    if (indexedCount > 0) {
+      const statusText = `${indexedCount} notes indexed`;
+      const hoverText = `Related Notes: ${indexedCount} of ${totalFiles} notes indexed and ready for similarity search`;
+      
+      this.statusBarItem.setText(statusText);
+      this.statusBarItem.setAttribute('aria-label', hoverText);
+      this.statusBarItem.setAttribute('title', hoverText);
+      this.statusBarItem.style.display = 'block';
+    } else {
+      // Hide if no files are indexed
+      this.statusBarItem.setText("");
+      this.statusBarItem.removeAttribute('aria-label');
+      this.statusBarItem.removeAttribute('title');
+      this.statusBarItem.style.display = 'none';
     }
   }
 
