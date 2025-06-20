@@ -64,18 +64,63 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     return Math.pow(innerTerm, k);
   }
 
+  /**
+   * Generate debug information without PII
+   * @returns String containing debug information
+   */
+  private generateDebugInfo(): string {
+    const vault = this.app.vault;
+    const files = vault.getMarkdownFiles();
+    const stats = this.plugin.similarityProvider?.getStats?.();
+
+    const debugInfo = {
+      timestamp: new Date().toISOString(),
+      plugin: {
+        version: this.plugin.manifest.version,
+        initialized: this.plugin.isInitializationComplete(),
+        reindexing: this.plugin.isReindexingInProgress()
+      },
+      vault: {
+        totalMarkdownFiles: files.length,
+        configDirExists: !!vault.configDir
+      },
+      settings: {
+        maxSuggestions: this.plugin.settings.maxSuggestions,
+        debugMode: this.plugin.settings.debugMode,
+        similarityThreshold: this.plugin.settings.similarityThreshold,
+        enableSampling: this.plugin.settings.enableSampling,
+        sampleSizeThreshold: this.plugin.settings.sampleSizeThreshold,
+        maxSampleSize: this.plugin.settings.maxSampleSize,
+        ngramSizes: this.plugin.settings.ngramSizes,
+        hashFunctions: this.plugin.settings.hashFunctions
+      },
+      system: {
+        platform: navigator.platform,
+        userAgent: navigator.userAgent,
+        memoryAvailable: (navigator as any).deviceMemory || 'unknown',
+        hardwareConcurrency: navigator.hardwareConcurrency || 'unknown'
+      },
+      index: stats ? {
+        documentsIndexed: stats.documentsProcessed || 0,
+        progressiveIndexing: stats.progressiveIndexing,
+        memoryUsage: stats.memoryUsage,
+        avgProcessingTime: stats.averageProcessingTime
+      } : null
+    };
+
+    return JSON.stringify(debugInfo, null, 2);
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Related Notes Settings' });
 
-    // Basic Settings Section
-    containerEl.createEl('h3', { text: 'Basic Settings' });
-
+    // === BASIC SETTINGS ===
     new Setting(containerEl)
       .setName('Maximum suggestions')
-      .setDesc('Maximum number of related notes to display (1-20)')
+      .setDesc('Maximum number of related notes to display (1–20).')
       .addSlider(slider => slider
         .setLimits(1, 20, 1)
         .setValue(this.plugin.settings.maxSuggestions)
@@ -85,28 +130,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    // Debug Settings Section  
-    containerEl.createEl('h3', { text: 'Advanced Settings' });
-
-    new Setting(containerEl)
-      .setName('Debug mode')
-      .setDesc('Enable debug logging to the console. Useful for troubleshooting but may impact performance.')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.debugMode)
-        .onChange(async (value) => {
-          this.plugin.settings.debugMode = value;
-          await this.plugin.saveSettings();
-          // Show notice about needing to restart for changes to take full effect
-          if (value) {
-            new Notice('Debug mode enabled. Some debug messages will appear in the developer console.');
-          } else {
-            new Notice('Debug mode disabled.');
-          }
-        }));
-
-    // Reindexing Section (using sentence case per Obsidian style guide)
-    containerEl.createEl('h3', { text: 'Index management' });
-
+    // === INDEX MANAGEMENT ===
     const reindexSetting = new Setting(containerEl)
       .setName('Rebuild index')
       .setDesc('Update the index if related notes suggestions seem out of date.');
@@ -116,7 +140,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
       .setDesc('Remove all cached data and start fresh. Use this if you encounter issues.');
 
     // Add the clear cache button
-    const clearCacheButton = clearCacheSetting.addButton(button =>
+    clearCacheSetting.addButton(button =>
       button
         .setButtonText('Clear cache')
         .setCta()
@@ -239,5 +263,58 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         this.reindexButton!.setText('Rebuild index');
       }
     });
+
+    // === DEBUG & TROUBLESHOOTING ===
+    new Setting(containerEl)
+      .setName('Debug mode')
+      .setDesc('Enable debug logging to the console. Useful for troubleshooting but may impact performance.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.debugMode)
+        .onChange(async (value) => {
+          this.plugin.settings.debugMode = value;
+          await this.plugin.saveSettings();
+          // Show notice about needing to restart for changes to take full effect
+          if (value) {
+            new Notice('Debug mode enabled. Some debug messages will appear in the developer console.');
+          } else {
+            new Notice('Debug mode disabled.');
+          }
+        }));
+
+    // Report a bug button
+    new Setting(containerEl)
+      .setName('Report a bug')
+      .setDesc('Open GitHub issues page to report bugs or request features')
+      .addButton(button => button
+        .setButtonText('Report a bug ↗')
+        .setCta()
+        .onClick(() => {
+          window.open('https://github.com/mrboxtobox/obsidian-related-notes/issues', '_blank');
+        }));
+
+    new Setting(containerEl)
+      .setName('Copy debug info')
+      .setDesc('Copy debug information to clipboard for bug reports.')
+      .addButton(button => button
+        .setButtonText('Copy debug info')
+        .setCta()
+        .onClick(async () => {
+          try {
+            const debugInfo = this.generateDebugInfo();
+            await navigator.clipboard.writeText(debugInfo);
+            new Notice('Debug info copied to clipboard! Please include this when reporting bugs.');
+          } catch (error) {
+            console.error('Failed to copy debug info:', error);
+            new Notice('Failed to copy debug info. Please try again or check console for details.');
+          }
+        }));
+
+    // === SUPPORT THE PROJECT ===
+    const supportEl = containerEl.createEl('div', { cls: 'related-notes-support-section' });
+    supportEl.createEl('p', {
+      text: 'If this plugin helps you discover meaningful connections in your notes, consider supporting its development:'
+    });
+
+    supportEl.innerHTML = '<div style="text-align: left;"><a href="https://www.buymeacoffee.com/mrboxtobox" target="_blank" rel="noopener noreferrer"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=mrboxtobox&button_colour=5F7FFF&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a></div>';
   }
 }

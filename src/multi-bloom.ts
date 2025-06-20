@@ -7,8 +7,9 @@
 
 import { tokenize, SimilarityProvider, SimilarityInfo } from './core';
 import { BloomFilter } from './bloom';
+import { WordBasedCandidateSelector } from './word-index';
 import { TFile } from 'obsidian';
-import { isDebugMode, logIfDebugModeEnabled } from './logging';
+import { isDebugMode, logIfDebugModeEnabled, logMetrics, logPerformance } from './logging';
 import {
   TEXT_PROCESSING,
   BLOOM_FILTER,
@@ -17,7 +18,8 @@ import {
   TIMING,
   FILE_OPERATIONS,
   CACHE,
-  MEMORY_LIMITS
+  MEMORY_LIMITS,
+  WORD_INDEX
 } from './constants';
 import {
   handleFileError,
@@ -79,19 +81,15 @@ export class SingleBloomFilter {
     hashFunctions?: number[]
   ) {
     // Keep the array for backward compatibility, but we only use first value
+    // TODO(olu): Clean this up.
     this.ngramSizes = ngramSizes;
 
-    // Significantly reduced bloom filter size since we're using word-level tokens
-    // instead of character n-grams - this gives similar accuracy with better performance
-    this.bloomSize = bloomSizes && bloomSizes.length > 0 ? bloomSizes[0] : 2048;
+    // Use adaptive bloom filter size - smaller for better performance in large vaults
+    this.bloomSize = bloomSizes && bloomSizes.length > 0 ? bloomSizes[0] : BLOOM_FILTER.LARGE_VAULT_FILTER_SIZE;
     this.hashFunctionCount = hashFunctions && hashFunctions.length > 0 ? hashFunctions[0] : 3;
 
     // Create single bloom filter
     this.filter = new BloomFilter(this.bloomSize, this.hashFunctionCount);
-
-    if (isDebugMode()) {
-      logIfDebugModeEnabled(`Created simplified BloomFilter with ${this.bloomSize} bits, ${this.hashFunctionCount} hash functions`);
-    }
   }
 
   /**
@@ -111,7 +109,7 @@ export class SingleBloomFilter {
     }
 
     if (isDebugMode()) {
-      logIfDebugModeEnabled(`Added ${words.size} words to bloom filter`);
+      // Words added to bloom filter
     }
   }
 
@@ -152,7 +150,6 @@ export class SingleBloomFilter {
    */
   private extractWords(text: string): Set<string> {
     // Use the tokenize function to normalize text
-    // The tokenize function now handles CJK scripts properly
     const processed = tokenize(text);
 
     // Split into words/tokens
@@ -164,9 +161,13 @@ export class SingleBloomFilter {
     // Detect if text contains CJK characters
     const hasCJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f]/.test(text);
 
-    // Add word pairs (bigrams) for context
-    // Use a lower limit for CJK text to avoid too many bigrams
-    const maxBigrams = hasCJK ? BLOOM_FILTER.MAX_BIGRAMS_CJK : BLOOM_FILTER.MAX_BIGRAMS_NON_CJK;
+    // Add word pairs (bigrams) for context - use fewer for large vaults
+    // Determine if we should use lower fidelity based on some global state
+    // This is a heuristic - in practice this could be passed as a parameter
+    const isLowFidelity = wordSet.size > 500; // If document has many words, assume large vault
+    const maxBigrams = isLowFidelity
+      ? (hasCJK ? BLOOM_FILTER.MAX_BIGRAMS_CJK_LARGE : BLOOM_FILTER.MAX_BIGRAMS_NON_CJK_LARGE)
+      : (hasCJK ? BLOOM_FILTER.MAX_BIGRAMS_CJK : BLOOM_FILTER.MAX_BIGRAMS_NON_CJK);
     let count = 0;
 
     for (let i = 0; i < words.length - 1 && count < maxBigrams; i++) {
@@ -251,15 +252,6 @@ export class AdaptiveParameterCalculator {
    * @returns Array of recommended n-gram sizes
    */
   calculateOptimalNgramSizes(): number[] {
-    if (this.documentsAnalyzed < 10) {
-      // Default n-gram size for small corpora - using a single size for simplicity
-      return [3];
-    }
-
-    // Calculate average word length
-    const avgWordLength = this.averageDocLength > 0 ?
-      this.averageDocLength / this.averageVocabularySize : 5;
-
     // Always use a single n-gram size for simplicity regardless of word length
     return [3];
   }
@@ -271,26 +263,10 @@ export class AdaptiveParameterCalculator {
    * @returns Array of recommended bloom filter sizes
    */
   calculateOptimalBloomSizes(ngramSizes: number[], falsePositiveRate: number = 0.01): number[] {
-    // Always use a consistent bloom filter size (2048 bits) for all n-gram sizes
-    // This ensures compatibility when comparing filters while reducing memory usage
-    const fixedSize = BLOOM_FILTER.DEFAULT_FILTER_SIZE; // Reduced from 4096 for faster indexing
+    // Use lower fidelity for large vaults (better speed, slightly lower accuracy)
+    const isLargeCorpus = this.documentsAnalyzed > WORD_FILTERING.LARGE_VAULT_THRESHOLD;
+    const fixedSize = isLargeCorpus ? BLOOM_FILTER.LARGE_VAULT_FILTER_SIZE : BLOOM_FILTER.DEFAULT_FILTER_SIZE;
     return ngramSizes.map(() => fixedSize);
-
-    /* Original adaptive code commented out for reference:
-    if (this.documentsAnalyzed < 10) {
-      // Default bloom filter sizes for small corpora
-      return ngramSizes.map(() => 256);
-    }
-
-    // Estimate number of n-grams for each size
-    return ngramSizes.map(ngramSize => {
-      // Estimate number of unique n-grams based on vocabulary size and n-gram size
-      // This is a heuristic approximation
-      const estimatedNgrams = Math.ceil(this.averageVocabularySize * Math.pow(1.5, ngramSize - 1));
-      // Calculate optimal bloom filter size
-      return calculateOptimalBloomSize(estimatedNgrams, falsePositiveRate);
-    });
-    */
   }
 
   /**
@@ -316,31 +292,6 @@ export class AdaptiveParameterCalculator {
    */
   calculateOptimalSimilarityThreshold(): number {
     return 0.15;
-
-    if (this.documentsAnalyzed < 10) {
-      // Default threshold for small corpora - lowered to find more matches
-      return 0.15;
-    }
-
-    // Calculate coefficient of variation for document lengths
-    const meanDocLength = this.averageDocLength;
-    const variance = this.documentLengths.reduce(
-      (sum, len) => sum + Math.pow(len - meanDocLength, 2), 0
-    ) / this.documentsAnalyzed;
-    const stdDev = Math.sqrt(variance);
-    const cv = stdDev / meanDocLength;
-
-    // Adjust threshold based on corpus homogeneity - lowered all thresholds
-    if (cv < 0.3) {
-      // Very homogeneous corpus: higher threshold
-      return 0.25;
-    } else if (cv < 0.6) {
-      // Moderately varied corpus: medium threshold
-      return 0.15;
-    } else {
-      // Highly varied corpus: lower threshold
-      return 0.1;
-    }
   }
 
   /**
@@ -387,6 +338,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private readonly documentNgrams = new Map<string, Map<number, Set<string>>>();
   private readonly config: any;
   private readonly parameterCalculator = new AdaptiveParameterCalculator();
+  private readonly wordCandidateSelector = new WordBasedCandidateSelector();
   private ngramSizes: number[];
   private bloomSizes: number[];
   private hashFunctions: number[];
@@ -403,12 +355,10 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private cacheFilePath: string | undefined;
   private yieldInterval = 1; // Changed to yield after every document for smoother UI responsiveness
   private isSaving = false; // Prevent concurrent cache saves
+  private useWordBasedCandidates = true; // Enable fast word-based candidate selection
 
-  // Progressive indexing properties
-  private remainingFilesToIndex: TFile[] = [];
-  private hasPartialIndex = false;
-  private isProgressiveIndexingRunning = false;
-  private progressiveIndexingIntervalId: number | null = null;
+  // Current indexing state
+  private currentIndexingFile: string | null = null;
 
   // Adaptive stopwords (reusing from BloomFilterSimilarityProvider)
   private readonly wordFrequencies = new Map<string, number>();
@@ -420,6 +370,10 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private minWordLength = 2;
   private maxStopwords = WORD_FILTERING.MAX_STOPWORDS; // Increased from 200 to filter more common words
   private maxWordFrequencyEntries = 50000; // Limit word frequency tracking to prevent memory leaks
+
+  // In-memory similarity cache with TTL
+  private similarityCache = new Map<string, { similarity: number; timestamp: number }>();
+  private lastCacheCleanup = Date.now();
 
   constructor(vault: any, config: any = {}) {
     this.vault = vault;
@@ -454,6 +408,11 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       this.yieldInterval = config.yieldInterval;
     }
 
+    // Configure word-based candidate selection
+    if (config.useWordBasedCandidates !== undefined) {
+      this.useWordBasedCandidates = config.useWordBasedCandidates;
+    }
+
     // Setup cache file path with validation
     if (vault.adapter && vault.configDir) {
       try {
@@ -477,7 +436,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       - similarity threshold: ${this.similarityThreshold}
       - adaptive parameters: ${this.adaptiveParameters}
       - parameter update interval: ${this.parameterUpdateInterval} documents
-      - adaptive stopwords: true (max: ${this.maxStopwords}, threshold: ${this.commonWordsThreshold * 100}%`);
+      - adaptive stopwords: true (max: ${this.maxStopwords}, threshold: ${this.commonWordsThreshold * 100}%)
+      - word-based candidate selection: ${this.useWordBasedCandidates}`);
   }
 
   /**
@@ -491,23 +451,28 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     try {
       // Try to load from cache first - always prefer cache if it exists
+      const totalFiles = this.vault.getMarkdownFiles().length;
+
+      // Report cache loading progress
+      if (onProgress) {
+        onProgress(0, totalFiles); // Show that we're starting
+      }
+
       const cachedLoaded = await this.loadFromCache();
       if (cachedLoaded) {
-        logIfDebugModeEnabled(`Successfully loaded index from cache with ${this.bloomFilters.size} documents`);
+        logIfDebugModeEnabled(`Index loaded from cache: ${this.bloomFilters.size} documents`);
         this.isInitialized = true;
 
-        // Still report 100% progress
+        // Report completion
         if (onProgress) {
-          const totalFiles = this.vault.getMarkdownFiles().length;
           onProgress(totalFiles, totalFiles);
         }
         return;
       }
 
-      // Get all markdown files
+      // Get all markdown files  
       const markdownFiles = this.vault.getMarkdownFiles();
-      const totalFiles = markdownFiles.length;
-      logIfDebugModeEnabled(`Initializing with ${totalFiles} markdown files`);
+      logIfDebugModeEnabled(`Starting fresh indexing: ${totalFiles} markdown files`);
 
       // Improved yielding function
       const yield_to_main = async () => {
@@ -523,108 +488,27 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         await new Promise(resolve => setTimeout(resolve, ms));
       };
 
-      // Optimize for large vaults
-      const LARGE_VAULT_THRESHOLD = WORD_FILTERING.LARGE_VAULT_THRESHOLD;
-      const isLargeVault = totalFiles > LARGE_VAULT_THRESHOLD;
+      // Single optimized pass - process all files with smart batching
+      const filesToProcess = markdownFiles;
 
-      // For large vaults, we may want to process only a subset of files
-      // or prioritize certain files during initial indexing
-      let filesToProcess = markdownFiles;
+      logIfDebugModeEnabled(`Single pass indexing: ${totalFiles} files`);
 
-      // Check if sampling is enabled in the config and this is a large vault
-      const enableSampling = this.config.enableSampling !== undefined
-        ? this.config.enableSampling
-        : true; // Default to true if not specified
-
-      // Get max sample size from config or use default
-      const maxSampleSize = this.config.maxSampleSize || 5000;
-
-      if (isLargeVault && enableSampling) {
-        logIfDebugModeEnabled(`Large vault detected (${totalFiles} files). Using progressive indexing strategy.`);
-
-        // For progressive indexing of large vaults:
-        // 1. First index a set of active/recent files (last 30 days)
-        // 2. Include any currently open files
-        // 3. Include a random sample of other files
-
-        // Priority 1: Get recently modified files (last 30 days)
-        const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-        const recentFiles = markdownFiles.filter((file: TFile) => file.stat.mtime > thirtyDaysAgo);
-
-        // Priority 2: Get currently active file
-        const activeLeaf = this.vault.getActiveLeaf?.();
-        const activeFile = activeLeaf?.view?.file as TFile | undefined;
-        const activeFiles: TFile[] = [];
-
-        if (activeFile && !recentFiles.includes(activeFile)) {
-          activeFiles.push(activeFile);
-        }
-
-        // Mark these files to be indexed first
-        const priorityFiles = [...recentFiles, ...activeFiles];
-
-        // Determine how many files to include in initial indexing (max 1000 or 10% of vault)
-        const initialIndexSize = Math.min(1000, Math.ceil(totalFiles * 0.1));
-
-        // If we already have enough priority files, use those
-        if (priorityFiles.length >= initialIndexSize) {
-          logIfDebugModeEnabled(`Using ${priorityFiles.length} priority files for initial indexing`);
-          filesToProcess = priorityFiles.slice(0, initialIndexSize);
-        }
-        // Otherwise, supplement with random files
-        else {
-          // Create a list of non-priority files
-          const remainingFiles = markdownFiles.filter((file: TFile) => !priorityFiles.includes(file));
-
-          // Shuffle the remaining files for random sampling
-          const shuffledRemaining = [...remainingFiles];
-          for (let i = shuffledRemaining.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [shuffledRemaining[i], shuffledRemaining[j]] = [shuffledRemaining[j], shuffledRemaining[i]];
-          }
-
-          // Take enough random files to reach our target initial index size
-          const randomSampleCount = initialIndexSize - priorityFiles.length;
-          const randomSample = shuffledRemaining.slice(0, randomSampleCount);
-
-          // Combine priority files with random sample
-          filesToProcess = [...priorityFiles, ...randomSample];
-
-          logIfDebugModeEnabled(`Using ${priorityFiles.length} priority files and ${randomSample.length} random files for initial indexing`);
-        }
-
-        // Store the information about remaining files for later progressive indexing
-        this.remainingFilesToIndex = markdownFiles.filter((file: TFile) => !filesToProcess.includes(file));
-        this.hasPartialIndex = true;
-
-        logIfDebugModeEnabled(`Progressive indexing: Processing ${filesToProcess.length} files initially out of ${totalFiles} total (${this.remainingFilesToIndex.length} files will be indexed later)`);
-
-        // Schedule background indexing of remaining files
-        setTimeout(() => this.scheduleProgressiveIndexing(), 60000); // Start after 1 minute
-      }
+      // No sampling or progressive complexity - just process all files in one optimized pass
 
       // Process files in batches
       for (let i = 0; i < filesToProcess.length; i += batchSize) {
         if (this.stopRequested) {
           logIfDebugModeEnabled('Initialization stopped by user');
-          // Explicitly throw cancellation error to propagate up the promise chain
-          throw new Error('Indexing cancelled');
+          // Return early without error - graceful cancellation
+          return;
         }
 
         // Process a batch of files
         const batch = filesToProcess.slice(i, Math.min(i + batchSize, filesToProcess.length));
 
-        // Update progress at start of batch - calculate proper percentage
+        // Update progress at start of batch
         if (onProgress) {
-          // If we're sampling, adjust the progress reporting to show progress relative to the total files
-          if (isLargeVault) {
-            const progressPercentage = (processedCount / filesToProcess.length) * 100;
-            // Map the percentage to the total files to show accurate progress
-            const scaledProcessed = Math.floor((progressPercentage / 100) * totalFiles);
-            onProgress(scaledProcessed, totalFiles);
-          } else {
-            onProgress(processedCount, totalFiles);
-          }
+          onProgress(processedCount, totalFiles);
         }
 
         // Longer yield before processing batch
@@ -634,49 +518,58 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         for (const file of batch) {
           if (this.stopRequested) {
             logIfDebugModeEnabled('Initialization stopped by user during batch processing');
-            // Explicitly throw cancellation error to propagate up the promise chain
-            throw new Error('Indexing cancelled');
+            // Return early without error - graceful cancellation
+            return;
           }
 
           try {
-            // Read file content with yield before potentially expensive operation
-            await yieldWithDuration(5);
-            const content = await this.vault.cachedRead(file);
-            await yieldWithDuration(5);
+            // Track current file for status display
+            this.currentIndexingFile = file.path;
 
-            // Process document
-            await this.processDocument(file.path, content);
+            // Read and process document
+            const content = await this.vault.cachedRead(file);
+
+            // Extract title from the file path and add it to the content for improved matching
+            const fileName = file.basename;
+            const enhancedContent = `${fileName} ${content}`;
+
+            await this.processDocument(file.path, enhancedContent);
             processedCount++;
 
-            // Update progress after each file for more responsive UI
-            if (onProgress) {
-              // If we're sampling, adjust the progress reporting
-              if (isLargeVault) {
-                const progressPercentage = (processedCount / filesToProcess.length) * 100;
-                // Map the percentage to the total files to show accurate progress
-                const scaledProcessed = Math.floor((progressPercentage / 100) * totalFiles);
-                onProgress(scaledProcessed, totalFiles);
-              } else {
-                onProgress(processedCount, totalFiles);
-              }
+            // Update progress more frequently for better user feedback
+            if (onProgress && (processedCount % 3 === 0 || processedCount === filesToProcess.length)) {
+              // Call with optional third parameter
+              (onProgress as any)(processedCount, totalFiles, file.path);
             }
 
-            // Extended yield after every document
-            await yieldWithDuration(30); // Longer yield for better UI responsiveness
+            // Yield every 5 files to keep UI responsive
+            if (processedCount % 5 === 0) {
+              await yieldWithDuration(10); // Quick yield
+            }
+
+            // Save cache periodically during indexing to preserve progress
+            if (processedCount % 50 === 0) {
+              this.cacheDirty = true;
+              await this.saveToCache();
+            }
           } catch (error) {
             console.error(`Error processing file ${file.path}:`, error);
           }
         }
 
-        // Extra long yield to main thread after each batch
-        // This ensures the UI remains responsive even during intensive indexing
-        await yieldWithDuration(50);
+        // Yield between batches to keep UI responsive
+        if (i % (batchSize * 2) === 0) {
+          await yieldWithDuration(20); // Quick yield between batches
+        }
       }
 
-      // Save the cache after initialization
+      // Clear current file tracking
+      this.currentIndexingFile = null;
+
+      // Save the final cache
       await this.saveToCache();
 
-      logIfDebugModeEnabled(`Initialization complete: processed ${this.bloomFilters.size} files`);
+      logIfDebugModeEnabled(`Indexing complete: ${this.bloomFilters.size} documents processed`);
       this.isInitialized = true;
     } catch (error) {
       console.error('Error during initialization:', error);
@@ -690,12 +583,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   stop(): void {
     this.stopRequested = true;
 
-    // Also stop progressive indexing if it's running
-    if (this.progressiveIndexingIntervalId !== null) {
-      clearInterval(this.progressiveIndexingIntervalId);
-      this.progressiveIndexingIntervalId = null;
-      this.isProgressiveIndexingRunning = false;
-    }
+    // Progressive indexing removed - no cleanup needed
 
     // Log that stop was requested to help with debugging
     if (isDebugMode()) {
@@ -703,127 +591,27 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     }
   }
 
-  /**
-   * Schedule progressive indexing of remaining files
-   * This method processes files in small batches during idle time
-   * to avoid impacting performance during active use
-   */
-  private scheduleProgressiveIndexing(): void {
-    // Don't schedule if already running or no files to process
-    if (this.isProgressiveIndexingRunning || this.remainingFilesToIndex.length === 0) {
-      return;
-    }
-
-    if (isDebugMode()) {
-      logIfDebugModeEnabled(`Scheduling progressive indexing for ${this.remainingFilesToIndex.length} remaining files`);
-    }
-
-    this.isProgressiveIndexingRunning = true;
-
-    // Process a small batch of files every few minutes
-    // This spreads the indexing load over time
-    const BATCH_SIZE = BATCH_PROCESSING.FILES_PER_BATCH; // Process 20 files at a time
-    const INTERVAL_MINUTES = BATCH_PROCESSING.PROGRESSIVE_INTERVAL_MINUTES; // Process a batch every 5 minutes
-
-    let progressiveIndexCount = 0;
-
-    // Function to process a small batch of files
-    const processBatch = async () => {
-      // Stop if requested or no more files
-      if (this.stopRequested || this.remainingFilesToIndex.length === 0) {
-        if (this.progressiveIndexingIntervalId !== null) {
-          clearInterval(this.progressiveIndexingIntervalId);
-          this.progressiveIndexingIntervalId = null;
-          this.isProgressiveIndexingRunning = false;
-        }
-
-        if (isDebugMode()) {
-          logIfDebugModeEnabled(`Progressive indexing completed or stopped after processing ${progressiveIndexCount} files`);
-        }
-
-        // Save cache after batch processing
-        await this.saveToCache();
-        return;
-      }
-
-      // Take the next batch of files
-      const batchToProcess = this.remainingFilesToIndex.splice(0, BATCH_SIZE);
-
-      if (isDebugMode()) {
-        logIfDebugModeEnabled(`Progressive indexing: processing batch of ${batchToProcess.length} files (${this.remainingFilesToIndex.length} remaining)`);
-      }
-
-      // Process each file with yields between operations
-      for (const file of batchToProcess) {
-        try {
-          // Yield to avoid blocking UI
-          await new Promise(resolve => setTimeout(resolve, 50));
-
-          // Read file content
-          const content = await this.vault.cachedRead(file);
-
-          // Process document
-          await this.processDocument(file.path, content);
-          progressiveIndexCount++;
-
-          // Yield again after processing
-          await new Promise(resolve => setTimeout(resolve, 20));
-        } catch (error) {
-          console.error(`Error during progressive indexing of ${file.path}:`, error);
-        }
-      }
-
-      // Save cache after batch processing
-      this.cacheDirty = true;
-      await this.saveToCache();
-
-      // If no more files to process, clean up
-      if (this.remainingFilesToIndex.length === 0) {
-        if (this.progressiveIndexingIntervalId !== null) {
-          clearInterval(this.progressiveIndexingIntervalId);
-          this.progressiveIndexingIntervalId = null;
-        }
-        this.isProgressiveIndexingRunning = false;
-        this.hasPartialIndex = false;
-
-        if (isDebugMode()) {
-          logIfDebugModeEnabled(`Progressive indexing completed after processing ${progressiveIndexCount} files`);
-        }
-      }
-    };
-
-    // Start the first batch immediately
-    processBatch();
-
-    // Schedule future batches
-    this.progressiveIndexingIntervalId = window.setInterval(processBatch, INTERVAL_MINUTES * 60 * 1000);
-  }
+  // Progressive indexing method removed - using single optimized pass only
 
   /**
    * Force a complete reindexing of all files
    * @param onProgress Progress callback
    */
-  async forceReindex(onProgress: (processed: number, total: number) => void): Promise<void> {
+  async forceReindex(onProgress: (processed: number, total: number, currentFile?: string) => void): Promise<void> {
     // Reset stop flag before starting
     this.stopRequested = false;
-
-    // Stop any progressive indexing that might be in progress
-    if (this.progressiveIndexingIntervalId !== null) {
-      clearInterval(this.progressiveIndexingIntervalId);
-      this.progressiveIndexingIntervalId = null;
-      this.isProgressiveIndexingRunning = false;
-    }
 
     // Clear existing data
     this.bloomFilters.clear();
     this.documentNgrams.clear();
-    this.remainingFilesToIndex = [];
-    this.hasPartialIndex = false;
 
     // Reset stopwords detection
     this.commonWords.clear();
     this.commonWordsComputed = false;
     this.totalDocuments = 0;
+
+    // Clear word-based candidate selector
+    this.wordCandidateSelector.clear();
 
     // Mark cache as dirty
     this.cacheDirty = true;
@@ -834,11 +622,9 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     try {
       return await this.initialize(onProgress);
     } catch (error) {
-      // If it's a cancellation error, properly propagate it
-      if (error instanceof Error && error.message === 'Indexing cancelled') {
-        throw error; // Re-throw the cancellation error
-      }
-      // For other errors, re-throw
+      // For any errors during initialization, log and re-throw
+      logIfDebugModeEnabled(`Error during initialization: ${error instanceof Error ? error.message : String(error)}`);
+      // Re-throw the error for proper handling upstream
       throw error;
     }
   }
@@ -865,11 +651,24 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       return [];
     }
 
+    // Even during progressive indexing, we can use what we have indexed so far
+    const availableIndexSize = this.bloomFilters.size;
+    if (availableIndexSize === 0) {
+      return [];
+    }
+
     try {
       // If the file isn't in our index yet, process it
       if (!this.bloomFilters.has(file.path)) {
         if (isDebugMode()) {
           logIfDebugModeEnabled(`File ${file.path} not in index yet, will process on-demand`);
+
+          // Show list of files currently in the index for debugging
+          const indexedFiles = Array.from(this.bloomFilters.keys());
+          logIfDebugModeEnabled(`Files currently in index (${indexedFiles.length} total):`);
+          indexedFiles.forEach(indexedFile => {
+            logIfDebugModeEnabled(`  - ${indexedFile}`);
+          });
         }
 
         // Return empty for now - computeCappedCosineSimilarity will handle on-demand processing
@@ -892,12 +691,16 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         const sampleSizeThreshold = this.config.sampleSizeThreshold || 5000;
         const maxSampleSize = this.config.maxSampleSize || 1000;
 
-        // For large corpora, use smart candidate selection instead of random sampling
+        // For large corpora or during progressive indexing, use smart candidate selection
         let candidateDocuments: string[];
-        
-        if (enableSampling && corpusSize > sampleSizeThreshold) {
+
+        // Use sampling for large vaults to maintain performance
+        const shouldSample = enableSampling && corpusSize > sampleSizeThreshold;
+
+        if (shouldSample) {
           // Smart candidate selection for large vaults
           candidateDocuments = await this.getSmartCandidates(file.path, maxSampleSize);
+          logIfDebugModeEnabled(`Large vault: using ${candidateDocuments.length} smart candidates from ${corpusSize} indexed files`);
         } else {
           // Small vault - use all documents
           candidateDocuments = Array.from(this.bloomFilters.keys()).filter(path => path !== file.path);
@@ -1062,13 +865,13 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // Skip adaptive parameters for better performance
     this.documentsProcessed++;
 
-    // For very large documents, limit the content to process
-    // This drastically improves performance for huge files
-    const processLimit = TEXT_PROCESSING.LARGE_DOCUMENT_LIMIT; // Character limit
+    // For large vaults, use lower fidelity processing (smaller text limit)
+    const isLargeVault = this.bloomFilters.size > WORD_FILTERING.LARGE_VAULT_THRESHOLD;
+    const processLimit = isLargeVault ? TEXT_PROCESSING.LARGE_VAULT_DOCUMENT_LIMIT : TEXT_PROCESSING.LARGE_DOCUMENT_LIMIT;
     const isLargeDocument = text.length > processLimit;
 
     if (isLargeDocument) {
-      logIfDebugModeEnabled(`Large document detected (${text.length} chars), limiting to ${processLimit} chars`);
+      logIfDebugModeEnabled(`Large document detected (${text.length} chars), limiting to ${processLimit} chars${isLargeVault ? ' (low fidelity mode)' : ''}`);
     }
 
     const limitedText = isLargeDocument ? this.smartTruncateText(text, processLimit) : text;
@@ -1083,10 +886,11 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       await yieldWithDuration(TIMING.EXTENDED_YIELD_DURATION_MS);
     }
 
-    // Create a simplified bloom filter (word-based, single resolution)
+    // Create a simplified bloom filter with adaptive size for large vaults
+    const filterSize = isLargeVault ? BLOOM_FILTER.LARGE_VAULT_FILTER_SIZE : BLOOM_FILTER.DEFAULT_FILTER_SIZE;
     const filter = new SingleBloomFilter(
       [3], // Single n-gram size (kept as array for backward compatibility)
-      [2048], // Reduced bloom filter size for word-level indexing
+      [filterSize], // Adaptive bloom filter size based on vault size
       [3] // Hash functions
     );
 
@@ -1097,17 +901,23 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // CPU throttling: process in small chunks with mandatory yields
     const words = processed.split(/\s+/);
     const CHUNK_SIZE = TIMING.MAX_OPERATIONS_BEFORE_YIELD; // Small chunks to prevent CPU hogging
-    
+
     for (let i = 0; i < words.length; i += CHUNK_SIZE) {
       const chunk = words.slice(i, i + CHUNK_SIZE).join(' ');
       filter.addText(chunk);
-      
+
       // Mandatory yield after every chunk to keep UI responsive
       await yieldWithDuration(TIMING.MIN_YIELD_TIME_MS);
     }
 
     // Store the filter
     this.bloomFilters.set(docId, filter);
+
+    // Also add to word-based candidate selector for fast candidate selection
+    if (this.useWordBasedCandidates) {
+      await yieldWithDuration(5);
+      this.wordCandidateSelector.addDocument(docId, limitedText);
+    }
 
     // No longer storing n-grams for memory efficiency
 
@@ -1182,6 +992,15 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
    * @returns Similarity score between 0 and 1
    */
   calculateSimilarity(docId1: string, docId2: string): number {
+    // Create cache key (normalize order for consistency)
+    const cacheKey = docId1 < docId2 ? `${docId1}|${docId2}` : `${docId2}|${docId1}`;
+
+    // Check cache first
+    const cached = this.similarityCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < CACHE.SIMILARITY_TTL_MS) {
+      return cached.similarity;
+    }
+
     const startTime = performance.now();
 
     // Get the filters for both documents
@@ -1200,6 +1019,15 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // Calculate the multi-resolution similarity
     const similarity = filter1.similarity(filter2);
 
+    // Cache the result
+    this.similarityCache.set(cacheKey, {
+      similarity,
+      timestamp: Date.now()
+    });
+
+    // Clean up cache periodically
+    this.cleanupCacheIfNeeded();
+
     const endTime = performance.now();
 
     if (isDebugMode()) {
@@ -1211,12 +1039,49 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
   /**
    * Get smart candidates for similarity comparison in large vaults
-   * Uses multiple strategies to find the most likely similar documents
+   * Uses word-based inverted index for ultra-fast candidate selection
    * @param queryDocId Query document ID  
    * @param maxCandidates Maximum number of candidates to return
    * @returns Array of candidate document IDs
    */
   async getSmartCandidates(queryDocId: string, maxCandidates: number): Promise<string[]> {
+    const startTime = performance.now();
+
+    // Strategy 1: Word-based candidate selection (fastest)
+    if (this.useWordBasedCandidates && this.wordCandidateSelector.isDocumentIndexed(queryDocId)) {
+
+      // Use random word sampling for ultra-fast candidate selection
+      const numSampleWords = Math.min(
+        WORD_INDEX.MAX_SAMPLE_WORDS,
+        Math.max(
+          WORD_INDEX.MIN_SAMPLE_WORDS,
+          Math.floor(Math.sqrt(maxCandidates / 10))
+        )
+      );
+      const wordBasedCandidates = this.wordCandidateSelector.getFastCandidates(
+        queryDocId,
+        Math.ceil(maxCandidates * 0.8), // Use 80% of requested candidates from word sampling
+        numSampleWords
+      );
+
+      // Add some recency bias (remaining 20%)
+      const recentFiles = this.vault.getMarkdownFiles()
+        .filter((file: TFile) => file.stat.mtime > Date.now() - (30 * 24 * 60 * 60 * 1000)) // Last 30 days
+        .slice(0, Math.ceil(maxCandidates * 0.2))
+        .map((file: TFile) => file.path)
+        .filter((path: string) => this.bloomFilters.has(path) && path !== queryDocId);
+
+      // Combine word-based candidates with recent files
+      const allCandidates = new Set([...wordBasedCandidates, ...recentFiles]);
+      const result = Array.from(allCandidates).slice(0, maxCandidates);
+
+      const endTime = performance.now();
+      logPerformance(`Word-based candidate selection: ${result.length} candidates in ${(endTime - startTime).toFixed(1)}ms`);
+
+      return result;
+    }
+
+    // Fallback Strategy 2: Bloom filter intersection (slower but more accurate)
     const queryFilter = this.bloomFilters.get(queryDocId);
     if (!queryFilter) {
       return [];
@@ -1225,9 +1090,9 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     const allDocIds = Array.from(this.bloomFilters.keys()).filter(id => id !== queryDocId);
     const candidates = new Set<string>();
 
-    // Strategy 1: Fast bloom filter intersection check (top 70% most promising)
+    // Fast bloom filter intersection check
     const fastCandidates: Array<[string, number]> = [];
-    
+
     for (const docId of allDocIds) {
       const otherFilter = this.bloomFilters.get(docId);
       if (otherFilter) {
@@ -1247,7 +1112,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     topFastCandidates.forEach(docId => candidates.add(docId));
 
-    // Strategy 2: Recently modified files (recency bias)
+    // Add recently modified files (recency bias)
     const recentFiles = this.vault.getMarkdownFiles()
       .filter((file: TFile) => file.stat.mtime > Date.now() - (30 * 24 * 60 * 60 * 1000)) // Last 30 days
       .slice(0, Math.ceil(maxCandidates * 0.2))
@@ -1256,7 +1121,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     recentFiles.forEach((path: string) => candidates.add(path));
 
-    // Strategy 3: Random sampling from remaining documents (exploration)
+    // Random sampling from remaining documents (exploration)
     const remaining = allDocIds.filter(docId => !candidates.has(docId));
     const randomSampleSize = Math.min(
       Math.ceil(maxCandidates * 0.1),
@@ -1270,10 +1135,9 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     }
 
     const result = Array.from(candidates).slice(0, maxCandidates);
-    
-    if (isDebugMode()) {
-      logIfDebugModeEnabled(`Smart candidate selection: ${result.length} candidates from ${allDocIds.length} total documents`);
-    }
+
+    const endTime = performance.now();
+    logPerformance(`Bloom filter candidate selection: ${result.length} candidates in ${(endTime - startTime).toFixed(1)}ms`);
 
     return result;
   }
@@ -1308,13 +1172,13 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     // Determine which documents to compare against
     let documentsToProcess: Iterable<[string, any]>;
-    
+
     if (candidateDocIds && candidateDocIds.length > 0) {
       // Use provided candidate documents
       documentsToProcess = candidateDocIds
         .filter(docId => docId !== queryDocId && this.bloomFilters.has(docId))
         .map(docId => [docId, this.bloomFilters.get(docId)!]);
-      
+
       logIfDebugModeEnabled(`Using ${candidateDocIds.length} smart candidates for similarity comparison`);
     } else {
       // Fallback to legacy sampling approach
@@ -1440,6 +1304,52 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
+   * Clean up expired entries from the similarity cache
+   */
+  private cleanupCacheIfNeeded(): void {
+    const now = Date.now();
+
+    // Only cleanup every 5 minutes to avoid excessive overhead
+    if (now - this.lastCacheCleanup < 5 * 60 * 1000) {
+      return;
+    }
+
+    // If cache size exceeds threshold, force cleanup
+    if (this.similarityCache.size < CACHE.MEMORY_CACHE_CLEANUP_THRESHOLD) {
+      this.lastCacheCleanup = now;
+      return;
+    }
+
+    const initialSize = this.similarityCache.size;
+    const cutoffTime = now - CACHE.SIMILARITY_TTL_MS;
+
+    // Remove expired entries
+    for (const [key, entry] of this.similarityCache.entries()) {
+      if (entry.timestamp < cutoffTime) {
+        this.similarityCache.delete(key);
+      }
+    }
+
+    // If still too large after TTL cleanup, remove oldest entries
+    if (this.similarityCache.size > CACHE.MAX_MEMORY_CACHE_ENTRIES) {
+      const entries = Array.from(this.similarityCache.entries());
+      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+      const entriesToRemove = this.similarityCache.size - CACHE.MAX_MEMORY_CACHE_ENTRIES;
+      for (let i = 0; i < entriesToRemove; i++) {
+        this.similarityCache.delete(entries[i][0]);
+      }
+    }
+
+    const finalSize = this.similarityCache.size;
+    this.lastCacheCleanup = now;
+
+    if (isDebugMode() && initialSize !== finalSize) {
+      logIfDebugModeEnabled(`Similarity cache cleanup: ${initialSize} -> ${finalSize} entries`);
+    }
+  }
+
+  /**
    * Track word frequencies and document occurrences to identify common words
    * @param docId Document identifier
    * @param text Document text
@@ -1463,7 +1373,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // Count word frequencies with memory limits
     for (const word of words) {
       if (word.length <= this.minWordLength) continue; // Skip very short words
-      
+
       // Stop adding new words if we hit the limit
       if (!this.wordFrequencies.has(word) && this.wordFrequencies.size >= this.maxWordFrequencyEntries) {
         break;
@@ -1559,10 +1469,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       stopwordsThreshold: this.commonWordsThreshold,
       maxStopwords: this.maxStopwords,
       documentsAnalyzed: this.totalDocuments,
-      progressiveIndexing: {
-        active: this.isProgressiveIndexingRunning,
-        remainingFiles: this.remainingFilesToIndex.length,
-        partialIndex: this.hasPartialIndex
+      indexing: {
+        currentFile: this.currentIndexingFile
       },
       memoryUsage: {
         totalBytes: 0,
@@ -1585,6 +1493,11 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     // Add parameter calculator stats
     stats.corpusStats = this.parameterCalculator.getStats();
 
+    // Add word-based candidate selector stats
+    if (this.useWordBasedCandidates) {
+      stats.wordIndex = this.wordCandidateSelector.getStats();
+    }
+
     return stats;
   }
 
@@ -1594,12 +1507,17 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   clear(): void {
     this.bloomFilters.clear();
     this.documentNgrams.clear();
+    this.currentIndexingFile = null;
     // Clear adaptive stopwords data to free memory
     this.wordFrequencies.clear();
     this.wordDocumentCount.clear();
     this.commonWords.clear();
     this.commonWordsComputed = false;
     this.totalDocuments = 0;
+    // Clear word-based candidate selector
+    this.wordCandidateSelector.clear();
+    // Clear similarity cache
+    this.similarityCache.clear();
     this.cacheDirty = true;
   }
 
@@ -1630,7 +1548,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         const memUsage = process.memoryUsage();
         const memMB = Math.round(memUsage.heapUsed / 1024 / 1024);
         logIfDebugModeEnabled(`Memory usage after cleanup: ${memMB}MB`);
-        
+
         // If still using too much memory, be more aggressive
         if (memMB > MEMORY_LIMITS.MAX_MEMORY_MB) {
           logIfDebugModeEnabled('Memory usage still high, performing aggressive cleanup');
@@ -1731,7 +1649,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       // Write to temporary file first to prevent corruption
       const tempCachePath = `${this.cacheFilePath}.tmp`;
       const cacheContent = JSON.stringify(cache);
-      
+
       // Validate JSON serialization before writing
       try {
         JSON.parse(cacheContent); // Validate that we can parse what we just serialized
@@ -1750,15 +1668,15 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         () => this.vault.adapter.read(tempCachePath),
         'Cache temp verification'
       );
-      
+
       try {
         const verifyCache = JSON.parse(tempContent as string);
-        if (verifyCache.version !== cache.version || 
-            Object.keys(verifyCache.filters).length !== Object.keys(cache.filters).length) {
+        if (verifyCache.version !== cache.version ||
+          Object.keys(verifyCache.filters).length !== Object.keys(cache.filters).length) {
           throw new Error('Cache verification failed: data mismatch');
         }
       } catch (verifyError) {
-        await this.vault.adapter.remove(tempCachePath).catch(() => {}); // Cleanup temp file
+        await this.vault.adapter.remove(tempCachePath).catch(() => { }); // Cleanup temp file
         throw new Error(`Cache verification failed: ${verifyError}`);
       }
 
@@ -1784,7 +1702,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       return true;
     } catch (error) {
       handleCacheError(error as Error, 'save cache', { cacheFilePath: this.cacheFilePath });
-      
+
       // Cleanup temp file on error
       try {
         const tempCachePath = `${this.cacheFilePath}.tmp`;
@@ -1792,7 +1710,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       } catch (cleanupError) {
         // Ignore cleanup errors
       }
-      
+
       return false;
     } finally {
       this.isSaving = false;
@@ -1845,7 +1763,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
       // Validate parameters match - check compatibility
       const params = cache.params;
-      
+
       // Check for critical parameter mismatches that would cause errors
       if (!this.areArraysEqual(params.ngramSizes, this.ngramSizes) ||
         !this.areArraysEqual(params.hashFunctions, this.hashFunctions)) {
@@ -1853,14 +1771,14 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         this.deleteCache(); // Delete the incompatible cache file
         return false;
       }
-      
+
       // Check for bloom size mismatches (less critical, but can cause errors)
       if (params.bloomSizes && !this.areArraysEqual(params.bloomSizes, this.bloomSizes)) {
         logIfDebugModeEnabled('Bloom filter size mismatch detected, will rebuild index');
         this.deleteCache(); // Delete the incompatible cache file
         return false;
       }
-      
+
       // Similarity threshold changes are ok - we can work with different thresholds
       if (params.similarityThreshold !== this.similarityThreshold) {
         logIfDebugModeEnabled(`Similarity threshold changed from ${params.similarityThreshold} to ${this.similarityThreshold}, continuing with cache`);
@@ -1897,13 +1815,17 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         this.totalDocuments = cache.stats.totalDocuments;
       }
 
-      // Load bloom filters
+      // Load bloom filters with robust error handling
       let loadedCount = 0;
+      let invalidEntryCount = 0;
+      const documentsToRemove: string[] = [];
+
       for (const [docId, rawFilterData] of Object.entries(cache.filters)) {
         try {
           // Type guard - make sure filterData is an object
           if (!rawFilterData || typeof rawFilterData !== 'object') {
-            // Invalid filter data, skipping
+            // Silent removal - invalid filter data
+            documentsToRemove.push(docId);
             continue;
           }
 
@@ -1912,8 +1834,26 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
             [key: string]: any
           };
 
-          // Create a new multi-resolution bloom filter
+          // Validate filter data structure
           const ngramSizes = Array.isArray(filterData.ngramSizes) ? filterData.ngramSizes : this.ngramSizes;
+
+          // Check if we have bloom filter data for expected n-gram sizes
+          let hasValidData = false;
+          for (const ngramSize of ngramSizes) {
+            const bitArrayKey = `bloom_${ngramSize}`;
+            if (filterData[bitArrayKey] && Array.isArray(filterData[bitArrayKey])) {
+              hasValidData = true;
+              break;
+            }
+          }
+
+          if (!hasValidData) {
+            // Silent removal - no valid bloom filter data
+            documentsToRemove.push(docId);
+            continue;
+          }
+
+          // Create a new multi-resolution bloom filter
           const filter = new SingleBloomFilter(
             ngramSizes,
             this.bloomSizes,
@@ -1921,36 +1861,66 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           );
 
           // For each n-gram size, restore the bloom filter's bit array
+          let filterRestored = false;
           for (const ngramSize of ngramSizes) {
             const bitArrayKey = `bloom_${ngramSize}`;
             if (filterData[bitArrayKey] && Array.isArray(filterData[bitArrayKey])) {
               const bloomFilter = filter.filters.get(ngramSize);
               if (bloomFilter) {
-                // Convert array back to Uint32Array
-                const bitArray = new Uint32Array(filterData[bitArrayKey]);
-                // Use the setter method to set the bit array
-                bloomFilter.setBitArray(bitArray);
+                try {
+                  // Validate array length before conversion
+                  const expectedLength = this.bloomSizes[ngramSizes.indexOf(ngramSize)] / 32;
+                  const actualLength = filterData[bitArrayKey].length;
+
+                  if (actualLength !== expectedLength) {
+                    // Silent removal - array length mismatch
+                    documentsToRemove.push(docId);
+                    break; // Break from n-gram loop
+                  }
+
+                  // Convert array back to Uint32Array
+                  const bitArray = new Uint32Array(filterData[bitArrayKey]);
+                  // Use the setter method to set the bit array
+                  bloomFilter.setBitArray(bitArray);
+                  filterRestored = true;
+                } catch (bitArrayError) {
+                  // Silent removal - bit array error
+                  documentsToRemove.push(docId);
+                  break; // Break from n-gram loop
+                }
               }
             }
           }
 
-          this.bloomFilters.set(docId, filter);
-          loadedCount++;
-        } catch (error) {
-          console.error(`Error restoring bloom filter for ${docId}:`, error);
-          
-          // Check if this is a size mismatch error (cache incompatibility)
-          if (error instanceof Error && error.message.includes('Array length mismatch')) {
-            logIfDebugModeEnabled(`Cache format incompatibility detected for ${docId}, will rebuild index`);
-            // Clear the problematic cache entry
-            if (cache.filters && cache.filters[docId]) {
-              delete cache.filters[docId];
-            }
+          // Only add filter if it was successfully restored
+          if (filterRestored && !documentsToRemove.includes(docId)) {
+            this.bloomFilters.set(docId, filter);
+            loadedCount++;
           }
-          
+        } catch (error) {
+          // Silent removal - bloom filter restoration error
+          documentsToRemove.push(docId);
+          invalidEntryCount++;
+
           // Continue with other filters - don't let one bad entry break everything
           continue;
         }
+      }
+
+      // Remove invalid entries from cache to prevent future issues
+      if (documentsToRemove.length > 0) {
+        console.info(`Removing ${documentsToRemove.length} invalid cache entries`);
+        for (const docId of documentsToRemove) {
+          if (cache.filters && cache.filters[docId]) {
+            delete cache.filters[docId];
+          }
+        }
+
+        // Mark cache as dirty so it gets saved without the invalid entries
+        this.cacheDirty = true;
+
+        // Log summary
+        console.info(`Cache cleanup: removed ${documentsToRemove.length} invalid entries, successfully loaded ${loadedCount} documents`);
       }
 
       // Successfully loaded bloom filters from cache
@@ -2210,7 +2180,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
    * Deletes the cache file from disk
    * Used when cache is detected to be invalid
    */
-  private async deleteCache(): Promise<void> {
+  public async deleteCache(): Promise<void> {
     if (!this.cacheFilePath || !this.vault.adapter) {
       logIfDebugModeEnabled('Cannot delete cache: no cache path or vault adapter');
       return;

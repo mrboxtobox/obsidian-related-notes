@@ -96,11 +96,18 @@ export class RelatedNotesView extends ItemView {
 
   /**
    * Adds a link to the target file at the end of the source file
+   * Checks for existing links to avoid duplicates
    */
   private async addLink(sourceFile: TFile, targetFile: TFile): Promise<void> {
     try {
       // Get current content
       const content = await this.app.vault.cachedRead(sourceFile);
+
+      // Check if link already exists to avoid duplicates
+      const linkExists = await this.hasLink(sourceFile, targetFile);
+      if (linkExists) {
+        return; // Link already exists, no-op
+      }
 
       // Create a wiki link to the target file
       const linkText = `\n\n## Related Notes\n- [[${targetFile.basename}]]\n`;
@@ -110,6 +117,12 @@ export class RelatedNotesView extends ItemView {
       let newContent: string;
 
       if (relatedSectionRegex.test(content)) {
+        // Check if this specific link already exists in the Related Notes section
+        const existingLinkRegex = new RegExp(`- \[\[${targetFile.basename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\]\]`, 'i');
+        if (existingLinkRegex.test(content)) {
+          return; // Link already exists in Related Notes section
+        }
+        
         // Add to existing Related Notes section
         newContent = content.replace(
           /\n## Related Notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
@@ -124,6 +137,7 @@ export class RelatedNotesView extends ItemView {
       await this.app.vault.modify(sourceFile, newContent);
     } catch (error) {
       console.error(`Error adding link to ${sourceFile.path}:`, error);
+      throw error; // Re-throw so the UI can handle it
     }
   }
 
@@ -187,7 +201,7 @@ export class RelatedNotesView extends ItemView {
     const listEl = contentEl.createEl('ul', { cls: 'related-notes-list' });
 
     // Create list items for each related note
-    const listItemPromises = notes.map(async (note) => {
+    const listItems = notes.map((note) => {
       const { file: relatedFile } = note;
       const listItemEl = document.createElement('li');
       listItemEl.className = 'related-note-item';
@@ -222,38 +236,46 @@ export class RelatedNotesView extends ItemView {
       // Add the link container to the item container
       itemContainer.appendChild(linkContainer);
 
-      // Check if a link already exists between the current file and the related file
-      const hasLinkToRelated = await this.hasLink(file, relatedFile);
-      const hasLinkFromRelated = await this.hasLink(relatedFile, file);
-
       // Create the action buttons container
       const actionsContainer = document.createElement('div');
       actionsContainer.className = 'related-note-actions';
 
-      // Create the "Link" button if no link exists
-      if (!hasLinkToRelated) {
-        const linkButton = document.createElement('button');
-        linkButton.className = 'related-note-link-button';
-        linkButton.textContent = 'Link';
-        linkButton.title = 'Add a link to this note';
-        linkButton.addEventListener('click', async (e) => {
-          e.stopPropagation(); // Prevent opening the file
-          await this.addLink(file, relatedFile);
-          // Update button state after adding the link
-          linkButton.textContent = 'Linked';
-          linkButton.disabled = true;
-          linkButton.classList.add('linked');
-        });
-        actionsContainer.appendChild(linkButton);
-      } else {
-        // Show a disabled "Linked" button if a link already exists
-        const linkedButton = document.createElement('button');
-        linkedButton.className = 'related-note-link-button linked';
-        linkedButton.textContent = 'Linked';
-        linkedButton.disabled = true;
-        linkedButton.title = 'This note is already linked';
-        actionsContainer.appendChild(linkedButton);
-      }
+      // Always show the "Link" button - we'll check for existing links when clicked
+      const linkButton = document.createElement('button');
+      linkButton.className = 'related-note-link-button';
+      linkButton.textContent = 'Link';
+      linkButton.title = 'Add a link to this note';
+      linkButton.addEventListener('click', async (e) => {
+        e.stopPropagation(); // Prevent opening the file
+        
+        // Disable button during operation
+        linkButton.disabled = true;
+        linkButton.textContent = 'Checking...';
+        
+        try {
+          // Check if link already exists (only when user clicks)
+          const hasLinkToRelated = await this.hasLink(file, relatedFile);
+          
+          if (hasLinkToRelated) {
+            // Link already exists - make it a no-op
+            linkButton.textContent = 'Linked';
+            linkButton.classList.add('linked');
+            linkButton.title = 'This note is already linked';
+          } else {
+            // Add the link
+            await this.addLink(file, relatedFile);
+            linkButton.textContent = 'Linked';
+            linkButton.classList.add('linked');
+            linkButton.title = 'Link added successfully';
+          }
+        } catch (error) {
+          console.error('Error processing link:', error);
+          // Re-enable button on error
+          linkButton.disabled = false;
+          linkButton.textContent = 'Link';
+        }
+      });
+      actionsContainer.appendChild(linkButton);
 
       // Add the actions container to the item container
       itemContainer.appendChild(actionsContainer);
@@ -265,9 +287,6 @@ export class RelatedNotesView extends ItemView {
 
       return listItemEl;
     });
-
-    // Wait for all list items to be created (with link checking)
-    const listItems = await Promise.all(listItemPromises);
 
     // Add all list items to the list
     listItems.forEach(item => listEl.appendChild(item));

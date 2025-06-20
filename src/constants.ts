@@ -9,6 +9,8 @@
 export const TEXT_PROCESSING = {
   /** Maximum character limit for processing large documents */
   LARGE_DOCUMENT_LIMIT: 10000,
+  /** Maximum character limit for large vaults (lower fidelity) */
+  LARGE_VAULT_DOCUMENT_LIMIT: 5000,
   /** Minimum number of bits required for meaningful comparison */
   MIN_BITS_FOR_COMPARISON: 5,
   /** Character truncation fallback percentage */
@@ -27,8 +29,14 @@ export const BLOOM_FILTER = {
   MAX_BIGRAMS_CJK: 100,
   /** Maximum bigrams for non-CJK text */
   MAX_BIGRAMS_NON_CJK: 200,
+  /** Maximum bigrams for CJK text (large vaults) */
+  MAX_BIGRAMS_CJK_LARGE: 50,
+  /** Maximum bigrams for non-CJK text (large vaults) */
+  MAX_BIGRAMS_NON_CJK_LARGE: 100,
   /** Default fixed bloom filter size */
   DEFAULT_FILTER_SIZE: 8192,
+  /** Lower fidelity bloom filter size for large vaults */
+  LARGE_VAULT_FILTER_SIZE: 4096,
   /** Parameter update interval for adaptive parameters */
   PARAMETER_UPDATE_INTERVAL: 50,
   /** Bloom filter saturation threshold for similarity scaling */
@@ -40,9 +48,9 @@ export const BLOOM_FILTER = {
  */
 export const BATCH_PROCESSING = {
   /** Files per batch for progressive indexing */
-  FILES_PER_BATCH: 20,
+  FILES_PER_BATCH: 50,
   /** Minutes between progressive indexing batches */
-  PROGRESSIVE_INTERVAL_MINUTES: 5,
+  PROGRESSIVE_INTERVAL_MINUTES: 10,
   /** Milliseconds between file processing batches */
   PROCESS_INTERVAL_MS: 2000,
   /** Small batch size for UI responsiveness */
@@ -63,6 +71,8 @@ export const WORD_FILTERING = {
   COMMON_WORDS_THRESHOLD: 0.5,
   /** Large vault threshold for sampling */
   LARGE_VAULT_THRESHOLD: 5000,
+  /** Word index threshold - use word-based candidate selection above this size */
+  WORD_INDEX_THRESHOLD: 750,
   /** Maximum sample size for large vaults */
   MAX_SAMPLE_SIZE: 1000,
 } as const;
@@ -108,7 +118,7 @@ export const FILE_OPERATIONS = {
   /** Base timeout for file operations (ms) - increased for slow systems */
   TIMEOUT_MS: 15000,
   /** File read timeout (ms) - adaptive based on file size */
-  READ_TIMEOUT_MS: 8000,
+  READ_TIMEOUT_MS: 15000,
   /** Cache operation timeout (ms) - longer for complex cache writes */
   CACHE_TIMEOUT_MS: 20000,
   /** Base backoff delay (ms) */
@@ -134,13 +144,37 @@ export const UI = {
 } as const;
 
 /**
+ * Word-based candidate selection constants
+ */
+export const WORD_INDEX = {
+  /** Default number of random words to sample for candidate selection */
+  DEFAULT_SAMPLE_WORDS: 4,
+  /** Maximum number of random words to sample */
+  MAX_SAMPLE_WORDS: 8,
+  /** Minimum number of random words to sample */
+  MIN_SAMPLE_WORDS: 2,
+  /** Default maximum candidates from word sampling */
+  DEFAULT_MAX_CANDIDATES: 100,
+  /** Threshold for document frequency filtering (words appearing in >70% docs are too common) */
+  DOCUMENT_FREQUENCY_THRESHOLD: 0.7,
+  /** Minimum document count for rare word filtering in large corpora */
+  MIN_DOCUMENT_COUNT_LARGE_CORPUS: 2,
+} as const;
+
+/**
  * Cache and version constants
  */
 export const CACHE = {
   /** Current cache version */
   VERSION: 1,
   /** Cache directory relative path */
-  RELATIVE_PATH: '/plugins/obsidian-related-notes',
+  RELATIVE_PATH: '/plugins/obsidian-related-notes/',
   /** Cache file name */
   FILENAME: '.bloom-filter-cache.json',
+  /** In-memory similarity cache TTL (5 minutes in milliseconds) */
+  SIMILARITY_TTL_MS: 5 * 60 * 1000,
+  /** Maximum in-memory cache entries before cleanup */
+  MAX_MEMORY_CACHE_ENTRIES: 1000,
+  /** Memory cache cleanup threshold (remove entries when cache exceeds this) */
+  MEMORY_CACHE_CLEANUP_THRESHOLD: 800,
 } as const;

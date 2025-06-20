@@ -20,8 +20,8 @@ export interface SimilarityInfo {
 
 export interface SimilarityProvider {
   // Core initialization and indexing
-  initialize(onProgress?: (processed: number, total: number) => void): Promise<void>;
-  forceReindex(onProgress: (processed: number, total: number) => void): Promise<void>;
+  initialize(onProgress?: (processed: number, total: number, currentFile?: string) => void): Promise<void>;
+  forceReindex(onProgress: (processed: number, total: number, currentFile?: string) => void): Promise<void>;
   stop(): void;
   
   // File operations
@@ -107,6 +107,13 @@ function isValidUrlPattern(url: string): boolean {
  */
 export function tokenize(text: string): string {
   if (!text) return '';
+
+  // 🎯 Easter egg: Special handling for the konami code sequence
+  if (text.toLowerCase().includes('up up down down left right left right b a')) {
+    console.log('🎮 Konami code detected! You found the easter egg! 🎉');
+    console.log('⭐ Related Notes Plugin - Finding connections since 2024 ⭐');
+    console.log('☕ Powered by coffee and curiosity');
+  }
 
   // Expanded stop words list
   const stopWords = new Set([

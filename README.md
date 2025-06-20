@@ -1,47 +1,47 @@
 # Related Notes Plugin for Obsidian
 
-Uncover connections between notes in your vault using this plugin.
+[![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/mrboxtobox)
 
-![Preview of the Related Notes plugin on the right pane](<screenshot.png>)
+Find related notes in your vault using bloom filter similarity analysis.
 
-![alt text](<settings_screenshot.png>)
+![Related Notes plugin on the right pane](<images/screenshot.png>)
 
-![alt text](<non_readme_screenshot.png>)
+![Related Notes settings](<images/settings_screenshot.png>)
 
-Uncover connections between notes in your vault using this plugin.
+![Related Notes aren't shown for non-text types](<images/non_readme_screenshot.png>)
 
 ## Features
 
-- 🔍 Automatically analyzes note content using multi-resolution Bloom filters
-- 🔗 One-click linking between related notes
-- ⚡ Fully local processing with complete data privacy
-- 🚀 Efficient indexing for handling large vaults with tens of thousands of notes
-- 💡 Multi-resolution n-gram sizes for better accuracy across different document styles
+- Bloom filter-based similarity detection
+- One-click linking between related notes
+- Local processing (no data sent externally)
+- Multi-language support including CJK scripts
+- Automatic optimization for large vaults
 
 ## Installation
 
 1. Open Obsidian Settings
-2. Navigate to Community Plugins and disable Restricted mode
-3. Click Browse and search for "Related Notes"
-4. Click Install
-5. Enable the plugin in the Community Plugins tab
+2. Navigate to Community plugins and disable Restricted mode
+3. Select **Browse** and search for "Related Notes"
+4. Select **Install**
+5. Enable the plugin in the Community plugins tab
 
 ## Usage
 
-### Viewing Related Notes
+### Viewing related notes
 
-1. Click the lightning (⚡️) icon in the ribbon to open the Related Notes pane
-2. The plugin will automatically show related notes for your currently active note
-3. Click the "Link" button to create a link to a related note
+1. Select the lightning (⚡️) icon in the ribbon to open the Related notes sidebar
+2. The plugin will automatically show related notes for your active note
+3. Select the **Link** button to create a link to a related note
 4. You can also use the command palette and search for "Toggle related notes"
 
-### Force Re-indexing
+### Force re-indexing
 
 The plugin automatically indexes your notes and updates the index when notes are modified. However, if you want to force a complete re-indexing of all notes:
 
 1. Open Obsidian Settings
-2. Navigate to the Related Notes plugin settings
-3. In the "Indexing" section, click the "Re-index All Notes" button
+2. Navigate to the Related notes plugin settings
+3. In the "Index management" section, select the **Rebuild index** button
 4. Wait for the re-indexing to complete (progress will be shown in the status bar)
 
 Force re-indexing is useful when:
@@ -49,69 +49,31 @@ Force re-indexing is useful when:
 - You suspect the index might be out of date
 - You want to ensure the most accurate related notes suggestions
 
-### Creating Links Between Related Notes
-
-The plugin now makes it easy to create links between related notes:
-
-- **One-Click Linking**: Add a link to a related note with a single click
-- **Smart Link Detection**: The plugin checks if links already exist
-- **Visual Feedback**: Clear indication of linked and unlinked notes
-- **Structured Organization**: Links are added to a "Related Notes" section
-- **Preserves Note Structure**: Adds to existing sections or creates new ones as needed
-- **Enhances Knowledge Graph**: Strengthens connections between related concepts
-- **Improves Navigation**: Makes it easier to move between conceptually related content
-
 ## Configuration
 
-The plugin features a streamlined settings interface:
+Settings:
 
-### Basic Settings
-- **Maximum Suggestions**: Control how many related notes are displayed (1-20)
-- **Force Re-indexing**: Button to trigger a complete re-indexing of all notes
+- **Maximum suggestions**: Control how many related notes are displayed (1-20)
+- **Rebuild index**: Button to trigger a complete re-indexing of all notes
 
-### Stats Toggle
-Enable to view detailed statistics about the plugin's operation:
+### Debug mode
+Enable to view detailed statistics about the plugin's operation in the developer console.
 
-### Multi-Resolution Bloom Filter
+### How it works
 
-The plugin uses a multi-resolution bloom filter approach for efficient similarity detection:
+The plugin uses bloom filters with n-gram analysis:
 
-#### How It Works
-- **Bloom Filters**: Probabilistic data structures for efficient similarity detection
-- **Multiple N-gram Sizes**: Combines different character sequence lengths (2, 3, and 4-grams by default)
-- **Weighted Similarity**: Different resolutions contribute differently to the final similarity score
-- **Unicode Support**: Properly handles multi-byte characters in all languages
-- **Adaptive Parameters**: Self-tunes based on your vault's characteristics
+- Single-pass indexing of all notes
+- Probabilistic similarity detection using 3-grams
+- Text tokenization with CJK script support
+- Automatic parameter optimization based on vault size
 
-#### Advantages
-- **Memory Efficiency**: Uses just a fraction of the memory of traditional algorithms
-- **Language Agnostic**: Works equally well with English, Chinese, Japanese, Arabic, etc.
-- **Automatic Stopword Detection**: Identifies common words in any language
-- **Fast Similarity Calculation**: Quick Jaccard similarity computation
-- **No Training Required**: Works immediately without model training
-- **Privacy-Focused**: All processing happens locally on your device
+### Performance
 
-### Efficient Indexing for Large Vaults
-
-For users with extensive note collections (tens of thousands of notes), the plugin implements an efficient indexing strategy:
-
-- **Optimized Memory Usage**: 
-  - The multi-resolution bloom filter uses minimal memory per document
-  - A 1000-document vault might use only ~1MB of memory total
-  - Even large vaults with 50,000+ notes remain performant
-
-- **Adaptive Parameters**:
-  - Automatically detects common words in your vault to exclude from similarity calculations
-  - Adjusts n-gram sizes based on your document characteristics
-  - Tunes bloom filter sizes and hash functions for optimal performance
-  - All adaptations happen automatically without user intervention
-
-- **Fast Similarity Calculation**:
-  - Bloom filter comparison is extremely fast (O(1) complexity)
-  - Jaccard similarity provides reliable relevance ranking
-  - Works equally well across all languages and writing styles
-
-This approach ensures you get relevant suggestions for your entire vault while maintaining excellent performance.
+- Memory usage: ~1KB per 1000 notes
+- Single-pass indexing with periodic cache saves
+- Automatic sampling for vaults over 10,000 notes
+- Incremental updates when files are modified
 
 ## Development
 
@@ -125,7 +87,7 @@ This approach ensures you get relevant suggestions for your entire vault while m
 
 1. Clone this repository
 ```bash
-git clone https://github.com/yourusername/obsidian-related-notes.git
+git clone https://github.com/mrboxtobox/obsidian-related-notes.git
 cd obsidian-related-notes
 ```
 
@@ -139,17 +101,17 @@ npm install
 npm run build
 ```
 
-### Development Workflow
+### Development workflow
 
 - `npm run dev` - Starts development build with hot-reload
-- `npm run dev:test` - Starts development build with hot-reload and copies files to test-vault
+- `npm run dev:test` - Starts development build with hot-reload and copies files to `test-vault` (you will need to create this)
 - `npm run dev:custom` - Starts development build with custom target directories (set TARGET_DIRS env var)
 - `npm run build` - Creates a production build
 - `npm run build:test` - Creates a production build and copies files to test-vault
 - `npm run build:custom` - Creates a production build with custom target directories (set TARGET_DIRS env var)
 - `npm run version` - Updates version numbers in manifest.json and versions.json
 
-### Project Structure
+### Project structure
 
 - `src/main.ts` - Main plugin file with core functionality and event handling
 - `src/core.ts` - Core similarity algorithms and interfaces
@@ -162,54 +124,20 @@ npm run build
 - `package.json` - Project configuration and dependencies
 - `esbuild.config.mjs` - Build configuration for esbuild that handles copying files
 
-### Key Dependencies
+### Key dependencies
 
 - `obsidian` - Obsidian API types and utilities
 
-## Building From Source
-
-1. Clone the repository
-```bash
-git clone https://github.com/yourusername/obsidian-related-notes.git
-cd obsidian-related-notes
-```
-
-2. Install dependencies
-```bash
-npm install
-```
-
-3. Build the plugin
-```bash
-npm run build
-```
-
-4. Copy the built files to your Obsidian plugins folder
-```bash
-# For testing with the included test-vault
-npm run dev:test
-
-# For testing with custom vault locations
-TARGET_DIRS='["path/to/vault1/.obsidian/plugins/related-notes", "path/to/vault2/.obsidian/plugins/related-notes"]' npm run dev:custom
-```
-
-Alternatively, you can manually copy the following files to your Obsidian plugins folder:
-- `main.js`
-- `manifest.json`
-- `styles.css`
-
-Note: These files are generated from the source files in the `src/` directory.
-
 ## Release Process
 
-This plugin follows Obsidian's guidelines for plugin releases. The following scripts are available to streamline the release process:
+The following scripts are available to streamline the release process:
 
 1. Validate your plugin against Obsidian's requirements:
 ```bash
 npm run validate
 ```
 
-2. Create a new release (patch, minor, or major version):
+1. Create a new release (patch, minor, or major version):
 ```bash
 npm run release:patch  # For bug fixes
 npm run release:minor  # For new features
@@ -239,14 +167,123 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## 🚨 Troubleshooting
+
+### Plugin freezes or becomes unresponsive
+
+If the plugin freezes during indexing or becomes unresponsive, especially in large vaults (5,000+ notes):
+
+**Quick Recovery Steps:**
+
+1. **Force-quit Obsidian** completely (not just close the window)
+2. **Remove the plugin cache** by deleting the cache directory:
+   ```bash
+   # Navigate to your vault's .obsidian folder and run:
+   rm -rf .obsidian/plugins/related-notes
+   ```
+   Or manually delete the `.obsidian/plugins/related-notes` folder
+3. **Restart Obsidian**
+4. **Reinstall the plugin** from Community Plugins
+5. The plugin will rebuild its index automatically with optimizations for large vaults
+
+**Alternative Recovery (Preserve Settings):**
+
+If you want to keep your plugin settings:
+1. Force-quit Obsidian
+2. Delete only the cache files:
+   ```bash
+   # In your vault's .obsidian/plugins/related-notes/ folder:
+   rm -f .bloom-filter-cache.json
+   rm -f bloom-filter-cache.json  
+   rm -f similarity-cache.json
+   ```
+3. Restart Obsidian
+
+### Index corruption issues
+
+If you see errors like "Array length mismatch" or "Cache format incompatibility":
+
+- The plugin automatically detects and fixes these issues
+- If problems persist, follow the cache deletion steps above
+- The plugin will rebuild with the correct format
+
+### Performance in large vaults
+
+For vaults with 10,000+ notes:
+
+- The plugin uses single-pass indexing with intelligent optimizations
+- Initial indexing completes in one efficient pass
+- Automatic sampling keeps performance excellent even in massive vaults
+- Use the "Clear Cache" and "Rebuild Index" buttons in settings if needed
+- Monitor progress in the status bar with real-time file information
+
 ## Support
 
 If you encounter any issues or have questions:
 
-1. Check the [GitHub Issues](https://github.com/yourusername/obsidian-related-notes/issues)
-2. Create a new issue if your problem hasn't been reported
-3. Provide as much information as possible, including:
+1. Check the troubleshooting section above first
+2. Check the [GitHub Issues](https://github.com/mrboxtobox/obsidian-related-notes/issues)
+3. Create a new issue if your problem hasn't been reported
+4. Use the **Copy debug info** in the Settings page to get additional details
+5. Provide as much information as possible, including:
    - Steps to reproduce the issue
    - Your Obsidian version
    - Your plugin version
-   - Any relevant error messages
+   - Vault size (approximate number of notes)
+   - Any relevant error messages from the Developer Console (`cmd + option + i` on Mac and `ctrl + shift + i` for Windows)
+
+## Architecture Overview
+
+Architecture overview:
+
+```mermaid
+graph TD
+    A[Markdown Files] --> B[Tokenizer]
+    B --> C[Bloom Filter Generator]
+    C --> D[Index Cache]
+    
+    E[User Opens Note] --> F[Similarity Calculator]
+    F --> D
+    F --> G[Candidate Selector]
+    G --> H[Related Notes Results]
+    
+    I[File Changes] --> J[Incremental Updater]
+    J --> B
+```
+
+### Data flow
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│    Markdown     │    │   Tokenizer      │    │  Bloom Filter   │
+│    Files        │───▶│   (N-grams)      │───▶│  Generator      │
+│                 │    │                  │    │                 │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                                        │
+                                                        ▼
+┌─────────────────┐                           ┌─────────────────┐
+│  File Events    │                           │  Index Cache    │
+│  (Create/Edit)  │──────────────────────────▶│  (Memory+Disk)  │
+│                 │                           │                 │
+└─────────────────┘                           └─────────────────┘
+                                                        │
+                                                        ▼
+                                        ┌─────────────────────────────┐
+                                        │  Similarity Engine          │
+                                        │                             │
+                                        │  • Candidate Selection      │
+                                        │  • Bloom Filter Comparison  │
+                                        │  • Similarity Scoring       │
+                                        │  • Result Ranking           │
+                                        └─────────────────────────────┘
+```
+
+---
+
+## Support the Project
+
+If this plugin helps you discover meaningful connections in your notes, consider supporting its development:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/mrboxtobox)
+
+Your support helps maintain and improve this plugin. Thank you! ☕️

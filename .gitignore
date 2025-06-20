@@ -15,6 +15,12 @@ main.js
 # Exclude sourcemaps
 *.map
 
+# Build artifacts
+build/
+
+# Claude settings
+.claude
+
 # obsidian
 data.json
 # Similarity cache

@@ -39,31 +39,31 @@ function validateManifest() {
   try {
     const manifestPath = path.join(rootDir, 'src', 'manifest.json');
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    
+
     // Check description length (250 char max)
     if (manifest.description.length > 250) {
       console.error(`Error: Description too long (${manifest.description.length} chars). Max 250 chars.`);
       process.exit(1);
     }
-    
+
     // Check description ends with period
     if (!manifest.description.endsWith('.')) {
       console.error('Error: Description must end with a period.');
       process.exit(1);
     }
-    
+
     // Check minAppVersion is set
     if (!manifest.minAppVersion) {
       console.error('Error: minAppVersion must be set in manifest.json');
       process.exit(1);
     }
-    
+
     // Check id format
     if (!/^[a-z0-9-]+$/.test(manifest.id)) {
       console.error('Error: Plugin ID must contain only lowercase letters, numbers, and hyphens.');
       process.exit(1);
     }
-    
+
     console.log('✅ Manifest validation passed');
   } catch (error) {
     console.error('Error validating manifest:', error.message);
@@ -76,10 +76,10 @@ function bumpVersion(releaseType) {
   try {
     console.log(`Bumping ${releaseType} version...`);
     execSync(`npm version ${releaseType} --no-git-tag-version`);
-    
+
     // Run the existing version bump script to update manifest.json and versions.json
     execSync('npm run version');
-    
+
     // Get the new version from package.json
     const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
     const newVersion = packageJson.version;
@@ -97,11 +97,11 @@ function createAndPushTag(version) {
     // Commit the version changes
     execSync('git add package.json src/manifest.json manifest.json versions.json');
     execSync(`git commit -m "Release version ${version}"`);
-    
+
     // Create tag
     console.log(`Creating git tag ${version}...`);
     execSync(`git tag ${version}`);
-    
+
     // Push commit and tag
     console.log('Pushing to remote...');
     execSync('git push');
@@ -122,25 +122,25 @@ function release() {
     console.error('Usage: node scripts/release.mjs <patch|minor|major>');
     process.exit(1);
   }
-  
+
   console.log('Starting release process...');
-  
+
   // Check git status
   checkGitStatus();
-  
+
   // Validate manifest.json
   validateManifest();
-  
+
   // Bump version
   const newVersion = bumpVersion(releaseType);
-  
+
   // Create and push git tag
   createAndPushTag(newVersion);
-  
+
   console.log(`
 ✨ Release ${newVersion} complete! ✨
 GitHub Actions will now create the release.
-Check the status at: https://github.com/yourusername/obsidian-related-notes/actions
+Check the status at: https://github.com/mrboxtobox/obsidian-related-notes/actions
 `);
 }
 
