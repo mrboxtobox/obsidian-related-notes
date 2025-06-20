@@ -925,7 +925,8 @@ export default class RelatedNotesPlugin extends Plugin {
     }
 
     // Get the number of indexed files
-    const indexedCount = this.similarityProvider.size ? this.similarityProvider.size() : 0;
+    const stats = this.similarityProvider.getStats();
+    const indexedCount = typeof stats.documentsProcessed === 'number' ? stats.documentsProcessed : 0;
     const totalFiles = this.app.vault.getMarkdownFiles().length;
 
     if (indexedCount > 0) {
