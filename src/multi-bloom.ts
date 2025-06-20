@@ -81,6 +81,7 @@ export class SingleBloomFilter {
     hashFunctions?: number[]
   ) {
     // Keep the array for backward compatibility, but we only use first value
+    // TODO(olu): Clean this up.
     this.ngramSizes = ngramSizes;
 
     // Use adaptive bloom filter size - smaller for better performance in large vaults
@@ -89,10 +90,6 @@ export class SingleBloomFilter {
 
     // Create single bloom filter
     this.filter = new BloomFilter(this.bloomSize, this.hashFunctionCount);
-
-    if (isDebugMode()) {
-      // Bloom filter created with optimized parameters
-    }
   }
 
   /**
@@ -153,7 +150,6 @@ export class SingleBloomFilter {
    */
   private extractWords(text: string): Set<string> {
     // Use the tokenize function to normalize text
-    // The tokenize function now handles CJK scripts properly
     const processed = tokenize(text);
 
     // Split into words/tokens
@@ -256,15 +252,6 @@ export class AdaptiveParameterCalculator {
    * @returns Array of recommended n-gram sizes
    */
   calculateOptimalNgramSizes(): number[] {
-    if (this.documentsAnalyzed < 10) {
-      // Default n-gram size for small corpora - using a single size for simplicity
-      return [3];
-    }
-
-    // Calculate average word length
-    const avgWordLength = this.averageDocLength > 0 ?
-      this.averageDocLength / this.averageVocabularySize : 5;
-
     // Always use a single n-gram size for simplicity regardless of word length
     return [3];
   }
@@ -280,22 +267,6 @@ export class AdaptiveParameterCalculator {
     const isLargeCorpus = this.documentsAnalyzed > WORD_FILTERING.LARGE_VAULT_THRESHOLD;
     const fixedSize = isLargeCorpus ? BLOOM_FILTER.LARGE_VAULT_FILTER_SIZE : BLOOM_FILTER.DEFAULT_FILTER_SIZE;
     return ngramSizes.map(() => fixedSize);
-
-    /* Original adaptive code commented out for reference:
-    if (this.documentsAnalyzed < 10) {
-      // Default bloom filter sizes for small corpora
-      return ngramSizes.map(() => 256);
-    }
-
-    // Estimate number of n-grams for each size
-    return ngramSizes.map(ngramSize => {
-      // Estimate number of unique n-grams based on vocabulary size and n-gram size
-      // This is a heuristic approximation
-      const estimatedNgrams = Math.ceil(this.averageVocabularySize * Math.pow(1.5, ngramSize - 1));
-      // Calculate optimal bloom filter size
-      return calculateOptimalBloomSize(estimatedNgrams, falsePositiveRate);
-    });
-    */
   }
 
   /**
@@ -321,31 +292,6 @@ export class AdaptiveParameterCalculator {
    */
   calculateOptimalSimilarityThreshold(): number {
     return 0.15;
-
-    if (this.documentsAnalyzed < 10) {
-      // Default threshold for small corpora - lowered to find more matches
-      return 0.15;
-    }
-
-    // Calculate coefficient of variation for document lengths
-    const meanDocLength = this.averageDocLength;
-    const variance = this.documentLengths.reduce(
-      (sum, len) => sum + Math.pow(len - meanDocLength, 2), 0
-    ) / this.documentsAnalyzed;
-    const stdDev = Math.sqrt(variance);
-    const cv = stdDev / meanDocLength;
-
-    // Adjust threshold based on corpus homogeneity - lowered all thresholds
-    if (cv < 0.3) {
-      // Very homogeneous corpus: higher threshold
-      return 0.25;
-    } else if (cv < 0.6) {
-      // Moderately varied corpus: medium threshold
-      return 0.15;
-    } else {
-      // Highly varied corpus: lower threshold
-      return 0.1;
-    }
   }
 
   /**
@@ -582,11 +528,11 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
             // Read and process document
             const content = await this.vault.cachedRead(file);
-            
+
             // Extract title from the file path and add it to the content for improved matching
             const fileName = file.basename;
             const enhancedContent = `${fileName} ${content}`;
-            
+
             await this.processDocument(file.path, enhancedContent);
             processedCount++;
 

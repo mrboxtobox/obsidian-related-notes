@@ -72,7 +72,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     const vault = this.app.vault;
     const files = vault.getMarkdownFiles();
     const stats = this.plugin.similarityProvider?.getStats?.();
-    
+
     const debugInfo = {
       timestamp: new Date().toISOString(),
       plugin: {
@@ -116,13 +116,11 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl('h2', { text: 'Related Notes Settings' });
-    
-    // === BASIC SETTINGS ===
-    containerEl.createEl('h3', { text: 'Basic Settings' });
 
+    // === BASIC SETTINGS ===
     new Setting(containerEl)
       .setName('Maximum suggestions')
-      .setDesc('Maximum number of related notes to display (1-20)')
+      .setDesc('Maximum number of related notes to display (1–20).')
       .addSlider(slider => slider
         .setLimits(1, 20, 1)
         .setValue(this.plugin.settings.maxSuggestions)
@@ -133,8 +131,6 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         }));
 
     // === INDEX MANAGEMENT ===
-    containerEl.createEl('h3', { text: 'Index Management' });
-
     const reindexSetting = new Setting(containerEl)
       .setName('Rebuild index')
       .setDesc('Update the index if related notes suggestions seem out of date.');
@@ -144,7 +140,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
       .setDesc('Remove all cached data and start fresh. Use this if you encounter issues.');
 
     // Add the clear cache button
-    const clearCacheButton = clearCacheSetting.addButton(button =>
+    clearCacheSetting.addButton(button =>
       button
         .setButtonText('Clear cache')
         .setCta()
@@ -269,8 +265,6 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
     });
 
     // === DEBUG & TROUBLESHOOTING ===
-    containerEl.createEl('h3', { text: 'Debug & Troubleshooting' });
-
     new Setting(containerEl)
       .setName('Debug mode')
       .setDesc('Enable debug logging to the console. Useful for troubleshooting but may impact performance.')
@@ -287,34 +281,20 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           }
         }));
 
-    // Report a bug section with comprehensive instructions
+    // Report a bug button
     new Setting(containerEl)
       .setName('Report a bug')
-      .setDesc('Having issues? Follow these steps to get help:')
-      .setClass('related-notes-bug-report');
-    
-    const bugReportEl = containerEl.createEl('div', { cls: 'related-notes-bug-report-content' });
-    bugReportEl.createEl('p', { 
-      text: '1. Try the troubleshooting steps in the README first'
-    });
-    bugReportEl.createEl('p', { 
-      text: '2. Copy the debug info below when reporting issues'
-    });
-    bugReportEl.createEl('p', { 
-      text: '3. Check existing issues on GitHub before creating a new one'
-    });
-    
-    const githubLink = bugReportEl.createEl('a', {
-      text: '→ Open GitHub Issues',
-      href: 'https://github.com/oluwasanyaawe/obsidian-related-notes/issues'
-    });
-    githubLink.setAttribute('target', '_blank');
-    githubLink.setAttribute('rel', 'noopener noreferrer');
+      .setDesc('Open GitHub issues page to report bugs or request features')
+      .addButton(button => button
+        .setButtonText('Report a bug ↗')
+        .setCta()
+        .onClick(() => {
+          window.open('https://github.com/mrboxtobox/obsidian-related-notes/issues', '_blank');
+        }));
 
-    // Copy exhaustive debug info button (moved to bottom as requested)
     new Setting(containerEl)
-      .setName('Copy exhaustive debug info')
-      .setDesc('Copy comprehensive debug information to clipboard for bug reports. No personal data included.')
+      .setName('Copy debug info')
+      .setDesc('Copy debug information to clipboard for bug reports.')
       .addButton(button => button
         .setButtonText('Copy debug info')
         .setCta()
@@ -322,7 +302,7 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
           try {
             const debugInfo = this.generateDebugInfo();
             await navigator.clipboard.writeText(debugInfo);
-            new Notice('Exhaustive debug info copied to clipboard! Please include this when reporting bugs.');
+            new Notice('Debug info copied to clipboard! Please include this when reporting bugs.');
           } catch (error) {
             console.error('Failed to copy debug info:', error);
             new Notice('Failed to copy debug info. Please try again or check console for details.');
@@ -330,30 +310,11 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         }));
 
     // === SUPPORT THE PROJECT ===
-    containerEl.createEl('h3', { text: 'Support the Project' });
-    
     const supportEl = containerEl.createEl('div', { cls: 'related-notes-support-section' });
-    supportEl.createEl('p', { 
-      text: 'If this plugin helps you discover meaningful connections in your notes, consider supporting its development:' 
+    supportEl.createEl('p', {
+      text: 'If this plugin helps you discover meaningful connections in your notes, consider supporting its development:'
     });
-    
-    const coffeeButton = supportEl.createEl('a', {
-      cls: 'related-notes-coffee-button',
-      href: 'https://buymeacoffee.com/mrboxtobox'
-    });
-    coffeeButton.setAttribute('target', '_blank');
-    coffeeButton.setAttribute('rel', 'noopener noreferrer');
-    
-    const coffeeImg = coffeeButton.createEl('img', {
-      attr: {
-        src: 'https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee',
-        alt: 'Buy Me A Coffee'
-      }
-    });
-    
-    supportEl.createEl('p', { 
-      text: 'Thank you for your support! ☕️',
-      cls: 'related-notes-support-thanks'
-    });
+
+    supportEl.innerHTML = '<div style="text-align: left;"><a href="https://www.buymeacoffee.com/mrboxtobox" target="_blank" rel="noopener noreferrer"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=mrboxtobox&button_colour=5F7FFF&font_colour=ffffff&font_family=Cookie&outline_colour=000000&coffee_colour=FFDD00" /></a></div>';
   }
 }

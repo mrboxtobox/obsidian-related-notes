@@ -1,14 +1,14 @@
 # Related Notes Plugin for Obsidian
 
-[![Tests](https://github.com/mrboxtobox/obsidian-related-notes/workflows/Run%20Tests/badge.svg)](https://github.com/mrboxtobox/obsidian-related-notes/actions)
+[![Buy Me A Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge&logo=buy-me-a-coffee)](https://buymeacoffee.com/mrboxtobox)
 
 Find related notes in your vault using bloom filter similarity analysis.
 
-![Related Notes plugin on the right pane](<screenshot.png>)
+![Related Notes plugin on the right pane](<images/screenshot.png>)
 
-![Related Notes settings](<settings_screenshot.png>)
+![Related Notes settings](<images/settings_screenshot.png>)
 
-![Related Notes aren't shown for non-text types](<non_readme_screenshot.png>)
+![Related Notes aren't shown for non-text types](<images/non_readme_screenshot.png>)
 
 ## Features
 
@@ -53,7 +53,6 @@ Force re-indexing is useful when:
 
 Settings:
 
-### Basic settings
 - **Maximum suggestions**: Control how many related notes are displayed (1-20)
 - **Rebuild index**: Button to trigger a complete re-indexing of all notes
 
@@ -225,12 +224,13 @@ If you encounter any issues or have questions:
 1. Check the troubleshooting section above first
 2. Check the [GitHub Issues](https://github.com/mrboxtobox/obsidian-related-notes/issues)
 3. Create a new issue if your problem hasn't been reported
-4. Provide as much information as possible, including:
+4. Use the **Copy debug info** in the Settings page to get additional details
+5. Provide as much information as possible, including:
    - Steps to reproduce the issue
    - Your Obsidian version
    - Your plugin version
    - Vault size (approximate number of notes)
-   - Any relevant error messages from the Developer Console (Ctrl+Shift+I)
+   - Any relevant error messages from the Developer Console (`cmd + option + i` on Mac and `ctrl + shift + i` for Windows)
 
 ## Architecture Overview
 
@@ -238,55 +238,44 @@ Architecture overview:
 
 ```mermaid
 graph TD
-    A[Note Files] --> B[Single-Pass Indexer]
+    A[Markdown Files] --> B[Tokenizer]
     B --> C[Bloom Filter Generator]
-    C --> D[Memory Cache]
-    D --> E[Persistent Cache]
+    C --> D[Index Cache]
     
-    F[User Opens Note] --> G[Similarity Calculator]
-    G --> D
-    G --> H[Word-based Candidate Selector]
-    H --> I[Related Notes Results]
+    E[User Opens Note] --> F[Similarity Calculator]
+    F --> D
+    F --> G[Candidate Selector]
+    G --> H[Related Notes Results]
     
-    J[File Changes] --> K[Incremental Updater]
-    K --> D
-    
-    subgraph "Optimizations"
-        L[Intelligent Sampling]
-        M[Debounced Processing]
-        N[Adaptive Parameters]
-    end
-    
-    B --> L
-    K --> M
-    C --> N
+    I[File Changes] --> J[Incremental Updater]
+    J --> B
 ```
 
 ### Data flow
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Markdown      │    │   Tokenization   │    │  Bloom Filter   │
-│     Files       │───▶│   & Analysis     │───▶│   Generation    │
+│    Markdown     │    │   Tokenizer      │    │  Bloom Filter   │
+│    Files        │───▶│   (N-grams)      │───▶│  Generator      │
 │                 │    │                  │    │                 │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
-                                ▲                        │
-                                │                        ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   File Events   │    │   Incremental    │    │   Cache Layer   │
-│   (Create/Edit) │───▶│   Processing     │◀───│   (Memory+Disk) │
-│                 │    │                  │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                                         │
-                                                         ▼
-                              ┌─────────────────────────────────────┐
-                              │        Similarity Engine           │
-                              │                                     │
-                              │  • Word-based Candidate Selection  │
-                              │  • Bloom Filter Comparison         │
-                              │  • Jaccard Similarity Scoring      │
-                              │  • Result Ranking & Filtering      │
-                              └─────────────────────────────────────┘
+                                                        │
+                                                        ▼
+┌─────────────────┐                           ┌─────────────────┐
+│  File Events    │                           │  Index Cache    │
+│  (Create/Edit)  │──────────────────────────▶│  (Memory+Disk)  │
+│                 │                           │                 │
+└─────────────────┘                           └─────────────────┘
+                                                        │
+                                                        ▼
+                                        ┌─────────────────────────────┐
+                                        │  Similarity Engine          │
+                                        │                             │
+                                        │  • Candidate Selection      │
+                                        │  • Bloom Filter Comparison  │
+                                        │  • Similarity Scoring       │
+                                        │  • Result Ranking           │
+                                        └─────────────────────────────┘
 ```
 
 ---

@@ -191,11 +191,6 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Register essential components immediately
     this.registerCommands();
-    this.statusBarItem = this.addStatusBarItem();
-    this.statusBarItem?.setText("Initializing");
-    if (this.statusBarItem) {
-      this.statusBarItem.style.display = 'block';
-    }
 
     // Add settings tab
     this.addSettingTab(new RelatedNotesSettingTab(this.app, this));
@@ -263,6 +258,7 @@ export default class RelatedNotesPlugin extends Plugin {
     const isLargeVault = totalFiles > WORD_FILTERING.LARGE_VAULT_THRESHOLD;
     const defaultSize = isLargeVault ? BLOOM_FILTER.LARGE_VAULT_FILTER_SIZE : BLOOM_FILTER.DEFAULT_FILTER_SIZE;
     // Make sure all bloom filters have the exact same size to prevent comparison issues
+    // TODO(olu): Figure out why we're seeing file size mismatches.
     const bloomSizes = this.settings.ngramSizes.map(() => defaultSize);
 
     // Set default weights to ensure valid comparisons (all weights = 1.0)
@@ -319,7 +315,7 @@ export default class RelatedNotesPlugin extends Plugin {
   }
 
   private lastStatusUpdate = 0;
-  private readonly STATUS_UPDATE_THROTTLE = 500; // Update status bar at most every 500ms
+  private readonly STATUS_UPDATE_THROTTLE_MS = 5000; // Update status bar at most every 5ms
 
   private async initializeSimilarityProvider() {
     try {
@@ -328,14 +324,14 @@ export default class RelatedNotesPlugin extends Plugin {
         const now = Date.now();
 
         // Throttle status bar updates to reduce repainting
-        if (now - this.lastStatusUpdate < this.STATUS_UPDATE_THROTTLE && processed < total) {
+        if (now - this.lastStatusUpdate < this.STATUS_UPDATE_THROTTLE_MS && processed < total) {
           return; // Skip this update
         }
 
         this.lastStatusUpdate = now;
         const percentage = Math.round((processed / total) * 100);
         const totalFiles = this.app.vault.getMarkdownFiles().length;
-        const isLargeVault = totalFiles > 5000; // WORD_FILTERING.LARGE_VAULT_THRESHOLD
+        const isLargeVault = totalFiles > WORD_FILTERING.LARGE_VAULT_THRESHOLD;
         let message = "";
         let hoverText = "";
 
@@ -378,7 +374,6 @@ export default class RelatedNotesPlugin extends Plugin {
 
       // Get stats for status bar
       const stats = this.similarityProvider?.getStats();
-      const totalFiles = this.app.vault.getMarkdownFiles().length;
 
       // Check if indexing is still active
       if (stats?.indexing && (stats.indexing as any).currentFile) {
@@ -502,16 +497,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
           const percentage = Math.min(100, Math.round((processed / Math.max(1, total)) * 100));
           let message = "";
-          let phase = "";
-
-          // Simplified phases with minimal text
-          if (percentage <= 33) {
-            phase = "Processing";
-          } else if (percentage <= 66) {
-            phase = "Analyzing";
-          } else {
-            phase = "Indexing";
-          }
+          let phase = "Indexing";
 
           // Simple progress message with percentage (following Obsidian style guide)
           message = `${phase} notes: ${percentage}%`;
@@ -520,7 +506,7 @@ export default class RelatedNotesPlugin extends Plugin {
             const fileName = currentFile.split('/').pop() || currentFile;
             hoverText = `Currently processing: ${fileName}`;
           }
-          
+
           this.statusBarItem?.setText(message);
           this.statusBarItem?.setAttribute('aria-label', hoverText);
           this.statusBarItem?.setAttribute('title', hoverText);
@@ -732,6 +718,7 @@ export default class RelatedNotesPlugin extends Plugin {
 
     // Continue processing if there are more files
     if (this.fileUpdateQueue.size > 0) {
+      // TODO(olu): We will need to bound how many times we recurse here.
       this.processFileQueue();
     } else {
       this.processingQueue = false;
@@ -900,19 +887,6 @@ export default class RelatedNotesPlugin extends Plugin {
 
   private async getRelatedNotes(file: TFile): Promise<Array<RelatedNote>> {
     try {
-      // Get candidates from the similarity provider
-      // Use sampling for large vaults
-      const markdownFiles = this.app.vault.getMarkdownFiles();
-      const totalFiles = markdownFiles.length;
-
-      // Get sampling settings from plugin settings
-      const { enableSampling, sampleSizeThreshold, maxSampleSize } = this.settings;
-
-      // Calculate adaptive sample size if sampling is enabled
-      const sampleSize = enableSampling && totalFiles > sampleSizeThreshold
-        ? Math.min(Math.ceil(totalFiles * 0.2), maxSampleSize)
-        : undefined; // undefined means no sampling
-
       // Get candidates, potentially with sampling
       const candidates = await this.similarityProvider?.getCandidateFiles(file) || [];
 
@@ -952,53 +926,5 @@ export default class RelatedNotesPlugin extends Plugin {
       console.error(`Error getting related notes for ${file.path}:`, error);
     }
     return [];
-  }
-
-  /**
-   * Get recent files from the same folder as the current file
-   */
-  private getRecentFilesFromSameFolder(currentFile: TFile, allFiles: TFile[]): RelatedNote[] {
-    const currentFolder = currentFile.parent?.path || '';
-
-    return allFiles
-      .filter(f => f.path !== currentFile.path && (f.parent?.path || '') === currentFolder)
-      .sort((a, b) => b.stat.mtime - a.stat.mtime)
-      .slice(0, 10)
-      .map(f => ({
-        file: f,
-        similarity: 0.1, // Low but non-zero similarity
-        isPreIndexed: false
-      }));
-  }
-
-  /**
-   * Get recently modified files
-   */
-  private getRecentFiles(allFiles: TFile[], currentFile: TFile): RelatedNote[] {
-    return allFiles
-      .filter(f => f.path !== currentFile.path)
-      .sort((a, b) => b.stat.mtime - a.stat.mtime)
-      .slice(0, 10)
-      .map(f => ({
-        file: f,
-        similarity: 0.05, // Very low but non-zero similarity
-        isPreIndexed: false
-      }));
-  }
-
-  /**
-   * Get random files as last resort
-   */
-  private getRandomFiles(allFiles: TFile[], currentFile: TFile): RelatedNote[] {
-    const otherFiles = allFiles.filter(f => f.path !== currentFile.path);
-    const shuffled = otherFiles.sort(() => Math.random() - 0.5);
-
-    return shuffled
-      .slice(0, 5)
-      .map(f => ({
-        file: f,
-        similarity: 0.01, // Minimal similarity
-        isPreIndexed: false
-      }));
   }
 }

@@ -327,7 +327,6 @@ export class BloomFilterSimilarityProvider {
   private readonly bloomFilterSize: number;
   private readonly hashFunctions: number;
   private readonly documentNgrams = new Map<string, Set<string>>(); // Track n-grams for debugging
-  private readonly config: any;
 
   constructor(
     ngramSize: number = 3,
@@ -338,7 +337,6 @@ export class BloomFilterSimilarityProvider {
     this.ngramSize = ngramSize;
     this.bloomFilterSize = bloomFilterSize;
     this.hashFunctions = hashFunctions;
-    this.config = config;
 
     // Configure adaptive stopwords parameters from config if provided
     if (config.commonWordsThreshold) {
