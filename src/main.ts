@@ -1,4 +1,4 @@
-import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace } from 'obsidian';
+import { Plugin, TFile, MarkdownView, WorkspaceLeaf, Workspace, normalizePath } from 'obsidian';
 import type { RelatedNote, SimilarityProvider } from './core';
 import { RelatedNotesView, RELATED_NOTES_VIEW_TYPE } from './ui';
 import type { RelatedNotesSettings } from './settings';
@@ -132,9 +132,9 @@ export default class RelatedNotesPlugin extends Plugin {
       // Attempt to remove each cache file
       for (const cachePath of cachePaths) {
         try {
-          const exists = await adapter.exists(cachePath);
+          const exists = await adapter.exists(normalizePath(cachePath));
           if (exists) {
-            await adapter.remove(cachePath);
+            await adapter.remove(normalizePath(cachePath));
             // File deleted
           }
         } catch (err) {
@@ -234,7 +234,6 @@ export default class RelatedNotesPlugin extends Plugin {
       const oldCachePaths = [
         `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
         `${configDir}/plugins/obsidian-related-notes/bloom-filter-cache.json`, // Non-hidden version
-        `${configDir}/plugins/obsidian-related-notes/.bloom-filter-cache.json` // Old format that might be incompatible
       ];
 
       // Remove old cache formats but not the current one

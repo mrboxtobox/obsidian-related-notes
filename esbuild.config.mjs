@@ -15,33 +15,33 @@ const prod = process.argv[2] === "production";
 
 // Target directories to copy built files to
 // Empty array by default, can be configured in a .env file or through CLI args
-const targetDirs = process.env.TARGET_DIRS ? 
-  JSON.parse(process.env.TARGET_DIRS) : 
-  ["test-vault/.obsidian/plugins/related-notes"];
+const targetDirs = process.env.TARGET_DIRS ?
+	JSON.parse(process.env.TARGET_DIRS) :
+	["test-vault/.obsidian/plugins/obsidian-related-notes"];
 
 // Copy manifest and styles from src/ to root and target directories
 async function copyFiles() {
-  try {
-    // First copy from src/ to root
-    await fs.promises.copyFile('src/manifest.json', 'manifest.json');
-    await fs.promises.copyFile('src/styles.css', 'styles.css');
-    
-    // Then copy to all target directories if they exist
-    for (const dir of targetDirs) {
-      const targetDir = path.resolve(dir);
-      try {
-        await fs.promises.mkdir(targetDir, { recursive: true });
-        await fs.promises.copyFile('main.js', path.join(targetDir, 'main.js'));
-        await fs.promises.copyFile('src/manifest.json', path.join(targetDir, 'manifest.json'));
-        await fs.promises.copyFile('src/styles.css', path.join(targetDir, 'styles.css'));
-        console.log(`Files copied to ${targetDir}`);
-      } catch (err) {
-        console.error(`Error copying to ${targetDir}:`, err);
-      }
-    }
-  } catch (err) {
-    console.error('Error copying files:', err);
-  }
+	try {
+		// First copy from src/ to root
+		await fs.promises.copyFile('src/manifest.json', 'manifest.json');
+		await fs.promises.copyFile('src/styles.css', 'styles.css');
+
+		// Then copy to all target directories if they exist
+		for (const dir of targetDirs) {
+			const targetDir = path.resolve(dir);
+			try {
+				await fs.promises.mkdir(targetDir, { recursive: true });
+				await fs.promises.copyFile('main.js', path.join(targetDir, 'main.js'));
+				await fs.promises.copyFile('src/manifest.json', path.join(targetDir, 'manifest.json'));
+				await fs.promises.copyFile('src/styles.css', path.join(targetDir, 'styles.css'));
+				console.log(`Files copied to ${targetDir}`);
+			} catch (err) {
+				console.error(`Error copying to ${targetDir}:`, err);
+			}
+		}
+	} catch (err) {
+		console.error('Error copying files:', err);
+	}
 }
 
 const context = await esbuild.context({
@@ -84,19 +84,19 @@ if (prod) {
 } else {
 	await context.rebuild();
 	await copyFiles();
-	
+
 	// Watch for changes
 	context.watch();
-	
+
 	// Set up watchers for the source files
 	fs.watchFile('src/manifest.json', { interval: 1000 }, async () => {
 		await copyFiles();
 	});
-	
+
 	fs.watchFile('src/styles.css', { interval: 1000 }, async () => {
 		await copyFiles();
 	});
-	
+
 	// Watch the main.js file to copy when it changes
 	fs.watchFile('main.js', { interval: 1000 }, async () => {
 		await copyFiles();

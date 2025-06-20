@@ -8,7 +8,7 @@
 import { tokenize, SimilarityProvider, SimilarityInfo } from './core';
 import { BloomFilter } from './bloom';
 import { WordBasedCandidateSelector } from './word-index';
-import { TFile } from 'obsidian';
+import { normalizePath, TFile, Vault } from 'obsidian';
 import { isDebugMode, logIfDebugModeEnabled, logMetrics, logPerformance } from './logging';
 import {
   TEXT_PROCESSING,
@@ -346,7 +346,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   private adaptiveParameters = false;
   private parameterUpdateInterval = BLOOM_FILTER.PARAMETER_UPDATE_INTERVAL; // Reduced from 100 to 50 for faster parameter adaptation
   private documentsProcessed = 0;
-  private vault: any;
+  private vault: Vault;
   private onProgressCallback: ((progress: number) => void) | null = null;
   private stopRequested = false;
   private isInitialized = false;
@@ -458,7 +458,15 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         onProgress(0, totalFiles); // Show that we're starting
       }
 
-      const cachedLoaded = await this.loadFromCache();
+      logIfDebugModeEnabled('Attempting to load from cache...');
+      let cachedLoaded = false;
+      try {
+        cachedLoaded = await this.loadFromCache();
+        logIfDebugModeEnabled(`Cache loading completed, result: ${cachedLoaded}`);
+      } catch (error) {
+        logIfDebugModeEnabled(`Cache loading failed with error: ${error}`);
+        cachedLoaded = false;
+      }
       if (cachedLoaded) {
         logIfDebugModeEnabled(`Index loaded from cache: ${this.bloomFilters.size} documents`);
         this.isInitialized = true;
@@ -1684,12 +1692,12 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       await this.executeFileOperationWithRetry(
         async () => {
           // Remove old cache if it exists
-          const exists = await this.vault.adapter.exists(this.cacheFilePath);
+          const exists = await this.vault.adapter.exists(normalizePath(this.cacheFilePath!));
           if (exists) {
-            await this.vault.adapter.remove(this.cacheFilePath);
+            await this.vault.adapter.remove(normalizePath(this.cacheFilePath!));
           }
           // Copy temp to final location (some adapters don't support rename)
-          await this.vault.adapter.write(this.cacheFilePath, tempContent as string);
+          await this.vault.adapter.write(this.cacheFilePath!, tempContent as string);
           // Remove temp file
           await this.vault.adapter.remove(tempCachePath);
         },
@@ -1718,28 +1726,35 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
   }
 
   /**
-   * Load the bloom filter index from disk cache
+   * Load the bloom filter index from disk cache 
    */
   private async loadFromCache(): Promise<boolean> {
+    logIfDebugModeEnabled(`loadFromCache() called`);
+
     if (!this.cacheFilePath || !this.vault.adapter) {
+      logIfDebugModeEnabled(`Cache loading failed: no cache path (${this.cacheFilePath}) or vault adapter (${!!this.vault.adapter})`)
       // Cannot load cache: no cache path or vault adapter
       return false;
     }
 
+    logIfDebugModeEnabled(`Attempting to load cache from - normalized: ${normalizePath(this.cacheFilePath)}`);
+
     try {
       // Check if cache file exists with retry logic
       const exists = await this.executeFileOperationWithRetry(
-        () => this.vault.adapter.exists(this.cacheFilePath),
+        () => this.vault.adapter.exists(normalizePath(this.cacheFilePath!)),
         'Cache existence check'
       );
       if (!exists) {
-        // Cache file does not exist
+        logIfDebugModeEnabled('Cache file does not exist - will trigger fresh indexing');
         return false;
       }
 
+      logIfDebugModeEnabled('Cache file exists, proceeding to read and parse');
+
       // Read cache file with retry logic
       const cacheData = await this.executeFileOperationWithRetry(
-        () => this.vault.adapter.read(this.cacheFilePath),
+        () => this.vault.adapter.read(this.cacheFilePath!),
         'Cache read operation'
       );
 
@@ -1748,7 +1763,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       try {
         cache = JSON.parse(cacheData as string);
       } catch (error) {
-        // Cache file contains invalid JSON, deleting corrupt cache
+        logIfDebugModeEnabled('Cache file contains invalid JSON, deleting corrupt cache');
         this.deleteCache();
         return false;
       }
@@ -1756,10 +1771,12 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       // Enhanced cache validation
       const validationResult = this.validateCacheStructure(cache);
       if (!validationResult.isValid) {
-        console.error('Cache validation failed:', validationResult.reason);
+        logIfDebugModeEnabled(`Cache validation failed: ${validationResult.reason}`);
         this.deleteCache();
         return false;
       }
+
+      logIfDebugModeEnabled('Cache structure validation passed');
 
       // Validate parameters match - check compatibility
       const params = cache.params;
@@ -1767,14 +1784,14 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       // Check for critical parameter mismatches that would cause errors
       if (!this.areArraysEqual(params.ngramSizes, this.ngramSizes) ||
         !this.areArraysEqual(params.hashFunctions, this.hashFunctions)) {
-        logIfDebugModeEnabled('Cache parameter mismatch detected, will rebuild index');
+        logIfDebugModeEnabled(`Cache parameter mismatch detected: ngramSizes cache=[${params.ngramSizes}] vs current=[${this.ngramSizes}], hashFunctions cache=[${params.hashFunctions}] vs current=[${this.hashFunctions}]`);
         this.deleteCache(); // Delete the incompatible cache file
         return false;
       }
 
       // Check for bloom size mismatches (less critical, but can cause errors)
       if (params.bloomSizes && !this.areArraysEqual(params.bloomSizes, this.bloomSizes)) {
-        logIfDebugModeEnabled('Bloom filter size mismatch detected, will rebuild index');
+        logIfDebugModeEnabled(`Bloom filter size mismatch detected: cache=[${params.bloomSizes}] vs current=[${this.bloomSizes}]`);
         this.deleteCache(); // Delete the incompatible cache file
         return false;
       }
@@ -1907,6 +1924,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         }
       }
 
+      logIfDebugModeEnabled(`Finished processing cache entries: ${loadedCount} loaded, ${invalidEntryCount} invalid, ${documentsToRemove.length} to remove`);
+
       // Remove invalid entries from cache to prevent future issues
       if (documentsToRemove.length > 0) {
         console.info(`Removing ${documentsToRemove.length} invalid cache entries`);
@@ -1926,7 +1945,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       // Repopulate word candidate selector if word-based candidates are enabled
       if (this.useWordBasedCandidates && loadedCount > 0) {
         logIfDebugModeEnabled('Repopulating word candidate selector from cached documents');
-        
+
         // We need to re-process documents to rebuild the word index
         // This is necessary because the word index isn't cached separately
         let reprocessed = 0;
@@ -1938,7 +1957,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
               const content = await this.vault.cachedRead(file);
               const fileName = file.basename;
               const enhancedContent = `${fileName} ${content}`;
-              
+
               // Add to word candidate selector (but not to bloom filters since they're already loaded)
               this.wordCandidateSelector.addDocument(docId, enhancedContent);
               reprocessed++;
@@ -1947,13 +1966,19 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
             logIfDebugModeEnabled(`Error repopulating word index for ${docId}: ${error}`);
           }
         }
-        
+
         logIfDebugModeEnabled(`Repopulated word candidate selector with ${reprocessed} documents`);
       }
 
       // Successfully loaded bloom filters from cache
       this.cacheDirty = false;
       this.cacheReady = true;
+
+      logIfDebugModeEnabled(`Cache loading result: ${loadedCount} documents loaded, returning ${loadedCount > 0}`);
+      if (loadedCount === 0) {
+        logIfDebugModeEnabled('Cache loaded but no documents found - this will trigger fresh indexing');
+      }
+
       return loadedCount > 0;
     } catch (error) {
       console.error('Error loading bloom filter cache:', error);
@@ -1991,8 +2016,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       throw new Error('Config directory path is invalid or not provided');
     }
 
-    // Remove any trailing slashes for consistency
-    const normalizedPath = configDir.replace(/\/+$/, '');
+    // Use Obsidian's normalizePath function for proper path normalization
+    const normalizedPath = normalizePath(configDir);
 
     // Basic path validation - check for suspicious patterns
     if (normalizedPath.includes('..') || normalizedPath.includes('//')) {
@@ -2020,7 +2045,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       const cacheDir = this.cacheFilePath.substring(0, this.cacheFilePath.lastIndexOf('/'));
 
       // Check if directory exists
-      const dirExists = await this.vault.adapter.exists(cacheDir);
+      const dirExists = await this.vault.adapter.exists(normalizePath(cacheDir!));
       if (!dirExists) {
         // Try to create the directory
         await this.vault.adapter.mkdir(cacheDir);
@@ -2217,13 +2242,13 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     try {
       // Check if cache file exists with retry logic
       const exists = await this.executeFileOperationWithRetry(
-        () => this.vault.adapter.exists(this.cacheFilePath),
+        () => this.vault.adapter.exists(normalizePath(this.cacheFilePath!)),
         'Cache deletion check'
       );
       if (exists) {
         // Delete the file with retry logic
         await this.executeFileOperationWithRetry(
-          () => this.vault.adapter.remove(this.cacheFilePath),
+          () => this.vault.adapter.remove(normalizePath(this.cacheFilePath!)),
           'Cache deletion operation'
         );
         // Deleted invalid cache file
