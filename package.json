@@ -35,13 +35,13 @@
 		"@types/node": "^20.11.17",
 		"@typescript-eslint/eslint-plugin": "^7.0.1",
 		"@typescript-eslint/parser": "^7.0.1",
-		"@vitest/ui": "^1.6.1",
+		"@vitest/ui": "^3.2.4",
 		"builtin-modules": "^3.3.0",
-		"esbuild": "^0.19.12",
+		"esbuild": "^0.25.5",
 		"eslint": "^8.57.0",
 		"obsidian": "latest",
 		"tslib": "^2.6.2",
 		"typescript": "^5.3.3",
-		"vitest": "^1.6.1"
+		"vitest": "^3.2.4"
 	}
 }
