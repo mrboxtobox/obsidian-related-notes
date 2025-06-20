@@ -9,6 +9,7 @@ import {
   calculateOptimalBloomSize,
   calculateOptimalHashFunctions
 } from '../src/multi-bloom';
+import { WordBasedCandidateSelector } from '../src/word-index';
 
 describe('Optimal Size Calculations', () => {
   describe('calculateOptimalBloomSize', () => {
@@ -357,6 +358,194 @@ describe('MultiResolutionBloomFilterProvider', () => {
       
       // Should not be marked as initialized
       expect((testProvider as any).isInitialized).toBe(false);
+    });
+    
+    it('should not reindex when valid cache exists', async () => {
+      // Create a mock vault with cache that will be considered valid
+      const mockVault = {
+        getMarkdownFiles: () => [],
+        adapter: {
+          exists: (path: string) => Promise.resolve(path.includes('.bloom-filter-cache.json')),
+          read: (path: string) => Promise.resolve(JSON.stringify({
+            version: 1, // Current cache version
+            timestamp: Date.now(), // Fresh timestamp
+            params: {
+              ngramSizes: [3],
+              bloomSizes: [2048],
+              hashFunctions: [3],
+              similarityThreshold: 0.1
+            },
+            stats: {
+              documentCount: 0,
+              commonWordsComputed: false,
+              commonWordsCount: 0,
+              totalDocuments: 0
+            },
+            filters: {}, // Empty but valid structure
+            commonWords: []
+          })),
+          write: () => Promise.resolve(),
+          mkdir: () => Promise.resolve(),
+          remove: () => Promise.resolve(),
+        },
+        configDir: '/mock/config'
+      } as any;
+      
+      // Create a spy to track if documents are processed
+      let documentsProcessed = 0;
+      const originalProcessDocument = MultiResolutionBloomFilterProvider.prototype.processDocument;
+      
+      // Mock processDocument to track calls
+      MultiResolutionBloomFilterProvider.prototype.processDocument = async function(docId: string, content: string) {
+        documentsProcessed++;
+        return await originalProcessDocument.call(this, docId, content);
+      };
+      
+      try {
+        const testProvider = new MultiResolutionBloomFilterProvider(mockVault, {
+          ngramSizes: [3],
+          bloomSizes: [2048],
+          hashFunctions: [3],
+          similarityThreshold: 0.1
+        });
+        
+        // Initialize should load from cache without reindexing
+        await testProvider.initialize();
+        
+        // Verify no documents were processed (no reindexing)
+        expect(documentsProcessed).toBe(0);
+        
+        // Verify it's considered initialized
+        expect((testProvider as any).isInitialized).toBe(true);
+      } finally {
+        // Restore original method
+        MultiResolutionBloomFilterProvider.prototype.processDocument = originalProcessDocument;
+      }
+    });
+
+    it('should simulate restart scenario and not reindex when cache exists', async () => {
+      // Simulate a vault with some files and a saved cache
+      const mockFiles = [
+        { path: 'note1.md', basename: 'note1' },
+        { path: 'note2.md', basename: 'note2' },
+        { path: 'note3.md', basename: 'note3' }
+      ];
+
+      // Simulate cache with actual document data
+      const savedCache = {
+        version: 1,
+        timestamp: Date.now(),
+        params: {
+          ngramSizes: [3],
+          bloomSizes: [2048],
+          hashFunctions: [3],
+          similarityThreshold: 0.1
+        },
+        stats: {
+          documentCount: 3,
+          commonWordsComputed: true,
+          commonWordsCount: 5,
+          totalDocuments: 3
+        },
+        filters: {
+          'note1.md': {
+            ngramSizes: [3],
+            'bloom_3': new Array(64).fill(0) // 2048 bits / 32 = 64 elements
+          },
+          'note2.md': {
+            ngramSizes: [3],
+            'bloom_3': new Array(64).fill(0)
+          },
+          'note3.md': {
+            ngramSizes: [3],
+            'bloom_3': new Array(64).fill(0)
+          }
+        },
+        commonWords: ['the', 'and', 'to', 'of', 'a']
+      };
+
+      const mockVault = {
+        getMarkdownFiles: () => mockFiles,
+        cachedRead: (file: any) => Promise.resolve(`Content of ${file.path}`),
+        adapter: {
+          exists: (path: string) => Promise.resolve(path.includes('.bloom-filter-cache.json')),
+          read: (path: string) => Promise.resolve(JSON.stringify(savedCache)),
+          write: () => Promise.resolve(),
+          mkdir: () => Promise.resolve(),
+          remove: () => Promise.resolve(),
+        },
+        configDir: '/mock/config'
+      } as any;
+
+      // Track if any documents are freshly processed
+      let freshIndexingCount = 0;
+      let cacheRepopulationCount = 0;
+      
+      const originalProcessDocument = MultiResolutionBloomFilterProvider.prototype.processDocument;
+      MultiResolutionBloomFilterProvider.prototype.processDocument = async function(docId: string, content: string) {
+        freshIndexingCount++;
+        return await originalProcessDocument.call(this, docId, content);
+      };
+
+      // Track word candidate selector calls to distinguish cache repopulation from fresh indexing
+      const originalAddDocument = WordBasedCandidateSelector.prototype.addDocument;
+      WordBasedCandidateSelector.prototype.addDocument = function(docPath: string, text: string) {
+        cacheRepopulationCount++;
+        return originalAddDocument.call(this, docPath, text);
+      };
+
+      try {
+        // First session: create provider and initialize
+        const provider1 = new MultiResolutionBloomFilterProvider(mockVault, {
+          ngramSizes: [3],
+          bloomSizes: [2048],
+          hashFunctions: [3],
+          similarityThreshold: 0.1,
+          useWordBasedCandidates: true
+        });
+
+        await provider1.initialize();
+
+        // Should load from cache, so no fresh indexing
+        expect(freshIndexingCount).toBe(0);
+        expect((provider1 as any).isInitialized).toBe(true);
+        expect((provider1 as any).bloomFilters.size).toBe(3);
+
+        // Word candidate selector should be repopulated from cache (this is expected)
+        expect(cacheRepopulationCount).toBe(3); // One call per cached document
+
+        // Reset counters for restart simulation
+        freshIndexingCount = 0;
+        cacheRepopulationCount = 0;
+
+        // Second session: simulate Obsidian restart - create new provider instance
+        const provider2 = new MultiResolutionBloomFilterProvider(mockVault, {
+          ngramSizes: [3],
+          bloomSizes: [2048],
+          hashFunctions: [3],
+          similarityThreshold: 0.1,
+          useWordBasedCandidates: true
+        });
+
+        await provider2.initialize();
+
+        // Should still load from cache on restart, no fresh indexing
+        expect(freshIndexingCount).toBe(0);
+        expect((provider2 as any).isInitialized).toBe(true);
+        expect((provider2 as any).bloomFilters.size).toBe(3);
+
+        // Word candidate selector repopulated again (expected on restart)
+        expect(cacheRepopulationCount).toBe(3);
+
+        // Verify provider loaded the documents from cache (not freshly processed)
+        const stats = provider2.getStats();
+        expect(stats.documentsProcessed).toBe(0); // Should be 0 because documents were loaded from cache, not processed
+        
+      } finally {
+        // Restore original methods
+        MultiResolutionBloomFilterProvider.prototype.processDocument = originalProcessDocument;
+        WordBasedCandidateSelector.prototype.addDocument = originalAddDocument;
+      }
     });
   });
 
