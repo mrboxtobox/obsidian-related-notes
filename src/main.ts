@@ -123,8 +123,12 @@ export default class RelatedNotesPlugin extends Plugin {
       // Define all potential cache paths to clear
       const cachePaths = [
         // Current cache file
-        `${configDir}/plugins/obsidian-related-notes/.bloom-filter-cache.json`,
+        `${configDir}/plugins/related-notes/.bloom-filter-cache.json`,
         // Legacy cache files
+        `${configDir}/plugins/related-notes/bloom-filter-cache.json`,
+        `${configDir}/plugins/related-notes/similarity-cache.json`,
+        `${configDir}/plugins/related-notes/.index-cache.json`,
+        `${configDir}/plugins/obsidian-related-notes/.bloom-filter-cache.json`,
         `${configDir}/plugins/obsidian-related-notes/bloom-filter-cache.json`,
         `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
         `${configDir}/plugins/obsidian-related-notes/.index-cache.json`,
@@ -234,6 +238,8 @@ export default class RelatedNotesPlugin extends Plugin {
     try {
       // Try to remove old cache files
       const oldCachePaths = [
+        `${configDir}/plugins/related-notes/similarity-cache.json`,
+        `${configDir}/plugins/related-notes/bloom-filter-cache.json`, // Non-hidden version
         `${configDir}/plugins/obsidian-related-notes/similarity-cache.json`,
         `${configDir}/plugins/obsidian-related-notes/bloom-filter-cache.json`, // Non-hidden version
       ];
@@ -932,7 +938,7 @@ export default class RelatedNotesPlugin extends Plugin {
     if (indexedCount > 0) {
       const statusText = `${indexedCount} notes indexed`;
       const hoverText = `Related Notes: ${indexedCount} of ${totalFiles} notes indexed and ready for similarity search`;
-      
+
       this.statusBarItem.setText(statusText);
       this.statusBarItem.setAttribute('aria-label', hoverText);
       this.statusBarItem.setAttribute('title', hoverText);

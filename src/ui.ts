@@ -40,10 +40,7 @@ export class RelatedNotesView extends ItemView {
     container.empty();
     this.containerEl.addClass('related-notes-container');
 
-    // Create header with title
-    const headerEl = container.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related Notes' });
-
+    // Create content container
     container.createDiv({ cls: 'related-notes-content' });
   }
 
@@ -56,11 +53,12 @@ export class RelatedNotesView extends ItemView {
   async reset() {
     const fragment = document.createDocumentFragment();
 
-    // Create header with title
-    const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related Notes' });
-
+    // Create content container
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
+    
+    // Add title inside content
+    contentEl.createEl('h4', { text: 'Related Notes', cls: 'related-notes-title' });
+    
     const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
     messageEl.createEl('p', {
       text: 'Open a markdown file to see related notes.',
@@ -144,11 +142,11 @@ export class RelatedNotesView extends ItemView {
   async updateForFile(file: TFile, notes: RelatedNote[]) {
     const fragment = document.createDocumentFragment();
 
-    // Create header with title
-    const headerEl = fragment.createEl('div', { cls: 'related-notes-header' });
-    headerEl.createEl('h4', { text: 'Related Notes' });
-
+    // Create content container
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
+    
+    // Add title inside content
+    contentEl.createEl('h4', { text: 'Related Notes', cls: 'related-notes-title' });
     this.currentFile = file;
 
     // Prepare content based on file state.
@@ -218,6 +216,7 @@ export class RelatedNotesView extends ItemView {
       const nameEl = document.createElement('span');
       nameEl.className = 'related-note-link';
       nameEl.textContent = relatedFile.basename;
+      nameEl.title = relatedFile.basename; // Add tooltip with full name
       linkContainer.appendChild(nameEl);
 
       // No on-demand indicator needed anymore

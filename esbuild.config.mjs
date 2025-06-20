@@ -17,7 +17,7 @@ const prod = process.argv[2] === "production";
 // Empty array by default, can be configured in a .env file or through CLI args
 const targetDirs = process.env.TARGET_DIRS ?
 	JSON.parse(process.env.TARGET_DIRS) :
-	["test-vault/.obsidian/plugins/obsidian-related-notes"];
+	["test-vault/.obsidian/plugins/related-notes"];
 
 // Copy manifest and styles from src/ to root and target directories
 async function copyFiles() {
