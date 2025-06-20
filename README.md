@@ -1,24 +1,22 @@
 # Related Notes Plugin for Obsidian
 
-[![Tests](https://github.com/yourusername/obsidian-related-notes/workflows/Run%20Tests/badge.svg)](https://github.com/yourusername/obsidian-related-notes/actions)
+[![Tests](https://github.com/mrboxtobox/obsidian-related-notes/workflows/Run%20Tests/badge.svg)](https://github.com/mrboxtobox/obsidian-related-notes/actions)
 
-Discover hidden connections between your notes using advanced bloom filter algorithms. This plugin automatically analyzes your vault to suggest related content, helping you uncover insights and build a richer knowledge graph.
+Find related notes in your vault using bloom filter similarity analysis.
 
-![Preview of the Related Notes plugin on the right pane](<screenshot.png>)
+![Related Notes plugin on the right pane](<screenshot.png>)
 
-![alt text](<settings_screenshot.png>)
+![Related Notes settings](<settings_screenshot.png>)
 
-![alt text](<non_readme_screenshot.png>)
+![Related Notes aren't shown for non-text types](<non_readme_screenshot.png>)
 
 ## Features
 
-- 🔍 **Smart Content Analysis**: Uses optimized bloom filter algorithms to analyze note content
-- 🔗 **One-Click Linking**: Easily create connections between related notes
-- ⚡ **Lightning Fast**: Single-pass indexing with optimized performance for all vault sizes
-- 🛡️ **Privacy First**: All processing happens locally on your device
-- 🌍 **Universal Language Support**: Works with any language including CJK scripts
-- 📊 **Intelligent Sampling**: Automatically optimizes for large vaults (10,000+ notes)
-- 🔄 **Real-Time Updates**: Incrementally updates index as you modify notes
+- Bloom filter-based similarity detection
+- One-click linking between related notes
+- Local processing (no data sent externally)
+- Multi-language support including CJK scripts
+- Automatic optimization for large vaults
 
 ## Installation
 
@@ -51,70 +49,32 @@ Force re-indexing is useful when:
 - You suspect the index might be out of date
 - You want to ensure the most accurate related notes suggestions
 
-### Creating links between related notes
-
-The plugin now makes it easy to create links between related notes:
-
-- **One-Click Linking**: Add a link to a related note with a single click
-- **Smart Link Detection**: The plugin checks if links already exist
-- **Visual Feedback**: Clear indication of linked and unlinked notes
-- **Structured Organization**: Links are added to a "Related Notes" section
-- **Preserves Note Structure**: Adds to existing sections or creates new ones as needed
-- **Enhances Knowledge Graph**: Strengthens connections between related concepts
-- **Improves Navigation**: Makes it easier to move between conceptually related content
-
 ## Configuration
 
-The plugin features a streamlined settings interface:
+Settings:
 
 ### Basic settings
 - **Maximum suggestions**: Control how many related notes are displayed (1-20)
 - **Rebuild index**: Button to trigger a complete re-indexing of all notes
 
 ### Debug mode
-Enable to view detailed statistics about the plugin's operation in the developer console:
+Enable to view detailed statistics about the plugin's operation in the developer console.
 
-### Bloom filter technology
+### How it works
 
-The plugin uses an optimized bloom filter approach for efficient similarity detection:
+The plugin uses bloom filters with n-gram analysis:
 
-#### How it works
-- **Single-Pass Indexing**: Simplified architecture for maximum performance and reliability
-- **Bloom Filters**: Probabilistic data structures for memory-efficient similarity detection
-- **N-gram Analysis**: Uses 3-gram tokenization for optimal balance of accuracy and speed
-- **Smart Tokenization**: Advanced text processing with CJK support and technical term preservation
-- **Adaptive Parameters**: Automatically optimizes based on your vault size and characteristics
+- Single-pass indexing of all notes
+- Probabilistic similarity detection using 3-grams
+- Text tokenization with CJK script support
+- Automatic parameter optimization based on vault size
 
-#### Key advantages
-- **Memory Efficient**: Uses minimal memory even for large vaults (50,000+ notes)
-- **Language Universal**: Excellent support for all languages including Chinese, Japanese, Arabic
-- **Zero Configuration**: Works out-of-the-box with intelligent defaults
-- **Privacy Focused**: All processing happens locally - your notes never leave your device
-- **Performance Optimized**: Single-pass design eliminates complex multi-phase processing
+### Performance
 
-### Optimized for all vault sizes
-
-The plugin automatically adapts to your vault size and provides excellent performance:
-
-- **Single-Pass Efficiency**:
-  - Simplified indexing processes all notes in one optimized pass
-  - Frequent cache saves (every 50 files) prevent data loss
-  - UI remains responsive with intelligent yielding every 5 files
-  - Real-time progress display with current file information
-
-- **Memory Optimization**:
-  - Uses minimal memory per document (~1KB per 1000 notes)
-  - Automatic sampling for large vaults to maintain performance
-  - Smart cache management with periodic persistence
-  - Optimized bloom filter sizes based on vault characteristics
-
-- **Intelligent Processing**:
-  - Automatic stopword detection for any language
-  - Filename inclusion for better matching accuracy
-  - Incremental updates for modified files
-  - Debounced processing to handle rapid file changes
-
-Whether you have 100 notes or 100,000 notes, the plugin delivers fast, accurate suggestions.
+- Memory usage: ~1KB per 1000 notes
+- Single-pass indexing with periodic cache saves
+- Automatic sampling for vaults over 10,000 notes
+- Incremental updates when files are modified
 
 ## Development
 
@@ -128,7 +88,7 @@ Whether you have 100 notes or 100,000 notes, the plugin delivers fast, accurate 
 
 1. Clone this repository
 ```bash
-git clone https://github.com/yourusername/obsidian-related-notes.git
+git clone https://github.com/mrboxtobox/obsidian-related-notes.git
 cd obsidian-related-notes
 ```
 
@@ -145,7 +105,7 @@ npm run build
 ### Development workflow
 
 - `npm run dev` - Starts development build with hot-reload
-- `npm run dev:test` - Starts development build with hot-reload and copies files to test-vault
+- `npm run dev:test` - Starts development build with hot-reload and copies files to `test-vault` (you will need to create this)
 - `npm run dev:custom` - Starts development build with custom target directories (set TARGET_DIRS env var)
 - `npm run build` - Creates a production build
 - `npm run build:test` - Creates a production build and copies files to test-vault
@@ -169,50 +129,16 @@ npm run build
 
 - `obsidian` - Obsidian API types and utilities
 
-## Building From Source
-
-1. Clone the repository
-```bash
-git clone https://github.com/yourusername/obsidian-related-notes.git
-cd obsidian-related-notes
-```
-
-2. Install dependencies
-```bash
-npm install
-```
-
-3. Build the plugin
-```bash
-npm run build
-```
-
-4. Copy the built files to your Obsidian plugins folder
-```bash
-# For testing with the included test-vault
-npm run dev:test
-
-# For testing with custom vault locations
-TARGET_DIRS='["path/to/vault1/.obsidian/plugins/related-notes", "path/to/vault2/.obsidian/plugins/related-notes"]' npm run dev:custom
-```
-
-Alternatively, you can manually copy the following files to your Obsidian plugins folder:
-- `main.js`
-- `manifest.json`
-- `styles.css`
-
-Note: These files are generated from the source files in the `src/` directory.
-
 ## Release Process
 
-This plugin follows Obsidian's guidelines for plugin releases. The following scripts are available to streamline the release process:
+The following scripts are available to streamline the release process:
 
 1. Validate your plugin against Obsidian's requirements:
 ```bash
 npm run validate
 ```
 
-2. Create a new release (patch, minor, or major version):
+1. Create a new release (patch, minor, or major version):
 ```bash
 npm run release:patch  # For bug fixes
 npm run release:minor  # For new features
@@ -292,21 +218,12 @@ For vaults with 10,000+ notes:
 - Use the "Clear Cache" and "Rebuild Index" buttons in settings if needed
 - Monitor progress in the status bar with real-time file information
 
-### Memory issues
-
-If Obsidian becomes slow or uses excessive memory:
-
-1. Close other resource-intensive applications
-2. Restart Obsidian to clear memory
-3. Consider adjusting the "Maximum Suggestions" setting to a lower number
-4. Use the progressive indexing feature for very large vaults
-
 ## Support
 
 If you encounter any issues or have questions:
 
-1. **Check the troubleshooting section above first** 👆
-2. Check the [GitHub Issues](https://github.com/yourusername/obsidian-related-notes/issues)
+1. Check the troubleshooting section above first
+2. Check the [GitHub Issues](https://github.com/mrboxtobox/obsidian-related-notes/issues)
 3. Create a new issue if your problem hasn't been reported
 4. Provide as much information as possible, including:
    - Steps to reproduce the issue
@@ -317,7 +234,7 @@ If you encounter any issues or have questions:
 
 ## Architecture Overview
 
-The plugin uses a streamlined architecture designed for optimal performance:
+Architecture overview:
 
 ```mermaid
 graph TD
