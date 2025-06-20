@@ -193,9 +193,9 @@ If the plugin freezes during indexing or becomes unresponsive, especially in lar
 2. **Remove the plugin cache** by deleting the cache directory:
    ```bash
    # Navigate to your vault's .obsidian folder and run:
-   rm -rf .obsidian/plugins/obsidian-related-notes
+   rm -rf .obsidian/plugins/related-notes
    ```
-   Or manually delete the `.obsidian/plugins/obsidian-related-notes` folder
+   Or manually delete the `.obsidian/plugins/related-notes` folder
 3. **Restart Obsidian**
 4. **Reinstall the plugin** from Community Plugins
 5. The plugin will rebuild its index automatically with optimizations for large vaults
@@ -206,7 +206,7 @@ If you want to keep your plugin settings:
 1. Force-quit Obsidian
 2. Delete only the cache files:
    ```bash
-   # In your vault's .obsidian/plugins/obsidian-related-notes/ folder:
+   # In your vault's .obsidian/plugins/related-notes/ folder:
    rm -f .bloom-filter-cache.json
    rm -f bloom-filter-cache.json  
    rm -f similarity-cache.json

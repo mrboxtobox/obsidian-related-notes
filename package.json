@@ -5,10 +5,10 @@
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
-		"dev:test": "TARGET_DIRS='[\"test-vault/.obsidian/plugins/obsidian-related-notes\"]' node esbuild.config.mjs",
+		"dev:test": "TARGET_DIRS='[\"test-vault/.obsidian/plugins/related-notes\"]' node esbuild.config.mjs",
 		"dev:custom": "echo 'Set TARGET_DIRS env var as JSON array of paths' && node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"build:test": "tsc -noEmit -skipLibCheck && TARGET_DIRS='[\"test-vault/.obsidian/plugins/obsidian-related-notes\"]' node esbuild.config.mjs production",
+		"build:test": "tsc -noEmit -skipLibCheck && TARGET_DIRS='[\"test-vault/.obsidian/plugins/related-notes\"]' node esbuild.config.mjs production",
 		"build:custom": "tsc -noEmit -skipLibCheck && echo 'Set TARGET_DIRS env var as JSON array of paths' && node esbuild.config.mjs production",
 		"version": "node version-bump.mjs && git add src/manifest.json manifest.json versions.json",
 		"debug": "node esbuild.config.mjs",
