@@ -1923,6 +1923,34 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         console.info(`Cache cleanup: removed ${documentsToRemove.length} invalid entries, successfully loaded ${loadedCount} documents`);
       }
 
+      // Repopulate word candidate selector if word-based candidates are enabled
+      if (this.useWordBasedCandidates && loadedCount > 0) {
+        logIfDebugModeEnabled('Repopulating word candidate selector from cached documents');
+        
+        // We need to re-process documents to rebuild the word index
+        // This is necessary because the word index isn't cached separately
+        let reprocessed = 0;
+        for (const docId of this.bloomFilters.keys()) {
+          try {
+            // Read the document content
+            const file = this.vault.getMarkdownFiles().find((f: any) => f.path === docId);
+            if (file) {
+              const content = await this.vault.cachedRead(file);
+              const fileName = file.basename;
+              const enhancedContent = `${fileName} ${content}`;
+              
+              // Add to word candidate selector (but not to bloom filters since they're already loaded)
+              this.wordCandidateSelector.addDocument(docId, enhancedContent);
+              reprocessed++;
+            }
+          } catch (error) {
+            logIfDebugModeEnabled(`Error repopulating word index for ${docId}: ${error}`);
+          }
+        }
+        
+        logIfDebugModeEnabled(`Repopulated word candidate selector with ${reprocessed} documents`);
+      }
+
       // Successfully loaded bloom filters from cache
       this.cacheDirty = false;
       this.cacheReady = true;
