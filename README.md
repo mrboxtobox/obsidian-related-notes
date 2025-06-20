@@ -159,6 +159,20 @@ The release script will:
 
 4. Review the draft release on GitHub and publish it when ready.
 
+## Acknowledgements
+
+Special thanks to the following people for filing bug reports and helping improve this plugin:
+
+- [@kmaustral](https://github.com/kmaustral)
+- [@xelaras](https://github.com/xelaras)
+- [@kitmonkman](https://github.com/kitmonkman)
+- [@ronilaukkarinen](https://github.com/ronilaukkarinen)
+- [@cathywu](https://github.com/cathywu)
+- [@avinashkanaujiya](https://github.com/avinashkanaujiya)
+- tomatomi
+
+Your feedback has been invaluable in improving this plugin.
+
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
