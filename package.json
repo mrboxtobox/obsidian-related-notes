@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-related-notes",
-	"version": "4.0.0",
+	"version": "4.1.0",
 	"description": "An Obsidian plugin that suggests related notes using bloom filter similarity",
 	"main": "main.js",
 	"scripts": {
