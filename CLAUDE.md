@@ -338,3 +338,106 @@ async onClose() {
 4. Submit to community plugins directory
 
 This guide covers the essential patterns and requirements for developing Obsidian plugins following official guidelines.
+
+## Related Notes Plugin Architecture
+
+### Project Structure
+- **src/main.ts**: Main plugin class and initialization logic
+- **src/settings.ts**: Settings interface and tab implementation  
+- **src/ui.ts**: View components for displaying related notes
+- **src/types.ts**: Type definitions and interfaces
+- **src/core.ts**: Core similarity computation logic
+- **src/bloom.ts**, **src/multi-bloom.ts**: Bloom filter implementations
+- **src/word-index.ts**: Text processing and indexing
+
+### Key Settings Pattern
+Settings are defined with TypeScript interfaces and default values:
+
+```typescript
+export interface RelatedNotesSettings {
+  maxSuggestions: number;
+  debugMode: boolean;
+  customTitle: string;         // Custom text for UI display
+  // Internal settings - not exposed to users
+  similarityThreshold: number;
+  // ... other internal settings
+}
+
+export const DEFAULT_SETTINGS: RelatedNotesSettings = {
+  maxSuggestions: 5,
+  debugMode: false,
+  customTitle: 'Related Notes',
+  // ... default values for all settings
+};
+```
+
+### Adding New Settings
+When adding user-facing settings:
+1. **Update interface**: Add property to `RelatedNotesSettings` interface
+2. **Set default**: Add default value to `DEFAULT_SETTINGS` object
+3. **Add UI control**: Create Setting in `RelatedNotesSettingTab.display()`
+4. **Implement logic**: Use `this.plugin.settings.propertyName` throughout codebase
+
+### Custom View Implementation
+The plugin uses a custom `ItemView` for the sidebar:
+
+```typescript
+export class RelatedNotesView extends ItemView {
+  getViewType(): string {
+    return RELATED_NOTES_VIEW_TYPE;
+  }
+  
+  getDisplayText(): string {
+    return this.plugin.settings.customTitle; // Dynamic title from settings
+  }
+  
+  // Update UI based on settings
+  async updateForFile(file: TFile, notes: RelatedNote[]) {
+    const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
+    contentEl.createEl('h4', { 
+      text: this.plugin.settings.customTitle, // Use custom title
+      cls: 'related-notes-title' 
+    });
+    // ... rest of UI logic
+  }
+}
+```
+
+### String Replacement Best Practices
+When implementing customizable text:
+1. **Escape regex characters**: Use `.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` for user input in regex
+2. **Update all instances**: Check view titles, UI elements, and generated content
+3. **Handle edge cases**: Provide fallback values and validate input
+4. **Dynamic updates**: Use settings values throughout UI rendering, don't cache strings
+
+### Release Workflow
+For this plugin, follow this release process:
+1. **Update versions**: Increment version in `manifest.json`, `package.json`, and `versions.json`
+2. **Build**: Run `npm run build` to generate production assets
+3. **Commit**: Commit version changes and feature code together
+4. **Create GitHub release**: Use `gh release create` with tag matching manifest version
+5. **Upload assets**: Include `main.js`, `manifest.json`, and `styles.css` in release
+
+### File Operations with Dynamic Content
+When generating markdown content with user-customizable text:
+
+```typescript
+// Create section with custom title
+const linkText = `\n\n## ${this.plugin.settings.customTitle}\n- [[${targetFile.basename}]]\n`;
+
+// Check for existing sections with regex escaping
+const escapedTitle = this.plugin.settings.customTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const relatedSectionRegex = new RegExp(`\\n## ${escapedTitle}\\n`);
+
+// Replace content dynamically
+newContent = content.replace(
+  new RegExp(`\\n## ${escapedTitle}\\n((?:- \\[\\[[^\\]]+\\]\\]\\n)*)`),
+  (match, p1) => `\n## ${this.plugin.settings.customTitle}\n${p1}- [[${targetFile.basename}]]\n`
+);
+```
+
+### Testing Changes
+- Use `test-vault/.obsidian/plugins/related-notes` for development testing
+- Build with `npm run build` copies files to test vault automatically  
+- Test settings persistence across plugin reloads
+- Verify UI updates immediately when settings change
