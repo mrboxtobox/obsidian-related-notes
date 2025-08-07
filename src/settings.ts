@@ -11,6 +11,7 @@ import RelatedNotesPlugin from './main';
 export interface RelatedNotesSettings {
   maxSuggestions: number;
   debugMode: boolean;          // Enable debug logging
+  customTitle: string;         // Custom text for "Related Notes"
   // Internal settings - not exposed to users
   similarityThreshold: number;
   batchSize: number;
@@ -28,6 +29,7 @@ export interface RelatedNotesSettings {
 export const DEFAULT_SETTINGS: RelatedNotesSettings = {
   maxSuggestions: 5,
   debugMode: false,           // Debug mode disabled by default
+  customTitle: 'Related Notes',
   enableSampling: true,
   // Internal settings with good defaults
   similarityThreshold: 0.15, // Lowered from 0.3 to find more matches
@@ -127,6 +129,17 @@ export class RelatedNotesSettingTab extends PluginSettingTab {
         .setDynamicTooltip()
         .onChange(async (value) => {
           this.plugin.settings.maxSuggestions = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Custom title')
+      .setDesc('Customize the text displayed in place of "Related Notes".')
+      .addText(text => text
+        .setPlaceholder('Related Notes')
+        .setValue(this.plugin.settings.customTitle)
+        .onChange(async (value) => {
+          this.plugin.settings.customTitle = value || 'Related Notes';
           await this.plugin.saveSettings();
         }));
 

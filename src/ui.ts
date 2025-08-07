@@ -25,7 +25,7 @@ export class RelatedNotesView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Related Notes';
+    return this.plugin.settings.customTitle;
   }
 
   getIcon(): string {
@@ -57,7 +57,7 @@ export class RelatedNotesView extends ItemView {
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     
     // Add title inside content
-    contentEl.createEl('h4', { text: 'Related Notes', cls: 'related-notes-title' });
+    contentEl.createEl('h4', { text: this.plugin.settings.customTitle, cls: 'related-notes-title' });
     
     const messageEl = contentEl.createDiv({ cls: 'related-notes-message' });
     messageEl.createEl('p', {
@@ -108,26 +108,27 @@ export class RelatedNotesView extends ItemView {
       }
 
       // Create a wiki link to the target file
-      const linkText = `\n\n## Related Notes\n- [[${targetFile.basename}]]\n`;
+      const linkText = `\n\n## ${this.plugin.settings.customTitle}\n- [[${targetFile.basename}]]\n`;
 
-      // Check if the file already has a Related Notes section
-      const relatedSectionRegex = /\n## Related Notes\n/;
+      // Check if the file already has a custom title section
+      const relatedSectionRegex = new RegExp(`\\n## ${this.plugin.settings.customTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n`);
       let newContent: string;
 
       if (relatedSectionRegex.test(content)) {
-        // Check if this specific link already exists in the Related Notes section
+        // Check if this specific link already exists in the custom title section
         const existingLinkRegex = new RegExp(`- \[\[${targetFile.basename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\]\]`, 'i');
         if (existingLinkRegex.test(content)) {
-          return; // Link already exists in Related Notes section
+          return; // Link already exists in custom title section
         }
         
-        // Add to existing Related Notes section
+        // Add to existing custom title section
+        const escapedTitle = this.plugin.settings.customTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         newContent = content.replace(
-          /\n## Related Notes\n((?:- \[\[[^\]]+\]\]\n)*)/,
-          (match, p1) => `\n## Related Notes\n${p1}- [[${targetFile.basename}]]\n`
+          new RegExp(`\\n## ${escapedTitle}\\n((?:- \\[\\[[^\\]]+\\]\\]\\n)*)`),
+          (match, p1) => `\n## ${this.plugin.settings.customTitle}\n${p1}- [[${targetFile.basename}]]\n`
         );
       } else {
-        // Add new Related Notes section at the end
+        // Add new custom title section at the end
         newContent = content + linkText;
       }
 
@@ -146,7 +147,7 @@ export class RelatedNotesView extends ItemView {
     const contentEl = fragment.createEl('div', { cls: 'related-notes-content' });
     
     // Add title inside content
-    contentEl.createEl('h4', { text: 'Related Notes', cls: 'related-notes-title' });
+    contentEl.createEl('h4', { text: this.plugin.settings.customTitle, cls: 'related-notes-title' });
     this.currentFile = file;
 
     // Prepare content based on file state.
