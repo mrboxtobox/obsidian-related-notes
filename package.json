@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-related-notes",
-	"version": "4.1.0",
+	"version": "4.1.1",
 	"description": "An Obsidian plugin that suggests related notes using bloom filter similarity",
 	"main": "main.js",
 	"scripts": {
@@ -31,6 +31,9 @@
 	],
 	"author": "Oluwasanya Awe",
 	"license": "MIT",
+	"overrides": {
+		"vite": "^6.4.1"
+	},
 	"devDependencies": {
 		"@types/node": "^20.11.17",
 		"@typescript-eslint/eslint-plugin": "^7.0.1",
