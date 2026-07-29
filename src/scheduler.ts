@@ -23,6 +23,9 @@ export const DEFAULT_SLICE_BUDGET_MS = 8;
 const pending: Array<() => void> = [];
 let channel: MessageChannel | null = null;
 
+/** True in a renderer (Obsidian, browser); false under bare Node (tests, CI). */
+const hasDom = typeof document !== "undefined";
+
 function port(): MessagePort {
   if (!channel) {
     channel = new MessageChannel();
@@ -36,17 +39,26 @@ function port(): MessagePort {
  * Hand control back to the event loop, allowing input handling and paint, then
  * resume as soon as possible.
  *
- * Uses `scheduler.yield()` where available (Chromium 129+, which recent
- * Obsidian builds ship), otherwise a MessageChannel round-trip. MessageChannel
- * is used in preference to `setTimeout(0)` because nested timers are clamped to
+ * Uses `scheduler.yield()` where available (Chromium 129+, which recent Obsidian
+ * builds ship), then a MessageChannel round-trip in any renderer. MessageChannel
+ * is preferred over `setTimeout(0)` there because nested timers are clamped to
  * 4ms by browsers and Electron, whereas port messages are not — measured at
  * ~0.02ms per yield versus ~1.2ms for `setTimeout(0)` and ~17ms for
  * `setTimeout(16)`.
+ *
+ * Under bare Node (tests, CI) `setImmediate` is used instead. An open
+ * MessagePort is an active libuv handle, so a Node process that yielded via the
+ * channel would never exit; ref/unref'ing it around each yield fixes that but
+ * costs more than the yield itself. `setImmediate` is the correct Node
+ * macrotask: it does not hold the loop open and needs no bookkeeping.
  */
 export function yieldToMain(): Promise<void> {
   const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
   if (scheduler && typeof scheduler.yield === "function") {
     return scheduler.yield();
+  }
+  if (!hasDom && typeof setImmediate === "function") {
+    return new Promise<void>((resolve) => setImmediate(resolve));
   }
   return new Promise<void>((resolve) => {
     pending.push(resolve);
