@@ -18,6 +18,8 @@ export class BloomFilter {
   private readonly hashFunctions: number;
   private readonly addedItems: Set<string> = new Set(); // Track added items for debugging
   private maxTrackedItems = 10000; // Limit tracked items to prevent memory leak
+  /** Memoized popCount(); -1 means "recompute". Reset by every write path. */
+  private cachedPopCount = -1;
 
   /**
    * Creates a new bloom filter
@@ -92,6 +94,26 @@ export class BloomFilter {
       const bitOffset = bitIndex % 32;
       this.bitArray[arrayIndex] |= 1 << bitOffset;
     }
+    this.cachedPopCount = -1;
+  }
+
+  /**
+   * Number of bits set, memoized.
+   *
+   * A filter's own population count is invariant between mutations, but
+   * similarity() needs it on both sides of every pairwise comparison. Computing
+   * it per pair made a query O(candidates) redundant popcount passes over the
+   * same query filter. Every write path below resets the memo.
+   */
+  popCount(): number {
+    if (this.cachedPopCount < 0) {
+      let bits = 0;
+      for (let i = 0; i < this.bitArray.length; i++) {
+        bits += countBits(this.bitArray[i]);
+      }
+      this.cachedPopCount = bits;
+    }
+    return this.cachedPopCount;
   }
 
   /**
@@ -126,6 +148,7 @@ export class BloomFilter {
   setBitArray(array: Uint32Array): void {
     if (array.length === this.bitArray.length) {
       this.bitArray = array;
+      this.cachedPopCount = -1;
     } else {
       throw new Error(`Array length mismatch: got ${array.length}, expected ${this.bitArray.length}`);
     }
@@ -204,6 +227,7 @@ export class BloomFilter {
       throw new Error(`Cannot deserialize: size/hash mismatch. Expected ${this.size}/${this.hashFunctions}, got ${data.size}/${data.hashFunctions}`);
     }
     this.bitArray = new Uint32Array(data.bitArray);
+    this.cachedPopCount = -1;
     this.addedItems.clear(); // Clear tracked items since we don't serialize them
   }
 
@@ -212,6 +236,7 @@ export class BloomFilter {
    */
   clear(): void {
     this.bitArray.fill(0);
+    this.cachedPopCount = -1;
     this.addedItems.clear();
   }
 
@@ -227,26 +252,18 @@ export class BloomFilter {
       return 0;
     }
 
+    // Each filter's own population count depends only on that filter, so it is
+    // cached and reused across every comparison in a query instead of being
+    // recomputed per pair. |A|+|B| are then enough to derive the union without
+    // a second popcount pass: |A ∪ B| = |A| + |B| - |A ∩ B|.
+    const thisBits = this.popCount();
+    const otherBits = other.popCount();
+
     let intersectionBits = 0;
-    let unionBits = 0;
-    let thisBits = 0;
-    let otherBits = 0;
-
     for (let i = 0; i < this.bitArray.length; i++) {
-      const intersection = this.bitArray[i] & other.bitArray[i];
-      const union = this.bitArray[i] | other.bitArray[i];
-
-      // Count bits in each array
-      const thisCount = countBits(this.bitArray[i]);
-      const otherCount = countBits(other.bitArray[i]);
-
-      // Count bits in intersection and union
-      intersectionBits += countBits(intersection);
-      unionBits += countBits(union);
-
-      thisBits += thisCount;
-      otherBits += otherCount;
+      intersectionBits += countBits(this.bitArray[i] & other.bitArray[i]);
     }
+    const unionBits = thisBits + otherBits - intersectionBits;
 
     // Check for nearly empty documents
     const minBitsRequired = 5; // Minimum number of bits set to consider meaningful
@@ -272,9 +289,13 @@ export class BloomFilter {
       similarity = similarity * Math.pow(1 - saturationFactor, 2);
     }
 
-    const rawSimilarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
-    logIfDebugModeEnabled(
-      `Similarity details:
+    // Guarded: this runs once per candidate document, so building the message
+    // unconditionally would allocate a multi-line string and run six toFixed()
+    // calls on every comparison even with debug mode off.
+    if (isDebugMode()) {
+      const rawSimilarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
+      logIfDebugModeEnabled(
+        `Similarity details:
       - Filter 1: ${thisBits} bits set (${(thisRatio * 100).toFixed(1)}% of capacity)
       - Filter 2: ${otherBits} bits set (${(otherRatio * 100).toFixed(1)}% of capacity)
       - Intersection: ${intersectionBits} bits
@@ -282,7 +303,8 @@ export class BloomFilter {
       - Items in filter 1: ${this.addedItems.size}
       - Items in filter 2: ${other.addedItems.size}
       - Raw similarity: ${(rawSimilarity * 100).toFixed(2)}%`
-    );
+      );
+    }
 
     return similarity;
   }

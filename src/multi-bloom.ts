@@ -10,6 +10,7 @@ import { BloomFilter } from './bloom';
 import { WordBasedCandidateSelector } from './word-index';
 import { normalizePath, TFile, Vault } from 'obsidian';
 import { isDebugMode, logIfDebugModeEnabled, logMetrics, logPerformance } from './logging';
+import { TimeSlicer } from './scheduler';
 import {
   TEXT_PROCESSING,
   BLOOM_FILTER,
@@ -482,19 +483,13 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
       const markdownFiles = this.vault.getMarkdownFiles();
       logIfDebugModeEnabled(`Starting fresh indexing: ${totalFiles} markdown files`);
 
-      // Improved yielding function
-      const yield_to_main = async () => {
-        await new Promise(resolve => setTimeout(resolve, 15)); // 15ms yield gives UI more breathing room
-      };
-
       // Process files in smaller batches for better UI responsiveness
       const batchSize = BATCH_PROCESSING.SMALL_BATCH_SIZE; // Even smaller batch size for more frequent UI updates
       let processedCount = 0;
 
-      // Enhanced yielding function with variable durations
-      const yieldWithDuration = async (ms: number) => {
-        await new Promise(resolve => setTimeout(resolve, ms));
-      };
+      // Yield when the frame budget is spent instead of sleeping a fixed
+      // duration per batch/per N files. See src/scheduler.ts.
+      const slicer = new TimeSlicer();
 
       // Single optimized pass - process all files with smart batching
       const filesToProcess = markdownFiles;
@@ -519,8 +514,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
           onProgress(processedCount, totalFiles);
         }
 
-        // Longer yield before processing batch
-        await yieldWithDuration(20);
+        // Give the UI a chance to paint the progress update, if we owe it one.
+        await slicer.tick();
 
         // Process each file in the batch
         for (const file of batch) {
@@ -550,10 +545,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
               (onProgress as any)(processedCount, totalFiles, file.path);
             }
 
-            // Yield every 5 files to keep UI responsive
-            if (processedCount % 5 === 0) {
-              await yieldWithDuration(10); // Quick yield
-            }
+            // Keep the UI responsive without idling between files.
+            await slicer.tick();
 
             // Save cache periodically during indexing to preserve progress
             if (processedCount % 50 === 0) {
@@ -566,9 +559,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
         }
 
         // Yield between batches to keep UI responsive
-        if (i % (batchSize * 2) === 0) {
-          await yieldWithDuration(20); // Quick yield between batches
-        }
+        await slicer.tick();
       }
 
       // Clear current file tracking
@@ -862,13 +853,8 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     this.cacheDirty = true;
     const startTime = performance.now();
 
-    // More aggressive yielding to ensure UI responsiveness
-    const yieldWithDuration = async (ms: number) => {
-      await new Promise(resolve => setTimeout(resolve, ms));
-    };
-
-    // Initial yield before any processing
-    await yieldWithDuration(TIMING.YIELD_DURATION_MS);
+    // Yield whenever this document's work has held the main thread for a frame.
+    const slicer = new TimeSlicer();
 
     // Skip adaptive parameters for better performance
     this.documentsProcessed++;
@@ -886,12 +872,12 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     // Track word frequencies for adaptive stopwords
     this.trackWordFrequencies(docId, limitedText);
-    await yieldWithDuration(TIMING.YIELD_DURATION_MS);
+    await slicer.tick();
 
     // Compute common words if enough documents processed
     if (this.totalDocuments >= 30 && !this.commonWordsComputed) {
       this.computeCommonWords();
-      await yieldWithDuration(TIMING.EXTENDED_YIELD_DURATION_MS);
+      await slicer.tick();
     }
 
     // Create a simplified bloom filter with adaptive size for large vaults
@@ -904,18 +890,22 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     // Pre-process text to filter stopwords if we've computed them
     const processed = this.preprocessText(limitedText);
-    await yieldWithDuration(TIMING.YIELD_DURATION_MS);
+    await slicer.tick();
 
-    // CPU throttling: process in small chunks with mandatory yields
+    // Feed the filter in chunks so a very long document cannot hold the main
+    // thread, yielding only once a chunk has actually overrun the frame budget.
+    //
+    // CHUNK_SIZE must not change: extractWords() derives bigrams within each
+    // chunk and caps them per chunk, so the chunk boundaries are part of what
+    // ends up in the filter. Resizing chunks would silently change similarity
+    // scores for every document.
     const words = processed.split(/\s+/);
-    const CHUNK_SIZE = TIMING.MAX_OPERATIONS_BEFORE_YIELD; // Small chunks to prevent CPU hogging
+    const CHUNK_SIZE = TIMING.MAX_OPERATIONS_BEFORE_YIELD;
 
     for (let i = 0; i < words.length; i += CHUNK_SIZE) {
       const chunk = words.slice(i, i + CHUNK_SIZE).join(' ');
       filter.addText(chunk);
-
-      // Mandatory yield after every chunk to keep UI responsive
-      await yieldWithDuration(TIMING.MIN_YIELD_TIME_MS);
+      await slicer.tick();
     }
 
     // Store the filter
@@ -923,16 +913,13 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
 
     // Also add to word-based candidate selector for fast candidate selection
     if (this.useWordBasedCandidates) {
-      await yieldWithDuration(5);
+      await slicer.tick();
       this.wordCandidateSelector.addDocument(docId, limitedText);
     }
 
     // No longer storing n-grams for memory efficiency
 
     const endTime = performance.now();
-
-    // Final yield to ensure UI responsiveness
-    await yieldWithDuration(5);
 
     if (isDebugMode()) {
       logIfDebugModeEnabled(`Processed document ${docId} in ${(endTime - startTime).toFixed(2)}ms`);
@@ -1176,7 +1163,7 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     const results: [string, number][] = [];
     let comparisons = 0;
     let skippedComparisons = 0;
-    let operationsSinceYield = 0;
+    const slicer = new TimeSlicer();
 
     // Determine which documents to compare against
     let documentsToProcess: Iterable<[string, any]>;
@@ -1212,11 +1199,9 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     for (const [docId, filter] of documentsToProcess) {
       if (docId === queryDocId) continue; // Skip self-comparison
 
-      // CPU throttling: yield control after processing a batch
-      if (++operationsSinceYield >= TIMING.MAX_OPERATIONS_BEFORE_YIELD) {
-        await new Promise(resolve => setTimeout(resolve, TIMING.MIN_YIELD_TIME_MS));
-        operationsSinceYield = 0;
-      }
+      // Keep the main thread free: yield once the frame budget is spent rather
+      // than sleeping every N comparisons.
+      await slicer.tick();
 
       comparisons++;
 
