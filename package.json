@@ -32,19 +32,19 @@
 	"author": "Oluwasanya Awe",
 	"license": "MIT",
 	"overrides": {
-		"vite": "^6.4.1"
+		"vite": "^6.4.3"
 	},
 	"devDependencies": {
 		"@types/node": "^20.11.17",
 		"@typescript-eslint/eslint-plugin": "^7.0.1",
 		"@typescript-eslint/parser": "^7.0.1",
-		"@vitest/ui": "^3.2.4",
+		"@vitest/ui": "^3.2.7",
 		"builtin-modules": "^3.3.0",
 		"esbuild": "^0.25.5",
 		"eslint": "^8.57.0",
 		"obsidian": "latest",
 		"tslib": "^2.6.2",
 		"typescript": "^5.3.3",
-		"vitest": "^3.2.4"
+		"vitest": "^3.2.7"
 	}
 }
