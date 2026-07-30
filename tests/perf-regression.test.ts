@@ -112,8 +112,9 @@ describe('throttling does not idle', () => {
     await provider.processDocument('long.md', makeDoc(1, words));
     const elapsed = performance.now() - start;
 
-    // Measured ~25ms. 200 chunk sleeps at 16ms would be ~3200ms.
-    expect(elapsed).toBeLessThan(300);
+    // Measured ~25ms; 200 chunk sleeps at 16ms measured 2199ms. Bound sits
+    // between the two with room for a loaded CI box.
+    expect(elapsed).toBeLessThan(800);
   });
 
   it('indexes many documents without fixed per-document sleeps', async () => {
@@ -134,7 +135,7 @@ describe('throttling does not idle', () => {
 
   it('queries without sleeping per batch of comparisons', async () => {
     const provider = makeProvider();
-    const docs = 200;
+    const docs = 400;
     for (let i = 0; i < docs; i++) {
       await provider.processDocument(`doc${i}.md`, makeDoc(i, 60));
     }
@@ -143,8 +144,9 @@ describe('throttling does not idle', () => {
     const results = await provider.getSimilarDocuments('doc0.md', 10);
     const elapsed = performance.now() - start;
 
-    // Old code: 200/10 = 20 yields x 16ms = 320ms of pure sleep minimum.
-    expect(elapsed).toBeLessThan(250);
+    // Old code: 400/10 = 40 yields x 16ms = 640ms of pure sleep minimum, so a
+    // 450ms bound still catches it with margin for a slow box.
+    expect(elapsed).toBeLessThan(450);
     expect(Array.isArray(results)).toBe(true);
   });
 });

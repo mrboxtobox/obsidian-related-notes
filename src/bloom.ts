@@ -273,40 +273,71 @@ export class BloomFilter {
       return 0;
     }
 
-    // Calculate raw Jaccard similarity
-    let similarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
+    // Jaccard over the SET CARDINALITIES, not over the raw bits.
+    //
+    // Bit-level Jaccard is biased: as a filter fills, distinct items collide on
+    // shared bits, so the bit counts understate the sets and the ratio drifts
+    // toward 1 for every pair. This previously carried an ad-hoc correction —
+    // multiply by (1 - saturation)^2 past 40% occupancy — which destroyed true
+    // positives instead of debiasing anything: a 3,200-word note scored 0.006
+    // against an identical copy, so long notes were effectively excluded from
+    // results, and identical long notes ranked below barely-related short ones.
+    //
+    // Swamidass & Baldi's estimator inverts the fill process to recover how many
+    // distinct items a filter must have held, which stays accurate deep into
+    // saturation and needs no fudge factor:
+    //
+    //   n̂(t) = -(m/k) * ln(1 - t/m)     for t bits set of m, with k hashes
+    //   |A ∩ B| = n̂(A) + n̂(B) - n̂(A ∪ B)
+    //   J       = |A ∩ B| / |A ∪ B|
+    const nThis = this.estimateCardinality(thisBits);
+    const nOther = this.estimateCardinality(otherBits);
+    const nUnion = this.estimateCardinality(unionBits);
 
-    // Check for filter saturation (too many bits set)
-    const thisRatio = thisBits / this.size;
-    const otherRatio = otherBits / this.size;
-
-    // If either filter is highly saturated (>40% bits set), scale down similarity
-    // This reduces false positives when bloom filters become saturated
-    if (thisRatio > 0.4 || otherRatio > 0.4) {
-      // Scale down more aggressively as saturation increases
-      const saturationFactor = Math.max(thisRatio, otherRatio);
-      // Apply polynomial scaling (stronger than logarithmic)
-      similarity = similarity * Math.pow(1 - saturationFactor, 2);
+    // A completely full filter carries no information: n̂ diverges, and every
+    // document would look identical to every other.
+    if (!Number.isFinite(nUnion) || nUnion <= 0) {
+      logIfDebugModeEnabled(`Filter saturated to capacity (${unionBits}/${this.size} bits); cannot estimate similarity`);
+      return 0;
     }
+
+    const intersectionEstimate = Math.max(0, nThis + nOther - nUnion);
+    const similarity = Math.min(1, intersectionEstimate / nUnion);
 
     // Guarded: this runs once per candidate document, so building the message
     // unconditionally would allocate a multi-line string and run six toFixed()
     // calls on every comparison even with debug mode off.
     if (isDebugMode()) {
-      const rawSimilarity = unionBits === 0 ? 0 : intersectionBits / unionBits;
       logIfDebugModeEnabled(
         `Similarity details:
-      - Filter 1: ${thisBits} bits set (${(thisRatio * 100).toFixed(1)}% of capacity)
-      - Filter 2: ${otherBits} bits set (${(otherRatio * 100).toFixed(1)}% of capacity)
-      - Intersection: ${intersectionBits} bits
-      - Union: ${unionBits} bits
+      - Filter 1: ${thisBits} bits set (${((thisBits / this.size) * 100).toFixed(1)}% of capacity), ~${nThis.toFixed(0)} items
+      - Filter 2: ${otherBits} bits set (${((otherBits / this.size) * 100).toFixed(1)}% of capacity), ~${nOther.toFixed(0)} items
+      - Intersection: ${intersectionBits} bits, ~${intersectionEstimate.toFixed(0)} items
+      - Union: ${unionBits} bits, ~${nUnion.toFixed(0)} items
       - Items in filter 1: ${this.addedItems.size}
       - Items in filter 2: ${other.addedItems.size}
-      - Raw similarity: ${(rawSimilarity * 100).toFixed(2)}%`
+      - Similarity: ${(similarity * 100).toFixed(2)}%`
       );
     }
 
     return similarity;
+  }
+
+  /**
+   * Estimate how many distinct items were added, given how many bits are set.
+   *
+   * Inverts the expected fill of a bloom filter: each of the k hashes per item
+   * lands uniformly, so after n items a given bit is still clear with
+   * probability (1 - 1/m)^(kn). Solving for n gives the Swamidass-Baldi
+   * estimator below. Returns Infinity for a filter at capacity, where the
+   * inversion has no solution.
+   *
+   * @param bitsSet Number of bits set in the filter (or in a union of filters)
+   */
+  private estimateCardinality(bitsSet: number): number {
+    if (bitsSet <= 0) return 0;
+    if (bitsSet >= this.size) return Infinity;
+    return -(this.size / this.hashFunctions) * Math.log(1 - bitsSet / this.size);
   }
 
   /**
