@@ -128,9 +128,10 @@ describe('throttling does not idle', () => {
     const elapsed = performance.now() - start;
 
     // Old code: >=53ms of fixed sleeps per document, i.e. >3s for 60 docs,
-    // before counting the per-chunk sleeps.
-    // Measured ~75ms for 60 docs.
-    expect(elapsed).toBeLessThan(600);
+    // before counting the per-chunk sleeps. The bound sits between the real
+    // cost and the regression cost, not just above the measured value — at 600ms
+    // this flaked under `npm ci` contention.
+    expect(elapsed).toBeLessThan(2000);
   });
 
   it('queries without sleeping per batch of comparisons', async () => {

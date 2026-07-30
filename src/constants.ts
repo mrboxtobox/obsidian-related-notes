@@ -55,6 +55,12 @@ export const BATCH_PROCESSING = {
   PROCESS_INTERVAL_MS: 2000,
   /** Small batch size for UI responsiveness */
   SMALL_BATCH_SIZE: 3,
+  /**
+   * Terms hashed into a bloom filter between yields. Purely a yield interval:
+   * tokenization happens once per document before batching, so changing this
+   * cannot change what lands in the filter (see chunking-invariance.test.ts).
+   */
+  TOKEN_BATCH_SIZE: 512,
   /** Maximum initial index size */
   MAX_INITIAL_INDEX_SIZE: 1000,
   /** Percentage of vault for initial indexing */
@@ -165,8 +171,12 @@ export const WORD_INDEX = {
  * Cache and version constants
  */
 export const CACHE = {
-  /** Current cache version */
-  VERSION: 1,
+  /**
+   * Current cache version. Bumped to 2: tokenization moved from per-10-word
+   * chunk to whole-document, so v1 filters hold a different term set and cannot
+   * be compared against freshly built ones. A mismatch forces a rebuild.
+   */
+  VERSION: 2,
   /** Cache directory relative path */
   RELATIVE_PATH: '/plugins/obsidian-related-notes/',
   /** Cache file name */

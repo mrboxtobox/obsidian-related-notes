@@ -10,6 +10,7 @@ import {
   calculateOptimalHashFunctions
 } from '../src/multi-bloom';
 import { WordBasedCandidateSelector } from '../src/word-index';
+import { CACHE } from '../src/constants';
 
 describe('Optimal Size Calculations', () => {
   describe('calculateOptimalBloomSize', () => {
@@ -367,7 +368,7 @@ describe('MultiResolutionBloomFilterProvider', () => {
         adapter: {
           exists: (path: string) => Promise.resolve(path.includes('.bloom-filter-cache.json')),
           read: (path: string) => Promise.resolve(JSON.stringify({
-            version: 1, // Current cache version
+            version: CACHE.VERSION, // track the constant, not a literal
             timestamp: Date.now(), // Fresh timestamp
             params: {
               ngramSizes: [3],
@@ -433,7 +434,7 @@ describe('MultiResolutionBloomFilterProvider', () => {
 
       // Simulate cache with actual document data
       const savedCache = {
-        version: 1,
+        version: CACHE.VERSION, // track the constant, not a literal
         timestamp: Date.now(),
         params: {
           ngramSizes: [3],
