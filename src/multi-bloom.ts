@@ -99,18 +99,42 @@ export class SingleBloomFilter {
    */
   addText(text: string): void {
     this.addedItems.add(text);
+    this.addPreparedTokens(this.prepareTokens(text));
+  }
 
-    // Extract words from text
-    const words = this.extractWords(text);
+  /**
+   * Tokenize a document into exactly the terms that will enter the filter.
+   *
+   * Split out from addText so indexing can be time-sliced without the slicing
+   * changing what gets indexed. Bigram construction, the bigram cap and CJK
+   * detection are all whole-document properties: deriving them from a fragment
+   * makes the fragment size part of the scoring. Callers that need to yield
+   * should call this once per document, then feed the result to
+   * addPreparedTokens in batches.
+   *
+   * @param text Full document text
+   * @returns Deduplicated terms, in insertion order
+   */
+  prepareTokens(text: string): string[] {
+    return Array.from(this.extractWords(text));
+  }
 
-    // Add each word to the bloom filter
-    for (const word of words) {
-      this.filter.add(word);
+  /**
+   * Add a slice of an already-tokenized document to the filter.
+   *
+   * Slicing here controls only when the caller may yield. Because the tokens
+   * were derived from the whole document up front, the union of every slice is
+   * identical however the slices are divided — which is the property that
+   * tests/chunking-invariance.test.ts pins.
+   *
+   * @param tokens Output of prepareTokens
+   * @param start Inclusive start index
+   * @param end Exclusive end index
+   */
+  addPreparedTokens(tokens: string[], start = 0, end = tokens.length): void {
+    for (let i = start; i < end; i++) {
+      this.filter.add(tokens[i]);
       this.itemCount++;
-    }
-
-    if (isDebugMode()) {
-      // Words added to bloom filter
     }
   }
 
@@ -892,19 +916,22 @@ export class MultiResolutionBloomFilterProvider implements SimilarityProvider {
     const processed = this.preprocessText(limitedText);
     await slicer.tick();
 
-    // Feed the filter in chunks so a very long document cannot hold the main
-    // thread, yielding only once a chunk has actually overrun the frame budget.
+    // Tokenize the WHOLE document once, then hash it in batches.
     //
-    // CHUNK_SIZE must not change: extractWords() derives bigrams within each
-    // chunk and caps them per chunk, so the chunk boundaries are part of what
-    // ends up in the filter. Resizing chunks would silently change similarity
-    // scores for every document.
-    const words = processed.split(/\s+/);
-    const CHUNK_SIZE = TIMING.MAX_OPERATIONS_BEFORE_YIELD;
+    // This used to slice the text into 10-word chunks and call addText() on each,
+    // which made the chunk size part of the scoring rather than just a yield
+    // interval: bigrams never spanned a chunk boundary (one in ten lost), the
+    // per-call bigram cap could never bind (a 10-word chunk yields at most 9
+    // bigrams against a cap of 100-200, so a long note produced several times
+    // the intended number), and extractWords()' own low-fidelity switch
+    // (wordSet.size > 500) could never fire because it only ever saw ~19 tokens.
+    //
+    // Splitting tokenization from insertion keeps every one of those decisions
+    // document-wide, so TOKEN_BATCH_SIZE now controls only when we yield.
+    const tokens = filter.prepareTokens(processed);
 
-    for (let i = 0; i < words.length; i += CHUNK_SIZE) {
-      const chunk = words.slice(i, i + CHUNK_SIZE).join(' ');
-      filter.addText(chunk);
+    for (let i = 0; i < tokens.length; i += BATCH_PROCESSING.TOKEN_BATCH_SIZE) {
+      filter.addPreparedTokens(tokens, i, Math.min(i + BATCH_PROCESSING.TOKEN_BATCH_SIZE, tokens.length));
       await slicer.tick();
     }
 
